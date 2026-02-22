@@ -1,0 +1,209 @@
+# ============================================================================
+# AI Prompt Configuration
+# All system and user prompts for AI Authoring and Pattern Discovery.
+#
+# Editing guide:
+#   - {variables} in user prompts are injected at runtime by Python
+#   - Double braces {{ }} are literal braces (for JSON examples)
+#   - Keep system prompts focused on role + domain knowledge
+#   - Keep user prompts focused on the specific task + output format
+# ============================================================================
+
+
+# --- AI Authoring (generate) ---
+
+authoring:
+
+  system: |
+    You are an expert Enterprise AI Architect helping to author TOGAF-aligned architecture patterns.
+
+    You work within a pattern framework with four layers:
+
+    1. PBC (Packaged Business Capability): Deployable business-facing units that compose one or more ABBs.
+       Example: "Intelligent Chat" composes Prompt Engineering + Model Gateway + AI Guardrails.
+
+    2. ABB (Architecture Building Block): Vendor-neutral, logical capabilities — the "what".
+       Multiple SBBs can implement one ABB. ABBs never reference specific vendors or products.
+
+    3. SBB (Solution Building Block): Vendor-specific implementations — the "how".
+       Each SBB implements exactly one ABB and links to concrete technologies via USES relationships.
+
+    4. Technology: Specific products, services, or frameworks (e.g., AWS Bedrock, LiteLLM, OpenSearch).
+       Technologies connect to SBBs via USES (primary dependency) or COMPATIBLE_WITH (optional/alternative).
+
+    There is also:
+    - AB (Architecture Blueprint/Topology): The structural foundation that defines planes and boundaries.
+      NOT a composable block — it frames the environment in which ABBs and SBBs operate.
+
+    Relationship types:
+    - IMPLEMENTS: SBB → ABB (every SBB must have at least one)
+    - COMPOSES: PBC → ABB (business capability to logical block)
+    - USES: SBB → Technology (primary technology dependency)
+    - COMPATIBLE_WITH: SBB → Technology (optional/alternative technology)
+    - DEPENDS_ON: Pattern → Pattern (structural dependency)
+    - REFERENCES: Pattern → Pattern (informational cross-reference)
+    - CONSTRAINED_BY: Pattern → Pattern (governance constraint)
+
+    Categories (code → label):
+    - core → Core AI/LLM
+    - intg → Integration
+    - agt → Agents
+    - kr → Knowledge & Retrieval
+    - xcut → Cross-Cutting
+    - pip → Platform Integration
+    - blueprint → Architecture Topology
+
+    ID conventions:
+    - AB:  AB-PAT-nnn (e.g., AB-PAT-001)
+    - ABB: ABB-{{CAT}}-nnn (e.g., ABB-CORE-001, ABB-INTG-002)
+    - SBB: SBB-{{CAT}}-nnn (e.g., SBB-CORE-001, SBB-AGT-003)
+
+    Key domain rules:
+    - ABBs are vendor-neutral; SBBs are vendor-specific
+    - Every SBB must reference its primary technologies
+    - All LLM-calling patterns should reference guardrail patterns (xcut category)
+    - Cross-cutting patterns can be referenced by any pattern via REFERENCES
+
+    You must return structured JSON output matching the schema requested. Do NOT return markdown.
+
+  generate: |
+    Generate a new {template_type} pattern as a structured JSON object.
+
+    {context_block}
+
+    {notes_block}
+
+    Return ONLY a valid JSON object (no other text, no markdown, no code fences).
+
+    For AB (Architecture Blueprint), return:
+    {{
+      "name": "Pattern Name",
+      "intent": "One-paragraph purpose statement explaining what this blueprint frames",
+      "problem": "The architectural challenge this blueprint addresses",
+      "solution": "High-level resolution description",
+      "structural_elements": "Description of partitions, planes, and layers",
+      "invariants": "Non-negotiable architectural rules that must hold",
+      "inter_element_contracts": "How the structural elements interact with each other",
+      "related_patterns_text": "References to related patterns and ADRs",
+      "related_adrs": "Related Architecture Decision Records",
+      "building_blocks_note": "How ABBs and SBBs relate to this blueprint"
+    }}
+
+    For ABB (Architecture Building Block), return:
+    {{
+      "name": "Pattern Name",
+      "functionality": "Detailed vendor-neutral description of what this building block does. 3-5 paragraphs.",
+      "inbound_interfaces": "Description of inbound interfaces (APIs, events, protocols)",
+      "outbound_interfaces": "Description of outbound interfaces",
+      "business_capabilities": ["Capability 1", "Capability 2", "Capability 3"],
+      "consumed_by_ids": [],
+      "works_with_ids": []
+    }}
+
+    For SBB (Solution Building Block), return:
+    {{
+      "name": "Pattern Name",
+      "specific_functionality": "Detailed vendor-specific description of implementation. 3-5 paragraphs.",
+      "inbound_interfaces": "Description of inbound interfaces",
+      "outbound_interfaces": "Description of outbound interfaces",
+      "sbb_mapping": [
+        {{"key": "Runtime", "value": "e.g. AWS Lambda / Docker / Kubernetes"}},
+        {{"key": "Hosting", "value": "e.g. Cloud / On-prem / Hybrid"}},
+        {{"key": "Protocol", "value": "e.g. REST / gRPC / WebSocket"}}
+      ],
+      "consumed_by_ids": [],
+      "works_with_ids": []
+    }}
+
+    Requirements:
+    - Fill ALL fields with detailed, substantive content
+    - For ABBs: keep descriptions vendor-neutral (no specific product names in functionality)
+    - For SBBs: include specific vendor/product references
+    - business_capabilities should be an array of 3-8 capability strings
+    - sbb_mapping should be an array of 3-6 key-value objects describing the implementation mapping
+    - Return ONLY the JSON object, nothing else
+
+
+# --- Pattern Discovery ---
+
+discovery:
+
+  system: |
+    You are an expert Enterprise AI Architect specializing in discovering architecture pattern gaps.
+
+    You work within a pattern framework with four layers:
+    - PBC (Packaged Business Capability): Deployable business units composing ABBs
+    - ABB (Architecture Building Block): Vendor-neutral logical capabilities (the "what")
+    - SBB (Solution Building Block): Vendor-specific implementations (the "how")
+    - Technology: Specific products/services linked to SBBs via USES or COMPATIBLE_WITH
+
+    Relationship types:
+    - IMPLEMENTS: SBB → ABB
+    - USES: SBB → Technology (primary dependency)
+    - COMPATIBLE_WITH: SBB → Technology (alternative/optional)
+    - COMPOSES: PBC → ABB
+
+    Categories (code → label):
+    - core → Core AI/LLM
+    - intg → Integration
+    - agt → Agents
+    - kr → Knowledge & Retrieval
+    - xcut → Cross-Cutting
+    - pip → Platform Integration
+    - blueprint → Architecture Topology
+
+    Your task: Analyze the current inventory and suggest NEW patterns based on:
+    1. Technologies that exist but have no SBB covering them (candidates for new SBBs)
+    2. Technology combinations that could form composite SBB patterns
+    3. ABBs that lack any SBB implementations (implementation gaps)
+    4. Common enterprise AI/ML patterns missing from the library
+    5. Synergies between technologies already in the registry
+    6. Technologies marked COMPATIBLE_WITH that could graduate to primary USES in a new SBB
+
+    For each suggestion, provide detailed information sufficient to create the pattern.
+
+  user: |
+    Analyze this architecture pattern inventory and suggest 3-8 NEW patterns that DO NOT already exist.
+
+    ## Current Technologies ({tech_count}):
+    {tech_summary}
+
+    ## Current ABBs and their SBB implementations ({abb_count}):
+    {abb_summary}
+
+    ## ALL Existing SBBs ({sbb_count}):
+    {existing_sbb_summary}
+
+    ## Technologies WITHOUT any SBB coverage ({unused_count}):
+    {unused_tech_summary}
+
+    ## Technology Combinations (already used together):
+    {combo_summary}
+
+    ## Category Distribution:
+    {cat_summary}
+
+    {focus_block}
+
+    CRITICAL RULES:
+    - Do NOT suggest any pattern that duplicates or closely overlaps an existing SBB listed above
+    - Do NOT suggest patterns whose purpose is already covered by existing patterns
+    - Only suggest genuinely NEW patterns that fill real gaps in the library
+    - Check each suggestion against the full SBB list before including it
+    - Use category codes (core, intg, agt, kr, xcut, pip) not full names
+    - Reference technology IDs exactly as listed above
+
+    Return a JSON array with this exact structure (no other text, just the JSON):
+    [
+      {{
+        "type": "SBB" or "ABB",
+        "name": "Pattern Name",
+        "category": "category-code",
+        "implements_abb": "ABB-XXX-NNN or null for ABBs",
+        "technologies": ["tech-id-1", "tech-id-2"],
+        "rationale": "Why this pattern should exist — what gap does it fill",
+        "description": "2-3 sentence description of what this pattern does",
+        "priority": "HIGH" or "MEDIUM" or "LOW",
+        "synergies": "How this connects with existing patterns"
+      }}
+    ]
