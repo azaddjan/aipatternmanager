@@ -1,4 +1,5 @@
 import logging
+import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -7,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from services.neo4j_service import Neo4jService
 from services.seed_service import seed_database
 from services.llm import get_available_providers
+from services.embedding_service import EmbeddingService
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -24,6 +26,22 @@ async def lifespan(app: FastAPI):
     if db_service.verify_connectivity():
         logger.info("Neo4j connected successfully")
         seed_database(db_service)
+        # Create vector indexes for semantic search (safe to run every startup)
+        try:
+            svc = EmbeddingService()
+            db_service.create_vector_indexes(svc.dimensions)
+            logger.info(f"Vector indexes initialized ({svc.dimensions}d)")
+        except Exception as e:
+            logger.warning(f"Vector index creation skipped: {e}")
+        # Auto-embed any nodes missing embeddings (background thread)
+        def _startup_embed():
+            try:
+                svc = EmbeddingService()
+                if svc.available:
+                    svc.embed_missing_nodes(db_service)
+            except Exception as e:
+                logger.warning(f"Startup embedding skipped: {e}")
+        threading.Thread(target=_startup_embed, daemon=True).start()
     else:
         logger.error("Neo4j connection failed -- running without database")
 
@@ -60,6 +78,7 @@ from routers.categories import router as categories_router
 from routers.pbcs import router as pbcs_router
 from routers.admin import router as admin_router
 from routers.discovery import router as discovery_router
+from routers.advisor import router as advisor_router
 
 app.include_router(patterns_router)
 app.include_router(technologies_router)
@@ -69,6 +88,7 @@ app.include_router(categories_router)
 app.include_router(pbcs_router)
 app.include_router(admin_router)
 app.include_router(discovery_router)
+app.include_router(advisor_router)
 
 
 @app.get("/api/health", tags=["System"])

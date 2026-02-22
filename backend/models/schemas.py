@@ -93,6 +93,8 @@ class PatternCreate(BaseModel):
     sbb_mapping: list[dict] = []  # [{key, value}, ...]
     consumed_by_ids: list[str] = []  # pattern IDs
     works_with_ids: list[str] = []   # pattern IDs
+    # --- Shared all-type fields ---
+    restrictions: Optional[str] = None  # usage restrictions, platform constraints, licensing
     # Relationship hints — auto-create edges on creation
     implements_abb: Optional[str] = None  # ABB ID this SBB implements
     technology_ids: list[str] = []  # Technology IDs this pattern USES (core dependency)
@@ -127,6 +129,8 @@ class PatternUpdate(BaseModel):
     sbb_mapping: Optional[list[dict]] = None
     consumed_by_ids: Optional[list[str]] = None
     works_with_ids: Optional[list[str]] = None
+    # --- Shared all-type fields ---
+    restrictions: Optional[str] = None  # usage restrictions, platform constraints, licensing
     # Relationship updates
     implements_abb: Optional[str] = None  # set/change the parent ABB
     technology_ids: Optional[list[str]] = None  # set/change core tech dependencies (USES)
@@ -245,3 +249,24 @@ class APIKeyUpdate(BaseModel):
 class GenerateIDRequest(BaseModel):
     type: PatternType
     category: str
+
+
+# --- Pattern Advisor ---
+
+class AdvisorRequest(BaseModel):
+    """Request for the Intelligent Pattern Advisor (GraphRAG)."""
+    problem: str = Field(..., min_length=10, max_length=5000,
+                         description="Natural language problem description")
+    category_focus: Optional[str] = None
+    technology_preferences: list[str] = []
+    include_gap_analysis: bool = True
+    provider: Optional[LLMProvider] = None
+    model: Optional[str] = None
+
+
+# --- Advisor Reports ---
+
+class AdvisorReportUpdate(BaseModel):
+    """Partial update for a saved advisor report."""
+    title: Optional[str] = None
+    starred: Optional[bool] = None

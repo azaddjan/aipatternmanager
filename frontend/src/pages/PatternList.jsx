@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { fetchPatterns, fetchCategories } from '../api/client'
+import { fetchPatterns, fetchCategories, updatePattern } from '../api/client'
 import PatternCard from '../components/PatternCard'
 
 const TYPE_OPTIONS = ['', 'AB', 'ABB', 'SBB']
@@ -12,7 +12,7 @@ export default function PatternList() {
   const [loading, setLoading] = useState(true)
   const [filters, setFilters] = useState({ type: '', category: '', status: '' })
   const [search, setSearch] = useState('')
-  const [viewMode, setViewMode] = useState('grid') // grid | table
+  const [viewMode, setViewMode] = useState('table') // grid | table
   const [categoryOptions, setCategoryOptions] = useState([])
 
   // Load dynamic categories
@@ -128,10 +128,27 @@ export default function PatternList() {
                   </td>
                   <td className="py-2.5 text-gray-400 text-xs">{p.category}</td>
                   <td className="py-2.5">
-                    <span className={
-                      p.status === 'ACTIVE' ? 'text-green-400' :
-                      p.status === 'DEPRECATED' ? 'text-red-400' : 'text-yellow-400'
-                    }>{p.status}</span>
+                    <select
+                      value={p.status}
+                      onChange={async (e) => {
+                        const newStatus = e.target.value
+                        const oldStatus = p.status
+                        setPatterns(prev => prev.map(x => x.id === p.id ? { ...x, status: newStatus } : x))
+                        try {
+                          await updatePattern(p.id, { status: newStatus }, 'none')
+                        } catch {
+                          setPatterns(prev => prev.map(x => x.id === p.id ? { ...x, status: oldStatus } : x))
+                        }
+                      }}
+                      className={`text-xs font-medium bg-transparent border border-transparent rounded px-1.5 py-0.5 cursor-pointer transition-colors
+                        hover:border-gray-600 focus:border-blue-500 focus:outline-none
+                        ${p.status === 'ACTIVE' ? 'text-green-400' :
+                          p.status === 'DEPRECATED' ? 'text-red-400' : 'text-yellow-400'}`}
+                    >
+                      <option value="DRAFT" className="bg-gray-900 text-yellow-400">DRAFT</option>
+                      <option value="ACTIVE" className="bg-gray-900 text-green-400">ACTIVE</option>
+                      <option value="DEPRECATED" className="bg-gray-900 text-red-400">DEPRECATED</option>
+                    </select>
                   </td>
                   <td className="py-2.5 text-gray-500 font-mono text-xs">{p.version}</td>
                 </tr>

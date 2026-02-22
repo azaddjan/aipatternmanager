@@ -7,6 +7,8 @@ const NAV_ITEMS = [
   { to: '/technologies', icon: '⚙️', label: 'Technologies' },
   { to: '/pbcs',         icon: '📦', label: 'Business Capabilities' },
   { to: '/discovery',    icon: '🔍', label: 'Pattern Discovery' },
+  { to: '/advisor',      icon: '🧠', label: 'Pattern Advisor' },
+  { to: '/health',       icon: '🏥', label: 'Pattern Health' },
   { to: '/impact',       icon: '💥', label: 'Impact Analysis' },
 ]
 

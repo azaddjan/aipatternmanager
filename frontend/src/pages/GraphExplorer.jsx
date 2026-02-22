@@ -26,7 +26,6 @@ export default function GraphExplorer() {
   const [typeFilter, setTypeFilter] = useState('')
   const [catFilter, setCatFilter] = useState('')
   const [loading, setLoading] = useState(true)
-  const [selectedNode, setSelectedNode] = useState(null)
 
   useEffect(() => {
     fetchFullGraph()
@@ -89,7 +88,6 @@ export default function GraphExplorer() {
         <GraphView
           data={filteredData}
           height="calc(100vh - 220px)"
-          onNodeClick={setSelectedNode}
         />
       )}
     </div>

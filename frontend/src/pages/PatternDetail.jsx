@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useParams, Link, useNavigate, useLocation } from 'react-router-dom'
 import { fetchPattern, deletePattern, fetchPatternGraph } from '../api/client'
 import AutoLinkedText from '../components/AutoLinkedText'
+import MarkdownContent from '../components/MarkdownContent'
 import GraphView from '../components/GraphView'
 import { TypeBadge } from '../components/PatternCard'
 
@@ -53,6 +54,7 @@ export default function PatternDetail() {
   const uses_rels = relationships.filter(r => r.type === 'USES')
   const ref_rels = relationships.filter(r => r.type === 'REFERENCES')
   const composes_rels = relationships.filter(r => r.type === 'COMPOSES')
+  const compatible_rels = relationships.filter(r => r.type === 'COMPATIBLE_WITH')
 
   return (
     <div className="space-y-6">
@@ -115,6 +117,7 @@ export default function PatternDetail() {
           <RelSection title="Implements" icon="🔗" rels={implements_rels} />
           <RelSection title="Depends On" icon="📦" rels={depends_on_rels} />
           <RelSection title="Uses Technologies" icon="⚙️" rels={uses_rels} linkPrefix="/technologies/" />
+          <RelSection title="Compatible With" icon="🔌" rels={compatible_rels} linkPrefix="/technologies/" />
           <RelSection title="Composes" icon="🧱" rels={composes_rels} />
           <RelSection title="References" icon="📎" rels={ref_rels} />
         </div>
@@ -156,6 +159,7 @@ function ABContent({ p }) {
       <ContentSection title="Related Patterns" content={p.related_patterns_text} />
       <ContentSection title="Related ADRs" content={p.related_adrs} />
       <ContentSection title="Building Blocks Note" content={p.building_blocks_note} />
+      <RestrictionsSection restrictions={p.restrictions} />
     </div>
   )
 }
@@ -167,6 +171,7 @@ function ABBContent({ p }) {
       <InterfaceSection title="Inbound Interfaces" content={p.inbound_interfaces} />
       <InterfaceSection title="Outbound Interfaces" content={p.outbound_interfaces} />
       <CapabilitiesSection capabilities={p.business_capabilities} />
+      <RestrictionsSection restrictions={p.restrictions} />
       <InteropSection title="Consumed By" ids={p.consumed_by_ids} />
       <InteropSection title="Works With" ids={p.works_with_ids} />
     </div>
@@ -174,12 +179,51 @@ function ABBContent({ p }) {
 }
 
 function SBBContent({ p }) {
+  // Find parent ABB from IMPLEMENTS relationships
+  const parentAbb = useMemo(() => {
+    const rels = p.relationships || []
+    const impl = rels.find(r => r.type === 'IMPLEMENTS' && r.target_id?.startsWith('ABB-'))
+    return impl ? { id: impl.target_id, name: impl.target_name } : null
+  }, [p.relationships])
+
+  // Fetch parent ABB's business capabilities
+  const [inheritedCaps, setInheritedCaps] = useState(null)
+  useEffect(() => {
+    if (!parentAbb) return
+    fetchPattern(parentAbb.id)
+      .then(abb => setInheritedCaps(abb.business_capabilities || []))
+      .catch(() => setInheritedCaps(null))
+  }, [parentAbb])
+
   return (
     <div className="space-y-4">
       <ContentSection title="Specific Functionality" content={p.specific_functionality} />
       <InterfaceSection title="Inbound Interfaces" content={p.inbound_interfaces} />
       <InterfaceSection title="Outbound Interfaces" content={p.outbound_interfaces} />
       <MappingSection mapping={p.sbb_mapping} />
+      {inheritedCaps && inheritedCaps.length > 0 && (
+        <div className="card">
+          <h3 className="text-sm font-semibold text-gray-400 mb-3">
+            Business Capabilities
+            {parentAbb && (
+              <span className="font-normal text-gray-600 ml-2">
+                inherited via{' '}
+                <Link to={`/patterns/${parentAbb.id}`} className="text-blue-400 hover:underline">
+                  {parentAbb.id}
+                </Link>
+              </span>
+            )}
+          </h3>
+          <div className="flex flex-wrap gap-2">
+            {inheritedCaps.map((cap, i) => (
+              <span key={i} className="px-3 py-1 bg-blue-500/10 text-blue-300 text-sm rounded-full border border-blue-500/20">
+                {cap}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      <RestrictionsSection restrictions={p.restrictions} />
       <InteropSection title="Consumed By" ids={p.consumed_by_ids} />
       <InteropSection title="Works With" ids={p.works_with_ids} />
     </div>
@@ -188,14 +232,22 @@ function SBBContent({ p }) {
 
 /* ---------- Shared Section Components ---------- */
 
+function RestrictionsSection({ restrictions }) {
+  if (!restrictions) return null
+  return (
+    <div className="card border-orange-500/20">
+      <h3 className="text-sm font-semibold text-orange-400 mb-3">⚠️ Restrictions</h3>
+      <MarkdownContent content={restrictions} />
+    </div>
+  )
+}
+
 function ContentSection({ title, content }) {
   if (!content) return null
   return (
     <div className="card">
       <h3 className="text-sm font-semibold text-gray-400 mb-3">{title}</h3>
-      <div className="text-gray-300 text-sm whitespace-pre-wrap leading-relaxed">
-        <AutoLinkedText text={content} />
-      </div>
+      <MarkdownContent content={content} />
     </div>
   )
 }
@@ -205,9 +257,7 @@ function InterfaceSection({ title, content }) {
   return (
     <div className="card">
       <h3 className="text-sm font-semibold text-gray-400 mb-3">{title}</h3>
-      <div className="text-gray-300 text-sm whitespace-pre-wrap leading-relaxed">
-        <AutoLinkedText text={content} />
-      </div>
+      <MarkdownContent content={content} />
     </div>
   )
 }
@@ -233,22 +283,24 @@ function MappingSection({ mapping }) {
   return (
     <div className="card">
       <h3 className="text-sm font-semibold text-gray-400 mb-3">SBB Mapping</h3>
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-gray-700">
-            <th className="text-left py-2 px-3 text-gray-400 font-medium">Key</th>
-            <th className="text-left py-2 px-3 text-gray-400 font-medium">Value</th>
-          </tr>
-        </thead>
-        <tbody>
-          {mapping.map((row, i) => (
-            <tr key={i} className="border-b border-gray-800">
-              <td className="py-2 px-3 text-gray-300 font-medium">{row.key}</td>
-              <td className="py-2 px-3 text-gray-400">{row.value}</td>
+      <div className="overflow-x-auto rounded-lg border border-gray-700">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-800/80">
+            <tr>
+              <th className="text-left py-2.5 px-3 text-gray-300 font-semibold text-xs uppercase tracking-wider">Key</th>
+              <th className="text-left py-2.5 px-3 text-gray-300 font-semibold text-xs uppercase tracking-wider">Value</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody className="divide-y divide-gray-800">
+            {mapping.map((row, i) => (
+              <tr key={i} className="hover:bg-gray-800/40 transition-colors">
+                <td className="py-2.5 px-3 text-white font-medium"><MarkdownContent content={row.key} /></td>
+                <td className="py-2.5 px-3 text-gray-300"><MarkdownContent content={row.value} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }

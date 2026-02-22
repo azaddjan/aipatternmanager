@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
 from typing import Optional
 import re
+import threading
 
 from models.schemas import (
     PatternCreate, PatternUpdate,
@@ -9,6 +10,20 @@ from models.schemas import (
 )
 
 router = APIRouter(prefix="/api/patterns", tags=["Patterns"])
+
+
+def _auto_embed_pattern(pattern_id: str):
+    """Fire-and-forget: embed a pattern in a background thread."""
+    def _run():
+        try:
+            from routers.advisor import _get_embedding_svc
+            from main import db_service
+            svc = _get_embedding_svc()
+            if svc.available:
+                svc.embed_pattern(db_service, pattern_id)
+        except Exception:
+            pass
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def _bump_version(current: str, bump: str = "patch") -> str:
@@ -89,6 +104,10 @@ def create_pattern(data: PatternCreate):
 
     pattern_data = data.model_dump(exclude={"implements_abb", "technology_ids", "compatible_tech_ids", "depends_on_ids"})
     pattern_data["id"] = pattern_id
+
+    # Validate consumed_by_ids and works_with_ids reference existing patterns
+    _validate_interop_ids(db, pattern_data.get("consumed_by_ids"), pattern_data.get("works_with_ids"))
+
     pattern = db.create_pattern(pattern_data)
 
     # Auto-create IMPLEMENTS relationship (SBB -> ABB)
@@ -110,6 +129,7 @@ def create_pattern(data: PatternCreate):
         if db.pattern_exists(dep_id):
             db.add_relationship(pattern_id, dep_id, "DEPENDS_ON")
 
+    _auto_embed_pattern(pattern_id)
     return pattern
 
 
@@ -130,6 +150,9 @@ def update_pattern(
     update_data = data.model_dump(exclude_none=True, exclude={"implements_abb", "technology_ids", "compatible_tech_ids", "depends_on_ids"})
     if not update_data and implements_abb is None and technology_ids is None and compatible_tech_ids is None and depends_on_ids is None:
         raise HTTPException(status_code=400, detail="No fields to update")
+
+    # Validate consumed_by_ids and works_with_ids reference existing patterns
+    _validate_interop_ids(db, update_data.get("consumed_by_ids"), update_data.get("works_with_ids"))
 
     # Auto-bump version if not explicitly set and bump is requested
     if update_data and version_bump != "none" and "version" not in update_data:
@@ -162,7 +185,25 @@ def update_pattern(
     # Return the final pattern state
     if not pattern:
         pattern = db.get_pattern(pattern_id)
+
+    _auto_embed_pattern(pattern_id)
     return pattern
+
+
+def _validate_interop_ids(db, consumed_by_ids, works_with_ids):
+    """Validate that all consumed_by_ids and works_with_ids reference existing patterns."""
+    invalid = []
+    for pid in (consumed_by_ids or []):
+        if not db.pattern_exists(pid):
+            invalid.append(pid)
+    for pid in (works_with_ids or []):
+        if not db.pattern_exists(pid):
+            invalid.append(pid)
+    if invalid:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Referenced pattern(s) do not exist: {', '.join(invalid)}"
+        )
 
 
 def _replace_implements(db, pattern_id: str, abb_id: str):

@@ -162,6 +162,8 @@ export default function PatternEditor() {
           'Functionality': p.functionality || '',
           // SBB
           'Specific Functionality': p.specific_functionality || '',
+          // All types
+          'Restrictions': p.restrictions || '',
         })
 
         setInterfaces({
@@ -243,6 +245,7 @@ export default function PatternEditor() {
         'Note on Building Blocks': generated.building_blocks_note || prev['Note on Building Blocks'] || '',
         'Functionality': generated.functionality || prev['Functionality'] || '',
         'Specific Functionality': generated.specific_functionality || prev['Specific Functionality'] || '',
+        'Restrictions': generated.restrictions || prev['Restrictions'] || '',
       }))
 
       setInterfaces({
@@ -298,6 +301,7 @@ export default function PatternEditor() {
         works_with_ids: interop.worksWith,
         business_capabilities: businessCaps,
         sbb_mapping: sbbMapping,
+        restrictions: sections['Restrictions'] || null,
       }
 
       if (isNew) {
@@ -695,7 +699,7 @@ export default function PatternEditor() {
       {form.type === 'AB' && (
         <>
           {['Intent', 'Problem', 'Solution', 'Structural Elements', 'Invariants',
-            'Inter-Element Contracts', 'Related Patterns', 'Related ADRs', 'Note on Building Blocks'
+            'Inter-Element Contracts', 'Related Patterns', 'Related ADRs', 'Note on Building Blocks', 'Restrictions'
           ].map(name => (
             <div key={name} className="card">
               <h2 className="text-sm font-semibold text-gray-400 mb-3">{name}</h2>
@@ -862,6 +866,21 @@ export default function PatternEditor() {
               <p className="text-xs text-gray-500 mt-1">{businessCaps.length} selected</p>
             )}
           </div>
+
+          {/* Restrictions */}
+          <div className="card">
+            <h2 className="text-sm font-semibold text-gray-400 mb-3">
+              Restrictions
+              <span className="font-normal text-gray-600 ml-2">Usage allowances, platform constraints, licensing</span>
+            </h2>
+            <textarea
+              value={sections['Restrictions'] || ''}
+              onChange={e => setSection('Restrictions', e.target.value)}
+              placeholder="Define restrictions: platform requirements, technology constraints, licensing limits, deployment restrictions..."
+              className="input w-full font-mono text-sm resize-y"
+              rows={4}
+            />
+          </div>
         </>
       )}
 
@@ -1007,6 +1026,21 @@ export default function PatternEditor() {
                 + Add Mapping
               </button>
             </div>
+          </div>
+
+          {/* Restrictions */}
+          <div className="card">
+            <h2 className="text-sm font-semibold text-gray-400 mb-3">
+              Restrictions
+              <span className="font-normal text-gray-600 ml-2">Usage allowances, platform constraints, licensing</span>
+            </h2>
+            <textarea
+              value={sections['Restrictions'] || ''}
+              onChange={e => setSection('Restrictions', e.target.value)}
+              placeholder="Define restrictions: platform requirements, technology constraints, licensing limits, deployment restrictions..."
+              className="input w-full font-mono text-sm resize-y"
+              rows={4}
+            />
           </div>
         </>
       )}

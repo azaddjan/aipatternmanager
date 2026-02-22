@@ -11,7 +11,9 @@ import PBCManager from './pages/PBCManager'
 import PBCDetail from './pages/PBCDetail'
 import Admin from './pages/Admin'
 import PatternDiscovery from './pages/PatternDiscovery'
+import PatternAdvisor from './pages/PatternAdvisor'
 import ImpactAnalysis from './pages/ImpactAnalysis'
+import PatternHealth from './pages/PatternHealth'
 
 export default function App() {
   return (
@@ -30,7 +32,9 @@ export default function App() {
           <Route path="/pbcs" element={<PBCManager />} />
           <Route path="/pbcs/:id" element={<PBCDetail />} />
           <Route path="/discovery" element={<PatternDiscovery />} />
+          <Route path="/advisor" element={<PatternAdvisor />} />
           <Route path="/admin" element={<Admin />} />
+          <Route path="/health" element={<PatternHealth />} />
           <Route path="/impact" element={<ImpactAnalysis />} />
         </Routes>
       </main>

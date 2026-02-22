@@ -28,12 +28,23 @@ class BedrockProvider(BaseLLMProvider):
         if self._client is None:
             try:
                 import boto3
-                self._client = boto3.client(
-                    "bedrock-runtime",
-                    region_name=self._region,
-                    aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID", ""),
-                    aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY", ""),
-                )
+                session_kwargs = {}
+                profile = os.getenv("AWS_PROFILE", "")
+                if profile:
+                    session_kwargs["profile_name"] = profile
+                session = boto3.Session(**session_kwargs)
+                client_kwargs = {"region_name": self._region}
+                # Only pass explicit credentials if set (otherwise boto3 uses its
+                # standard chain: env vars, ~/.aws/credentials, instance role, etc.)
+                ak = os.getenv("AWS_ACCESS_KEY_ID", "")
+                sk = os.getenv("AWS_SECRET_ACCESS_KEY", "")
+                if ak and sk:
+                    client_kwargs["aws_access_key_id"] = ak
+                    client_kwargs["aws_secret_access_key"] = sk
+                    st = os.getenv("AWS_SESSION_TOKEN", "")
+                    if st:
+                        client_kwargs["aws_session_token"] = st
+                self._client = session.client("bedrock-runtime", **client_kwargs)
             except Exception as e:
                 logger.warning(f"Failed to create Bedrock client: {e}")
                 self._client = None
@@ -50,6 +61,10 @@ class BedrockProvider(BaseLLMProvider):
     def is_available(self) -> bool:
         key = os.getenv("AWS_ACCESS_KEY_ID", "")
         secret = os.getenv("AWS_SECRET_ACCESS_KEY", "")
+        profile = os.getenv("AWS_PROFILE", "")
+        # Available if explicit keys provided OR an AWS profile is set
+        if profile:
+            return True
         return bool(key and secret and key != "your-key-here")
 
     async def generate(self, system_prompt: str, user_prompt: str, model: str | None = None) -> dict:

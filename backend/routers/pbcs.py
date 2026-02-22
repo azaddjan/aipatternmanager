@@ -1,8 +1,23 @@
 from fastapi import APIRouter, HTTPException
+import threading
 
 from models.schemas import PBCCreate, PBCUpdate
 
 router = APIRouter(prefix="/api/pbcs", tags=["PBCs"])
+
+
+def _auto_embed_pbc(pbc_id: str):
+    """Fire-and-forget: embed a PBC in a background thread."""
+    def _run():
+        try:
+            from routers.advisor import _get_embedding_svc
+            from main import db_service
+            svc = _get_embedding_svc()
+            if svc.available:
+                svc.embed_pbc(db_service, pbc_id)
+        except Exception:
+            pass
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def get_db():
@@ -55,6 +70,7 @@ def create_pbc(data: PBCCreate):
     for abb_id in data.abb_ids:
         db.add_relationship(pbc_id, abb_id, "COMPOSES")
     pbc["abb_ids"] = data.abb_ids
+    _auto_embed_pbc(pbc_id)
     return pbc
 
 
@@ -76,6 +92,7 @@ def update_pbc(pbc_id: str, data: PBCUpdate):
         db._replace_pbc_composes(pbc_id, abb_ids)
     if pbc is None:
         pbc = db.get_pbc(pbc_id)
+    _auto_embed_pbc(pbc_id)
     return pbc
 
 

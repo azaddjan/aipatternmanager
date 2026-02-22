@@ -1,12 +1,27 @@
 from fastapi import APIRouter, HTTPException, Query
 from typing import Optional
 import logging
+import threading
 
 from models.schemas import TechnologyCreate, TechnologyUpdate
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/technologies", tags=["Technologies"])
+
+
+def _auto_embed_technology(tech_id: str):
+    """Fire-and-forget: embed a technology in a background thread."""
+    def _run():
+        try:
+            from routers.advisor import _get_embedding_svc
+            from main import db_service
+            svc = _get_embedding_svc()
+            if svc.available:
+                svc.embed_technology(db_service, tech_id)
+        except Exception:
+            pass
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def get_db():
@@ -43,6 +58,7 @@ def create_technology(data: TechnologyCreate):
     if existing:
         raise HTTPException(status_code=409, detail=f"Technology {data.id} already exists")
     tech = db.create_technology(data.model_dump())
+    _auto_embed_technology(data.id)
     return tech
 
 
@@ -67,6 +83,7 @@ def update_technology(tech_id: str, data: TechnologyUpdate):
         if deprecated_sbbs:
             logger.info(f"Cascade-deprecated {len(deprecated_sbbs)} SBBs due to technology {tech_id} deprecation")
 
+    _auto_embed_technology(tech_id)
     return {
         "technology": tech,
         "cascade_deprecated": deprecated_sbbs,

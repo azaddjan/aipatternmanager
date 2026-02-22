@@ -44,6 +44,8 @@ class Neo4jService:
             "CREATE CONSTRAINT pattern_id IF NOT EXISTS FOR (p:Pattern) REQUIRE p.id IS UNIQUE",
             "CREATE CONSTRAINT technology_id IF NOT EXISTS FOR (t:Technology) REQUIRE t.id IS UNIQUE",
             "CREATE CONSTRAINT pbc_id IF NOT EXISTS FOR (p:PBC) REQUIRE p.id IS UNIQUE",
+            "CREATE CONSTRAINT advisor_report_id IF NOT EXISTS FOR (r:AdvisorReport) REQUIRE r.id IS UNIQUE",
+            "CREATE CONSTRAINT health_analysis_id IF NOT EXISTS FOR (h:HealthAnalysis) REQUIRE h.id IS UNIQUE",
         ]
         with self.session() as session:
             for q in queries:
@@ -60,6 +62,91 @@ class Neo4jService:
         with self.session() as session:
             for q in queries:
                 session.run(q)
+
+    def create_vector_indexes(self, dimensions: int = 1536):
+        """Create vector indexes for semantic search (Neo4j 5.11+)."""
+        indexes = [
+            ("pattern_embedding", "Pattern", "p"),
+            ("technology_embedding", "Technology", "t"),
+            ("pbc_embedding", "PBC", "p"),
+        ]
+        with self.session() as session:
+            for idx_name, label, var in indexes:
+                q = f"""CREATE VECTOR INDEX {idx_name} IF NOT EXISTS
+                        FOR ({var}:{label}) ON ({var}.embedding)
+                        OPTIONS {{ indexConfig: {{
+                          `vector.dimensions`: {dimensions},
+                          `vector.similarity_function`: 'cosine'
+                        }}}}"""
+                try:
+                    session.run(q)
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).warning(f"Vector index creation skipped: {e}")
+
+    def recreate_vector_indexes(self, dimensions: int):
+        """Drop and recreate vector indexes with new dimensions.
+        Also clears all existing embeddings since they're now incompatible."""
+        import logging
+        log = logging.getLogger(__name__)
+
+        indexes = ["pattern_embedding", "technology_embedding", "pbc_embedding"]
+        with self.session() as session:
+            # Drop existing vector indexes
+            for idx_name in indexes:
+                try:
+                    session.run(f"DROP INDEX {idx_name} IF EXISTS")
+                    log.info(f"Dropped vector index: {idx_name}")
+                except Exception as e:
+                    log.warning(f"Failed to drop index {idx_name}: {e}")
+
+            # Clear all existing embeddings (they're incompatible with new dimensions)
+            session.run("MATCH (p:Pattern) WHERE p.embedding IS NOT NULL REMOVE p.embedding")
+            session.run("MATCH (t:Technology) WHERE t.embedding IS NOT NULL REMOVE t.embedding")
+            session.run("MATCH (p:PBC) WHERE p.embedding IS NOT NULL REMOVE p.embedding")
+            log.info("Cleared all existing embeddings")
+
+        # Recreate with new dimensions
+        self.create_vector_indexes(dimensions)
+        log.info(f"Recreated vector indexes with {dimensions} dimensions")
+
+    def vector_search_patterns(self, query_embedding: list[float], limit: int = 10) -> list[dict]:
+        """Semantic search across Pattern nodes using vector similarity."""
+        query = """
+        CALL db.index.vector.queryNodes('pattern_embedding', $limit, $embedding)
+        YIELD node, score
+        RETURN node.id as id, node.name as name, node.type as type,
+               node.category as category, node.status as status, score
+        ORDER BY score DESC
+        """
+        with self.session() as session:
+            result = session.run(query, limit=limit, embedding=query_embedding)
+            return [dict(r) for r in result]
+
+    def vector_search_technologies(self, query_embedding: list[float], limit: int = 5) -> list[dict]:
+        """Semantic search across Technology nodes."""
+        query = """
+        CALL db.index.vector.queryNodes('technology_embedding', $limit, $embedding)
+        YIELD node, score
+        RETURN node.id as id, node.name as name, node.vendor as vendor,
+               node.category as category, score
+        ORDER BY score DESC
+        """
+        with self.session() as session:
+            result = session.run(query, limit=limit, embedding=query_embedding)
+            return [dict(r) for r in result]
+
+    def vector_search_pbcs(self, query_embedding: list[float], limit: int = 3) -> list[dict]:
+        """Semantic search across PBC nodes."""
+        query = """
+        CALL db.index.vector.queryNodes('pbc_embedding', $limit, $embedding)
+        YIELD node, score
+        RETURN node.id as id, node.name as name, score
+        ORDER BY score DESC
+        """
+        with self.session() as session:
+            result = session.run(query, limit=limit, embedding=query_embedding)
+            return [dict(r) for r in result]
 
     # --- Pattern CRUD ---
 
@@ -617,6 +704,89 @@ class Neo4jService:
         with self.session() as session:
             return session.run("MATCH (p:PBC) RETURN count(p) as c").single()["c"]
 
+    def get_system_stats(self) -> dict:
+        """Get comprehensive graph database statistics for the admin dashboard."""
+        stats = {}
+        with self.session() as session:
+            # Node counts by type
+            result = session.run("""
+                MATCH (p:Pattern)
+                WITH count(p) as total,
+                     count(CASE WHEN p.type = 'AB' THEN 1 END) as ab_count,
+                     count(CASE WHEN p.type = 'ABB' THEN 1 END) as abb_count,
+                     count(CASE WHEN p.type = 'SBB' THEN 1 END) as sbb_count,
+                     count(CASE WHEN p.status = 'DEPRECATED' THEN 1 END) as deprecated_count
+                RETURN total, ab_count, abb_count, sbb_count, deprecated_count
+            """)
+            r = result.single()
+            stats["patterns"] = {
+                "total": r["total"], "ab": r["ab_count"],
+                "abb": r["abb_count"], "sbb": r["sbb_count"],
+                "deprecated": r["deprecated_count"],
+            }
+
+            result = session.run("MATCH (t:Technology) RETURN count(t) as total, count(CASE WHEN t.status = 'DEPRECATED' THEN 1 END) as deprecated")
+            r = result.single()
+            stats["technologies"] = {"total": r["total"], "deprecated": r["deprecated"]}
+
+            result = session.run("MATCH (p:PBC) RETURN count(p) as total")
+            stats["pbcs"] = {"total": result.single()["total"]}
+
+            result = session.run("MATCH (c:Category) RETURN count(c) as total")
+            stats["categories"] = {"total": result.single()["total"]}
+
+            # Relationship counts by type
+            result = session.run("""
+                MATCH ()-[r]->()
+                RETURN type(r) as rel_type, count(r) as count
+                ORDER BY count DESC
+            """)
+            rel_counts = {}
+            total_rels = 0
+            for rec in result:
+                rel_counts[rec["rel_type"]] = rec["count"]
+                total_rels += rec["count"]
+            stats["relationships"] = {"total": total_rels, "by_type": rel_counts}
+
+            # Index info
+            try:
+                result = session.run("SHOW INDEXES YIELD name, type, state, entityType, labelsOrTypes, properties")
+                indexes = []
+                for rec in result:
+                    indexes.append({
+                        "name": rec["name"],
+                        "type": rec["type"],
+                        "state": rec["state"],
+                        "entity_type": rec["entityType"],
+                        "labels": rec["labelsOrTypes"],
+                        "properties": rec["properties"],
+                    })
+                stats["indexes"] = indexes
+            except Exception:
+                stats["indexes"] = []
+
+            # Embedding counts
+            result = session.run("""
+                MATCH (p:Pattern)
+                RETURN count(p) as total, count(p.embedding) as embedded, 'patterns' as type
+                UNION ALL
+                MATCH (t:Technology)
+                RETURN count(t) as total, count(t.embedding) as embedded, 'technologies' as type
+                UNION ALL
+                MATCH (p:PBC)
+                RETURN count(p) as total, count(p.embedding) as embedded, 'pbcs' as type
+            """)
+            embeddings = {}
+            for rec in result:
+                embeddings[rec["type"]] = {
+                    "total": rec["total"],
+                    "embedded": rec["embedded"],
+                    "missing": rec["total"] - rec["embedded"],
+                }
+            stats["embeddings"] = embeddings
+
+        return stats
+
     def _replace_pbc_composes(self, pbc_id: str, abb_ids: list[str]):
         """Remove existing COMPOSES rels for a PBC, then recreate with new abb_ids."""
         query_delete = "MATCH (p:PBC {id: $pbc_id})-[r:COMPOSES]->() DELETE r"
@@ -624,6 +794,855 @@ class Neo4jService:
             session.run(query_delete, pbc_id=pbc_id)
         for abb_id in abb_ids:
             self.add_relationship(pbc_id, abb_id, "COMPOSES")
+
+    # --- Advisor Reports ---
+
+    def generate_report_id(self) -> str:
+        """Generate next sequential report ID (RPT-001, RPT-002, ...)."""
+        query = "MATCH (r:AdvisorReport) RETURN r.id AS id ORDER BY r.id DESC LIMIT 1"
+        with self.session() as session:
+            record = session.run(query).single()
+        if record and record["id"]:
+            try:
+                num = int(record["id"].split("-")[-1]) + 1
+            except (ValueError, IndexError):
+                num = 1
+        else:
+            num = 1
+        return f"RPT-{num:03d}"
+
+    def save_report(self, data: dict) -> dict:
+        """Persist an AdvisorReport node and RECOMMENDS relationships."""
+        report_id = self.generate_report_id()
+        now = datetime.now(timezone.utc).isoformat()
+
+        # Auto-generate title from first ~80 chars of problem
+        problem = data.get("problem", "")
+        title = data.get("title") or (problem[:80] + ("..." if len(problem) > 80 else ""))
+
+        props = {
+            "id": report_id,
+            "title": title,
+            "problem": problem,
+            "summary": data.get("summary", ""),
+            "confidence": data.get("confidence", "MEDIUM"),
+            "starred": False,
+            "provider": data.get("provider", ""),
+            "model": data.get("model", ""),
+            "result_json": json.dumps(data.get("result_json", {})),
+            "created_at": now,
+        }
+        if data.get("category_focus"):
+            props["category_focus"] = data["category_focus"]
+        if data.get("technology_preferences"):
+            props["technology_preferences"] = data["technology_preferences"]
+
+        props = {k: v for k, v in props.items() if v is not None}
+        prop_str = ", ".join(f"{k}: ${k}" for k in props)
+        query = f"CREATE (r:AdvisorReport {{{prop_str}}}) RETURN r"
+
+        with self.session() as session:
+            result = session.run(query, **props)
+            report = dict(result.single()["r"])
+
+        # Create RECOMMENDS relationships
+        analysis = data.get("result_json", {}).get("analysis", {})
+        self._create_report_relationships(report_id, analysis)
+
+        return self._deserialize_report(report)
+
+    def _create_report_relationships(self, report_id: str, analysis: dict):
+        """Create RECOMMENDS edges from report to Pattern/PBC nodes."""
+        items = []
+        for pbc in analysis.get("recommended_pbcs", []):
+            items.append({"id": pbc.get("id"), "role": "pbc", "confidence": pbc.get("confidence", "")})
+        for abb in analysis.get("recommended_abbs", []):
+            items.append({"id": abb.get("id"), "role": "abb", "confidence": abb.get("confidence", "")})
+        for sbb in analysis.get("recommended_sbbs", []):
+            items.append({"id": sbb.get("id"), "role": "sbb", "confidence": sbb.get("confidence", "")})
+
+        query = """
+        MATCH (r:AdvisorReport {id: $report_id})
+        OPTIONAL MATCH (p:Pattern {id: $target_id})
+        OPTIONAL MATCH (pbc:PBC {id: $target_id})
+        WITH r, coalesce(p, pbc) AS target
+        WHERE target IS NOT NULL
+        MERGE (r)-[rel:RECOMMENDS]->(target)
+        SET rel.role = $role, rel.confidence = $confidence
+        """
+        with self.session() as session:
+            for item in items:
+                if not item.get("id"):
+                    continue
+                try:
+                    session.run(query,
+                                report_id=report_id,
+                                target_id=item["id"],
+                                role=item["role"],
+                                confidence=item["confidence"])
+                except Exception:
+                    pass  # Skip invalid target IDs
+
+    def list_reports(self, limit: int = 50) -> list:
+        """List saved reports (no result_json), starred first then newest."""
+        query = """
+        MATCH (r:AdvisorReport)
+        RETURN r.id AS id, r.title AS title, r.problem AS problem,
+               r.summary AS summary, r.confidence AS confidence,
+               r.starred AS starred, r.provider AS provider,
+               r.model AS model, r.created_at AS created_at,
+               r.category_focus AS category_focus,
+               r.technology_preferences AS technology_preferences
+        ORDER BY r.starred DESC, r.created_at DESC
+        LIMIT $limit
+        """
+        with self.session() as session:
+            records = session.run(query, limit=limit)
+            results = []
+            for r in records:
+                row = dict(r)
+                row["starred"] = bool(row.get("starred"))
+                row["technology_preferences"] = row.get("technology_preferences") or []
+                results.append(row)
+            return results
+
+    def get_report(self, report_id: str) -> Optional[dict]:
+        """Get a single report with full result_json."""
+        query = "MATCH (r:AdvisorReport {id: $id}) RETURN r"
+        with self.session() as session:
+            result = session.run(query, id=report_id)
+            record = result.single()
+            if not record:
+                return None
+            return self._deserialize_report(dict(record["r"]))
+
+    def update_report(self, report_id: str, data: dict) -> Optional[dict]:
+        """Update report fields (title, starred)."""
+        allowed = {}
+        if "title" in data and data["title"] is not None:
+            allowed["title"] = data["title"]
+        if "starred" in data and data["starred"] is not None:
+            allowed["starred"] = bool(data["starred"])
+
+        if not allowed:
+            return self.get_report(report_id)
+
+        set_clauses = ", ".join(f"r.{k} = ${k}" for k in allowed)
+        query = f"MATCH (r:AdvisorReport {{id: $id}}) SET {set_clauses} RETURN r"
+        allowed["id"] = report_id
+
+        with self.session() as session:
+            result = session.run(query, **allowed)
+            record = result.single()
+            if not record:
+                return None
+            return self._deserialize_report(dict(record["r"]))
+
+    def delete_report(self, report_id: str) -> bool:
+        """Delete a single advisor report and all its relationships."""
+        query = "MATCH (r:AdvisorReport {id: $id}) DETACH DELETE r RETURN count(r) as deleted"
+        with self.session() as session:
+            result = session.run(query, id=report_id)
+            return result.single()["deleted"] > 0
+
+    def delete_all_reports(self, keep_starred: bool = True) -> int:
+        """Delete all non-starred reports (or all if keep_starred=False)."""
+        if keep_starred:
+            query = """
+            MATCH (r:AdvisorReport) WHERE r.starred <> true
+            DETACH DELETE r RETURN count(r) as deleted
+            """
+        else:
+            query = "MATCH (r:AdvisorReport) DETACH DELETE r RETURN count(r) as deleted"
+        with self.session() as session:
+            result = session.run(query)
+            return result.single()["deleted"]
+
+    def cleanup_old_reports(self, max_reports: int = 20, retention_days: int = 30) -> dict:
+        """Enforce retention: delete non-starred excess + aged reports."""
+        deleted_by_count = 0
+        deleted_by_age = 0
+
+        with self.session() as session:
+            # 1. Keep only newest max_reports (skip starred)
+            count_query = """
+            MATCH (r:AdvisorReport) WHERE r.starred <> true
+            WITH r ORDER BY r.created_at DESC
+            WITH collect(r) AS all_reports
+            WITH all_reports[$skip..] AS old_reports
+            UNWIND old_reports AS r
+            DETACH DELETE r
+            RETURN count(r) as deleted
+            """
+            # Use SKIP via parameter
+            result = session.run(count_query, skip=max_reports)
+            rec = result.single()
+            if rec:
+                deleted_by_count = rec["deleted"]
+
+            # 2. Delete non-starred reports older than retention_days
+            age_query = """
+            MATCH (r:AdvisorReport)
+            WHERE r.starred <> true
+              AND r.created_at < $cutoff
+            DETACH DELETE r
+            RETURN count(r) as deleted
+            """
+            from datetime import timedelta
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
+            result = session.run(age_query, cutoff=cutoff)
+            rec = result.single()
+            if rec:
+                deleted_by_age = rec["deleted"]
+
+        return {"deleted_by_count": deleted_by_count, "deleted_by_age": deleted_by_age}
+
+    def count_reports(self) -> int:
+        """Count total advisor reports."""
+        with self.session() as session:
+            return session.run("MATCH (r:AdvisorReport) RETURN count(r) as c").single()["c"]
+
+    def _deserialize_report(self, report: dict) -> dict:
+        """Deserialize result_json string back to dict."""
+        val = report.get("result_json")
+        if isinstance(val, str):
+            try:
+                report["result_json"] = json.loads(val)
+            except (json.JSONDecodeError, TypeError):
+                report["result_json"] = {}
+        report["starred"] = bool(report.get("starred"))
+        report["technology_preferences"] = report.get("technology_preferences") or []
+        return report
+
+    # --- Health Analysis Persistence ---
+
+    def generate_health_analysis_id(self) -> str:
+        """Generate next sequential health analysis ID (HA-001, HA-002, ...)."""
+        query = "MATCH (h:HealthAnalysis) RETURN h.id AS id ORDER BY h.id DESC LIMIT 1"
+        with self.session() as session:
+            record = session.run(query).single()
+        if record and record["id"]:
+            try:
+                num = int(record["id"].split("-")[-1]) + 1
+            except (ValueError, IndexError):
+                num = 1
+        else:
+            num = 1
+        return f"HA-{num:03d}"
+
+    def save_health_analysis(self, data: dict) -> dict:
+        """Persist a HealthAnalysis node."""
+        analysis_id = self.generate_health_analysis_id()
+        now = datetime.now(timezone.utc).isoformat()
+        from datetime import datetime as dt
+        date_str = dt.now().strftime("%b %d, %Y %H:%M")
+        title = data.get("title") or f"Health Analysis — {date_str}"
+
+        props = {
+            "id": analysis_id,
+            "title": title,
+            "analysis_json": json.dumps(data.get("analysis_json", {})),
+            "health_score": data.get("health_score", 0),
+            "score_breakdown_json": json.dumps(data.get("score_breakdown_json", {})),
+            "provider": data.get("provider", ""),
+            "model": data.get("model", ""),
+            "pattern_count": data.get("pattern_count", 0),
+            "created_at": now,
+        }
+        props = {k: v for k, v in props.items() if v is not None}
+        prop_str = ", ".join(f"{k}: ${k}" for k in props)
+        query = f"CREATE (h:HealthAnalysis {{{prop_str}}}) RETURN h"
+
+        with self.session() as session:
+            result = session.run(query, **props)
+            return self._deserialize_health_analysis(dict(result.single()["h"]))
+
+    def get_health_analysis(self, analysis_id: str) -> Optional[dict]:
+        """Get a single health analysis by ID (full data)."""
+        query = "MATCH (h:HealthAnalysis {id: $id}) RETURN h"
+        with self.session() as session:
+            result = session.run(query, id=analysis_id)
+            record = result.single()
+            if not record:
+                return None
+            return self._deserialize_health_analysis(dict(record["h"]))
+
+    def get_latest_health_analysis(self) -> Optional[dict]:
+        """Get the most recent health analysis."""
+        query = "MATCH (h:HealthAnalysis) RETURN h ORDER BY h.created_at DESC LIMIT 1"
+        with self.session() as session:
+            result = session.run(query)
+            record = result.single()
+            if not record:
+                return None
+            return self._deserialize_health_analysis(dict(record["h"]))
+
+    def list_health_analyses(self, limit: int = 20) -> list:
+        """List health analyses (without analysis_json), newest first."""
+        query = """
+        MATCH (h:HealthAnalysis)
+        RETURN h.id AS id, h.title AS title, h.health_score AS health_score,
+               h.provider AS provider, h.model AS model,
+               h.pattern_count AS pattern_count, h.created_at AS created_at
+        ORDER BY h.created_at DESC
+        LIMIT $limit
+        """
+        with self.session() as session:
+            records = session.run(query, limit=limit)
+            return [dict(r) for r in records]
+
+    def delete_health_analysis(self, analysis_id: str) -> bool:
+        """Delete a single health analysis."""
+        query = "MATCH (h:HealthAnalysis {id: $id}) DELETE h RETURN count(h) as deleted"
+        with self.session() as session:
+            result = session.run(query, id=analysis_id)
+            return result.single()["deleted"] > 0
+
+    def delete_all_health_analyses(self) -> int:
+        """Delete all health analyses."""
+        query = "MATCH (h:HealthAnalysis) DELETE h RETURN count(h) as deleted"
+        with self.session() as session:
+            result = session.run(query)
+            return result.single()["deleted"]
+
+    def _deserialize_health_analysis(self, data: dict) -> dict:
+        """Deserialize JSON string fields back to dicts."""
+        for key in ("analysis_json", "score_breakdown_json"):
+            val = data.get(key)
+            if isinstance(val, str):
+                try:
+                    data[key] = json.loads(val)
+                except (json.JSONDecodeError, TypeError):
+                    data[key] = {}
+        return data
+
+    # --- Pattern Health Analysis ---
+
+    def get_pattern_health(self) -> dict:
+        """Comprehensive pattern library health analysis via Cypher queries."""
+        health: dict = {}
+
+        # Per-type field definitions (actual Neo4j property names)
+        TYPE_FIELDS = {
+            "AB": {
+                "intent": "Intent",
+                "problem": "Problem",
+                "solution": "Solution",
+                "structural_elements": "Structural Elements",
+                "invariants": "Invariants",
+                "inter_element_contracts": "Contracts",
+                "related_patterns_text": "Related Patterns",
+                "related_adrs": "Related ADRs",
+                "building_blocks_note": "Building Blocks",
+            },
+            "ABB": {
+                "functionality": "Functionality",
+                "inbound_interfaces": "Inbound Interfaces",
+                "outbound_interfaces": "Outbound Interfaces",
+                "business_capabilities": "Business Capabilities",
+            },
+            "SBB": {
+                "specific_functionality": "Specific Functionality",
+                "inbound_interfaces": "Inbound Interfaces",
+                "outbound_interfaces": "Outbound Interfaces",
+                "sbb_mapping": "SBB Mapping",
+                "business_capabilities": "Business Capabilities",
+            },
+        }
+
+        # List fields (checked via size() > 0 rather than string non-empty)
+        LIST_FIELDS = {"business_capabilities", "sbb_mapping", "consumed_by_ids", "works_with_ids"}
+
+        with self.session() as session:
+            # ── 1. Overall Counts ──
+            r = session.run("""
+                MATCH (p:Pattern)
+                WITH count(p) as total,
+                     count(CASE WHEN p.status = 'ACTIVE' THEN 1 END) as active,
+                     count(CASE WHEN p.status = 'DRAFT' THEN 1 END) as draft,
+                     count(CASE WHEN p.status = 'DEPRECATED' THEN 1 END) as deprecated,
+                     count(CASE WHEN p.type = 'AB' THEN 1 END) as ab,
+                     count(CASE WHEN p.type = 'ABB' THEN 1 END) as abb,
+                     count(CASE WHEN p.type = 'SBB' THEN 1 END) as sbb
+                RETURN total, active, draft, deprecated, ab, abb, sbb
+            """).single()
+            health["counts"] = {
+                "total": r["total"], "active": r["active"], "draft": r["draft"],
+                "deprecated": r["deprecated"], "ab": r["ab"], "abb": r["abb"], "sbb": r["sbb"],
+            }
+
+            # ── 2. Status & Category Distributions ──
+            status_dist = {}
+            if r["active"]: status_dist["Active"] = r["active"]
+            if r["draft"]: status_dist["Draft"] = r["draft"]
+            if r["deprecated"]: status_dist["Deprecated"] = r["deprecated"]
+
+            cat_query = """
+            MATCH (p:Pattern)
+            WITH p.category as category, count(p) as count
+            RETURN category, count
+            ORDER BY count DESC
+            """
+            records = session.run(cat_query)
+            category_dist = {}
+            for rec in records:
+                category_dist[rec["category"] or "Uncategorized"] = rec["count"]
+
+            health["distributions"] = {
+                "status": status_dist,
+                "category": category_dist,
+            }
+
+            # ── 3. Field Completeness (per-type, using actual field names) ──
+            # Fetch all patterns with their properties for completeness analysis
+            completeness_query = """
+            MATCH (p:Pattern)
+            RETURN p as node
+            ORDER BY p.id
+            """
+            records = list(session.run(completeness_query))
+
+            all_patterns = []
+            total_completeness = 0.0
+            pattern_count = 0
+            by_type: dict = {}  # {type: {count, fields: {label: pct}, field_details: {label: {has, total}}}}
+
+            for rec in records:
+                node = rec["node"]
+                props = dict(node)
+                pid = props.get("id", "")
+                pname = props.get("name", "")
+                ptype = props.get("type", "")
+                pstatus = props.get("status", "")
+
+                fields_def = TYPE_FIELDS.get(ptype, {})
+                if not fields_def:
+                    continue
+
+                filled = 0
+                total_fields = len(fields_def)
+                missing = []
+
+                for prop_name, label in fields_def.items():
+                    val = props.get(prop_name)
+                    if prop_name in LIST_FIELDS:
+                        has = val is not None and len(val) > 0
+                    else:
+                        has = val is not None and str(val).strip() != ""
+                    if has:
+                        filled += 1
+                    else:
+                        missing.append(label)
+
+                pct = round((filled / total_fields) * 100, 1) if total_fields > 0 else 0.0
+                total_completeness += pct
+                pattern_count += 1
+
+                all_patterns.append({
+                    "id": pid, "name": pname, "type": ptype,
+                    "status": pstatus, "score": pct,
+                    "missing_fields": missing,
+                })
+
+                # Accumulate per-type field stats
+                if ptype not in by_type:
+                    by_type[ptype] = {
+                        "count": 0,
+                        "fields": {},
+                        "_accum": {label: 0 for label in fields_def.values()},
+                    }
+                by_type[ptype]["count"] += 1
+                for prop_name, label in fields_def.items():
+                    val = props.get(prop_name)
+                    if prop_name in LIST_FIELDS:
+                        has = val is not None and len(val) > 0
+                    else:
+                        has = val is not None and str(val).strip() != ""
+                    if has:
+                        by_type[ptype]["_accum"][label] += 1
+
+            # Finalize by_type field percentages
+            for ptype, data in by_type.items():
+                cnt = data["count"]
+                data["fields"] = {
+                    label: round((v / cnt) * 100, 1) if cnt > 0 else 0
+                    for label, v in data["_accum"].items()
+                }
+                del data["_accum"]
+
+            # Sort all_patterns by score ascending for incomplete list
+            all_patterns.sort(key=lambda p: p["score"])
+            incomplete = [p for p in all_patterns if p["missing_fields"]]
+
+            health["completeness"] = {
+                "avg_score": round(total_completeness / max(pattern_count, 1), 1),
+                "fully_complete": len(all_patterns) - len(incomplete),
+                "incomplete_count": len(incomplete),
+                "by_type": by_type,
+                "incomplete_patterns": incomplete,
+            }
+
+            # ── 4. Orphan Patterns (no relationships at all) ──
+            # AB patterns are excluded: they are independent enterprise-level
+            # blueprints/topologies and don't require graph relationships.
+            orphan_query = """
+            MATCH (p:Pattern)
+            WHERE NOT (p)-[]-() AND p.type <> 'AB'
+            RETURN p.id as id, p.name as name, p.type as type,
+                   p.status as status, p.category as category
+            ORDER BY p.id
+            """
+            records = session.run(orphan_query)
+            orphan_patterns = [dict(r) for r in records]
+
+            # ── 5. Relationship Analysis ──
+            rel_query = """
+            MATCH (p:Pattern)
+            OPTIONAL MATCH (p)-[r]-()
+            WITH p.id as id, p.name as name, p.type as type, count(r) as rel_count
+            RETURN id, name, type, rel_count
+            ORDER BY rel_count DESC
+            """
+            records = session.run(rel_query)
+            rel_data = [dict(r) for r in records]
+            rel_counts = [d["rel_count"] for d in rel_data]
+            # AB patterns are independent; exclude from unconnected count
+            unconnected = len([d for d in rel_data if d["rel_count"] == 0 and d["type"] != "AB"])
+
+            # ── 6. Relationship Type Distribution ──
+            rel_type_query = """
+            MATCH ()-[r]->()
+            WHERE NOT type(r) IN ['RECOMMENDS']
+            RETURN type(r) as rel_type, count(r) as count
+            ORDER BY count DESC
+            """
+            records = session.run(rel_type_query)
+            rel_type_obj = {}
+            total_directed_rels = 0
+            for rec in records:
+                rel_type_obj[rec["rel_type"]] = rec["count"]
+                total_directed_rels += rec["count"]
+
+            health["relationships"] = {
+                "total_relationships": total_directed_rels,
+                "avg_per_pattern": round(sum(rel_counts) / max(len(rel_counts), 1), 1),
+                "unconnected": unconnected,
+                "max_relationships": max(rel_counts) if rel_counts else 0,
+                "by_type": rel_type_obj,
+                "most_connected": [
+                    {"id": d["id"], "name": d["name"], "count": d["rel_count"]}
+                    for d in rel_data[:10]
+                ],
+            }
+
+            # ── 7. Cross-references (deprecated patterns still used) ──
+            deprecated_refs_query = """
+            MATCH (a:Pattern)-[r]->(b:Pattern)
+            WHERE b.status = 'DEPRECATED' AND a.status = 'ACTIVE'
+            RETURN b.id as id, b.name as name, count(DISTINCT a) as referenced_by
+            ORDER BY referenced_by DESC
+            """
+            records = session.run(deprecated_refs_query)
+            deprecated_referenced = [dict(r) for r in records]
+
+            # ── 8. Duplicate Pattern Names ──
+            dup_query = """
+            MATCH (p:Pattern)
+            WITH p.name as name, count(p) as cnt
+            WHERE cnt > 1
+            RETURN name, cnt as count
+            ORDER BY cnt DESC
+            """
+            records = session.run(dup_query)
+            duplicate_names = [dict(r) for r in records]
+
+            health["problems"] = {
+                "orphans": orphan_patterns,
+                "deprecated_referenced": deprecated_referenced,
+                "duplicate_names": duplicate_names,
+            }
+
+            # ── 9. ABB → SBB Implementation Coverage ──
+            abb_sbb_query = """
+            MATCH (abb:Pattern {type: 'ABB'})
+            OPTIONAL MATCH (sbb:Pattern {type: 'SBB'})-[:IMPLEMENTS]->(abb)
+            WITH abb.id as abb_id, abb.name as abb_name, abb.category as category,
+                 collect(CASE WHEN sbb IS NOT NULL THEN {id: sbb.id, name: sbb.name} END) as sbbs
+            RETURN abb_id, abb_name, category,
+                   [s IN sbbs WHERE s IS NOT NULL] as implementing_sbbs
+            ORDER BY abb_id
+            """
+            records = session.run(abb_sbb_query)
+            abb_coverage = []
+            abbs_with_sbbs = 0
+            abbs_without_sbbs = 0
+            for rec in records:
+                d = dict(rec)
+                sbbs = d["implementing_sbbs"]
+                if sbbs:
+                    abbs_with_sbbs += 1
+                else:
+                    abbs_without_sbbs += 1
+                abb_coverage.append({
+                    "id": d["abb_id"], "name": d["abb_name"], "category": d["category"],
+                    "sbb_count": len(sbbs),
+                    "sbbs": sbbs[:5],  # limit to 5 for readability
+                })
+
+            health["abb_coverage"] = {
+                "total_abbs": abbs_with_sbbs + abbs_without_sbbs,
+                "with_sbbs": abbs_with_sbbs,
+                "without_sbbs": abbs_without_sbbs,
+                "coverage_pct": round((abbs_with_sbbs / max(abbs_with_sbbs + abbs_without_sbbs, 1)) * 100, 1),
+                "details": sorted(abb_coverage, key=lambda x: x["sbb_count"]),
+            }
+
+            # ── 10. Technology Coverage ──
+            tech_query = """
+            MATCH (t:Technology)
+            WITH count(t) as total,
+                 count(CASE WHEN t.status = 'DEPRECATED' THEN 1 END) as deprecated
+            OPTIONAL MATCH (p:Pattern)-[:USES]->(t2:Technology)
+            WITH total, deprecated, count(DISTINCT t2) as techs_with_patterns
+            RETURN total, deprecated, techs_with_patterns
+            """
+            r = session.run(tech_query).single()
+            health["technology_stats"] = {
+                "total": r["total"],
+                "deprecated": r["deprecated"],
+                "with_patterns": r["techs_with_patterns"],
+                "without_patterns": r["total"] - r["techs_with_patterns"],
+            }
+
+            # ── 11. PBC Coverage ──
+            pbc_query = """
+            MATCH (pbc:PBC)
+            OPTIONAL MATCH (pbc)-[:COMPOSES]->(abb:Pattern)
+            WITH pbc.id as id, pbc.name as name, count(abb) as abb_count
+            RETURN id, name, abb_count
+            ORDER BY abb_count ASC
+            """
+            records = session.run(pbc_query)
+            pbc_data = [dict(r) for r in records]
+            health["pbc_stats"] = {
+                "total": len(pbc_data),
+                "empty_pbcs": [d for d in pbc_data if d["abb_count"] == 0],
+                "avg_abbs_per_pbc": round(sum(d["abb_count"] for d in pbc_data) / max(len(pbc_data), 1), 1),
+                "details": pbc_data,
+            }
+
+            # ── 12. Compute overall health score ──
+            # Weighted: completeness (30%), relationships (25%), coverage (25%), problems (20%)
+            completeness_score = health["completeness"]["avg_score"]
+
+            connected = len([c for c in rel_counts if c > 0])
+            rel_score = (connected / max(pattern_count, 1)) * 100
+
+            abb_cov_pct = health["abb_coverage"]["coverage_pct"]
+            coverage_score = abb_cov_pct
+
+            error_count = len(deprecated_referenced)
+            warning_count = len(orphan_patterns)
+            problem_penalty = min(error_count * 15 + warning_count * 5, 100)
+            problem_score = max(100 - problem_penalty, 0)
+
+            health["health_score"] = round(
+                completeness_score * 0.3 + rel_score * 0.25 + coverage_score * 0.25 + problem_score * 0.2, 1
+            )
+            health["score_breakdown"] = {
+                "completeness": round(completeness_score, 1),
+                "relationships": round(rel_score, 1),
+                "coverage": round(coverage_score, 1),
+                "problems": round(problem_score, 1),
+            }
+
+        return health
+
+    def get_pattern_library_summary(self) -> str:
+        """Get a rich text summary of the pattern library for LLM analysis.
+
+        Sends type-specific content so the LLM can perform semantic analysis:
+        - AB: intent, problem, solution, structural_elements, invariants, contracts
+        - ABB: functionality, inbound/outbound interfaces, business_capabilities
+        - SBB: specific_functionality, inbound/outbound interfaces, sbb_mapping
+        Plus relationships, PBCs, technologies, and health metrics.
+        """
+        lines: list[str] = []
+
+        def _trunc(val, limit=300) -> str:
+            if not val:
+                return ""
+            s = str(val).strip()
+            return s[:limit] + "..." if len(s) > limit else s
+
+        with self.session() as session:
+            # ── Patterns with full properties ──
+            records = list(session.run("""
+                MATCH (p:Pattern)
+                OPTIONAL MATCH (p)-[r]->(t)
+                WITH p, collect(DISTINCT {type: type(r), target: t.id, target_name: t.name}) as rels
+                RETURN p as node, rels
+                ORDER BY p.type, p.category, p.id
+            """))
+
+            current_type = None
+            for rec in records:
+                props = dict(rec["node"])
+                rels = rec["rels"]
+                ptype = props.get("type", "")
+                pid = props.get("id", "")
+                pname = props.get("name", "")
+                category = props.get("category", "")
+                status = props.get("status", "")
+
+                # Type section header
+                if ptype != current_type:
+                    type_labels = {"AB": "Architecture Blueprints", "ABB": "Architecture Building Blocks", "SBB": "Solution Building Blocks"}
+                    lines.append(f"\n## {type_labels.get(ptype, ptype)}")
+                    current_type = ptype
+
+                lines.append(f"\n### {pid}: {pname}")
+                lines.append(f"Type: {ptype} | Category: {category} | Status: {status}")
+
+                # Type-specific content
+                if ptype == "AB":
+                    if props.get("intent"):
+                        lines.append(f"Intent: {_trunc(props['intent'], 400)}")
+                    if props.get("problem"):
+                        lines.append(f"Problem: {_trunc(props['problem'], 300)}")
+                    if props.get("solution"):
+                        lines.append(f"Solution: {_trunc(props['solution'], 300)}")
+                    if props.get("structural_elements"):
+                        lines.append(f"Structural Elements: {_trunc(props['structural_elements'], 500)}")
+                    if props.get("invariants"):
+                        lines.append(f"Invariants: {_trunc(props['invariants'], 400)}")
+                    if props.get("inter_element_contracts"):
+                        lines.append(f"Inter-Element Contracts: {_trunc(props['inter_element_contracts'], 500)}")
+                    if props.get("building_blocks_note"):
+                        lines.append(f"Building Blocks Note: {_trunc(props['building_blocks_note'], 300)}")
+
+                elif ptype == "ABB":
+                    if props.get("functionality"):
+                        lines.append(f"Functionality: {_trunc(props['functionality'], 400)}")
+                    if props.get("inbound_interfaces"):
+                        lines.append(f"Inbound Interfaces: {_trunc(props['inbound_interfaces'], 300)}")
+                    if props.get("outbound_interfaces"):
+                        lines.append(f"Outbound Interfaces: {_trunc(props['outbound_interfaces'], 300)}")
+                    caps = props.get("business_capabilities")
+                    if caps and len(caps) > 0:
+                        lines.append(f"Business Capabilities: {', '.join(caps)}")
+                    works = props.get("works_with_ids")
+                    if works and len(works) > 0:
+                        lines.append(f"Works With: {', '.join(works)}")
+
+                elif ptype == "SBB":
+                    if props.get("specific_functionality"):
+                        lines.append(f"Specific Functionality: {_trunc(props['specific_functionality'], 400)}")
+                    if props.get("inbound_interfaces"):
+                        lines.append(f"Inbound Interfaces: {_trunc(props['inbound_interfaces'], 300)}")
+                    if props.get("outbound_interfaces"):
+                        lines.append(f"Outbound Interfaces: {_trunc(props['outbound_interfaces'], 300)}")
+                    mapping = props.get("sbb_mapping")
+                    if mapping and len(mapping) > 0:
+                        if isinstance(mapping, str):
+                            try:
+                                mapping = json.loads(mapping)
+                            except Exception:
+                                mapping = []
+                        if isinstance(mapping, list):
+                            parts = [f"{m.get('key', '')}: {m.get('value', '')}" for m in mapping if isinstance(m, dict)]
+                            if parts:
+                                lines.append(f"Technology Stack: {' | '.join(parts)}")
+                    caps = props.get("business_capabilities")
+                    if caps and len(caps) > 0:
+                        lines.append(f"Business Capabilities: {', '.join(caps)}")
+                    works = props.get("works_with_ids")
+                    if works and len(works) > 0:
+                        lines.append(f"Works With: {', '.join(works)}")
+
+                # Relationships for all types
+                if rels:
+                    rel_parts = [f"{r['type']}->{r['target']} ({r.get('target_name', '')})" for r in rels if r.get("target")]
+                    if rel_parts:
+                        lines.append(f"Relationships: {', '.join(rel_parts[:15])}")
+
+            # ── Categories ──
+            cat_records = session.run("""
+                MATCH (c:Category)
+                OPTIONAL MATCH (p:Pattern {category: c.code})
+                RETURN c.code as code, c.name as name, count(p) as pattern_count
+                ORDER BY c.code
+            """)
+            lines.append("\n## Categories")
+            for rec in cat_records:
+                d = dict(rec)
+                lines.append(f"- {d['code']}: {d['name']} ({d['pattern_count']} patterns)")
+
+            # ── PBCs with ABB details ──
+            pbc_records = session.run("""
+                MATCH (pbc:PBC)
+                OPTIONAL MATCH (pbc)-[:COMPOSES]->(abb:Pattern)
+                RETURN pbc.id as id, pbc.name as name,
+                       collect({id: abb.id, name: abb.name}) as abbs
+                ORDER BY pbc.id
+            """)
+            lines.append("\n## Packaged Business Capabilities (PBCs)")
+            for rec in pbc_records:
+                d = dict(rec)
+                abb_parts = [f"{a['id']} ({a['name']})" for a in d["abbs"] if a.get("id")]
+                abbs_str = ", ".join(abb_parts) if abb_parts else "no ABBs composed"
+                lines.append(f"- {d['id']}: {d['name']} -> [{abbs_str}]")
+
+            # ── Technologies ──
+            tech_records = session.run("""
+                MATCH (t:Technology)
+                OPTIONAL MATCH (p:Pattern)-[:USES]->(t)
+                RETURN t.id as id, t.name as name, t.status as status,
+                       collect(p.id) as used_by
+                ORDER BY t.id
+            """)
+            tech_list = list(tech_records)
+            if tech_list:
+                lines.append("\n## Technologies")
+                for rec in tech_list:
+                    d = dict(rec)
+                    used = ", ".join(d["used_by"][:10]) if d["used_by"] else "unused"
+                    status_str = f" [DEPRECATED]" if d.get("status") == "DEPRECATED" else ""
+                    lines.append(f"- {d['id']}: {d['name']}{status_str} (used by: {used})")
+
+            # ── ABB→SBB Implementation Map ──
+            impl_records = session.run("""
+                MATCH (abb:Pattern {type: 'ABB'})
+                OPTIONAL MATCH (sbb:Pattern {type: 'SBB'})-[:IMPLEMENTS]->(abb)
+                RETURN abb.id as abb_id, abb.name as abb_name,
+                       collect({id: sbb.id, name: sbb.name}) as sbbs
+                ORDER BY abb.id
+            """)
+            lines.append("\n## ABB → SBB Implementation Map")
+            for rec in impl_records:
+                d = dict(rec)
+                sbb_parts = [f"{s['id']} ({s['name']})" for s in d["sbbs"] if s.get("id")]
+                sbbs_str = ", ".join(sbb_parts) if sbb_parts else "NO SBBs — implementation gap"
+                lines.append(f"- {d['abb_id']} ({d['abb_name']}) <- [{sbbs_str}]")
+
+            # ── Health Metrics Summary ──
+            try:
+                health = self.get_pattern_health()
+                lines.append("\n## Current Health Metrics")
+                lines.append(f"Health Score: {health.get('health_score', 'N/A')}/100")
+                sb = health.get("score_breakdown", {})
+                lines.append(f"Completeness: {sb.get('completeness', 'N/A')}% | Relationships: {sb.get('relationships', 'N/A')}% | Coverage: {sb.get('coverage', 'N/A')}% | Problems: {sb.get('problems', 'N/A')}%")
+                counts = health.get("counts", {})
+                lines.append(f"Patterns: {counts.get('total', 0)} total ({counts.get('active', 0)} active, {counts.get('draft', 0)} draft, {counts.get('deprecated', 0)} deprecated)")
+                abb_cov = health.get("abb_coverage", {})
+                lines.append(f"ABB Coverage: {abb_cov.get('coverage_pct', 0)}% ({abb_cov.get('with_sbbs', 0)}/{abb_cov.get('total_abbs', 0)} ABBs have SBBs)")
+                orphans = health.get("problems", {}).get("orphans", [])
+                if orphans:
+                    lines.append(f"Orphaned patterns: {', '.join(o['id'] for o in orphans)}")
+            except Exception:
+                pass
+
+        return "\n".join(lines)
 
     # --- Bulk operations for seeding ---
 

@@ -35,8 +35,9 @@ export default function GraphView({ data, height = '600px', onNodeClick }) {
   const [visibleEdgeTypes, setVisibleEdgeTypes] = useState(() => new Set(Object.keys(EDGE_COLORS)))
   // Feature 2: Layout mode
   const [layoutMode, setLayoutMode] = useState('force')
-  // Feature 3: Node detail sidebar
+  // Feature 3: Node detail sidebar (always open, collapsible)
   const [selectedNodeData, setSelectedNodeData] = useState(null)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   // Feature 4: Search
   const [searchQuery, setSearchQuery] = useState('')
   const searchTimerRef = useRef(null)
@@ -49,12 +50,17 @@ export default function GraphView({ data, height = '600px', onNodeClick }) {
     return () => clearTimeout(searchTimerRef.current)
   }, [searchQuery])
 
-  // Reset state when data changes
+  // Reset state when data content actually changes (filter/fetch, not just re-render)
+  const dataSignature = data ? `${data.nodes.length}-${data.edges.length}-${data.nodes.map(n => n.id).join(',')}` : ''
+  const prevSignatureRef = useRef(dataSignature)
   useEffect(() => {
-    setSelectedNodeData(null)
-    setSearchQuery('')
-    setDebouncedQuery('')
-  }, [data])
+    if (prevSignatureRef.current !== dataSignature) {
+      prevSignatureRef.current = dataSignature
+      setSelectedNodeData(null)
+      setSearchQuery('')
+      setDebouncedQuery('')
+    }
+  }, [dataSignature])
 
   // Helper: get node type key for colors/levels
   const getNodeTypeKey = useCallback((n) => {
@@ -129,7 +135,7 @@ export default function GraphView({ data, height = '600px', onNodeClick }) {
       options,
     )
 
-    // Single click -> sidebar
+    // Single click -> sidebar detail (expand sidebar on node click)
     networkRef.current.on('click', (params) => {
       if (params.nodes.length > 0) {
         const nodeId = params.nodes[0]
@@ -144,9 +150,11 @@ export default function GraphView({ data, height = '600px', onNodeClick }) {
               otherName: data.nodes.find(nd => nd.id === (e.source === nodeId ? e.target : e.source))?.name || '',
             }))
           setSelectedNodeData({ ...node, relationships })
+          setSidebarCollapsed(false)
         }
         if (onNodeClick) onNodeClick(nodeId)
       } else {
+        // Click empty space: just deselect node, don't hide sidebar
         setSelectedNodeData(null)
       }
     })
@@ -418,84 +426,137 @@ export default function GraphView({ data, height = '600px', onNodeClick }) {
           ))}
         </div>
 
-        {/* ---- DETAIL SIDEBAR ---- */}
-        {selectedNodeData && (
-          <div className="absolute top-0 right-0 w-72 h-full bg-gray-900/95 border-l border-gray-800 z-10 overflow-y-auto backdrop-blur-sm">
-            {/* Header */}
-            <div className="flex items-center justify-between p-3 border-b border-gray-800 sticky top-0 bg-gray-900/95 backdrop-blur-sm">
-              <div className="flex items-center gap-2 min-w-0">
-                <div className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{
+        {/* ---- DETAIL SIDEBAR (always present, collapsible) ---- */}
+        <div className={`absolute top-0 right-0 h-full z-10 transition-all duration-200 ${
+          sidebarCollapsed ? 'w-8' : 'w-72'
+        }`}>
+          {/* Collapsed state: thin strip with expand button */}
+          {sidebarCollapsed && (
+            <div className="w-full h-full bg-gray-900/90 border-l border-gray-800 backdrop-blur-sm flex flex-col items-center pt-2">
+              <button
+                onClick={() => setSidebarCollapsed(false)}
+                className="text-gray-400 hover:text-white transition-colors p-1"
+                title="Expand panel"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+              </button>
+              {selectedNodeData && (
+                <div className="mt-2 w-3 h-3 rounded-sm flex-shrink-0" style={{
                   backgroundColor: (NODE_COLORS[getNodeTypeKey(selectedNodeData)] || NODE_COLORS.ABB).background
-                }} />
-                <span className="text-xs font-semibold text-white truncate">{selectedNodeData.id}</span>
-              </div>
-              <button onClick={() => setSelectedNodeData(null)} className="text-gray-500 hover:text-gray-300 text-sm ml-2 flex-shrink-0">✕</button>
-            </div>
-
-            {/* Node info */}
-            <div className="p-3 space-y-2 border-b border-gray-800">
-              <p className="text-sm text-gray-200 font-medium">{selectedNodeData.name}</p>
-              <div className="flex gap-3 text-[10px]">
-                <div>
-                  <span className="text-gray-500 block">Type</span>
-                  <span className="text-gray-300">{selectedNodeData.node_type}{selectedNodeData.type ? ` / ${selectedNodeData.type}` : ''}</span>
-                </div>
-                <div>
-                  <span className="text-gray-500 block">Status</span>
-                  <span className={`${
-                    selectedNodeData.status === 'ACTIVE' ? 'text-green-400' :
-                    selectedNodeData.status === 'DEPRECATED' ? 'text-red-400' : 'text-yellow-400'
-                  }`}>{selectedNodeData.status || '—'}</span>
-                </div>
-                <div>
-                  <span className="text-gray-500 block">Category</span>
-                  <span className="text-gray-300">{selectedNodeData.category || '—'}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Relationships grouped by type */}
-            <div className="p-3">
-              <h4 className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-2">
-                Relationships ({selectedNodeData.relationships?.length || 0})
-              </h4>
-              {groupedRels && Object.entries(groupedRels).map(([type, rels]) => (
-                <div key={type} className="mb-2">
-                  <div className="flex items-center gap-1.5 mb-1">
-                    <div className="w-3 h-0.5 rounded" style={{ backgroundColor: EDGE_COLORS[type] || '#6b7280' }} />
-                    <span className="text-[10px] font-mono text-gray-400">{type}</span>
-                    <span className="text-[10px] text-gray-600">({rels.length})</span>
-                  </div>
-                  {rels.map((r, i) => (
-                    <div key={i} className="text-[11px] flex items-center gap-1.5 pl-4 py-0.5">
-                      <span className={r.direction === 'out' ? 'text-green-500' : 'text-blue-500'}>
-                        {r.direction === 'out' ? '→' : '←'}
-                      </span>
-                      <span className="text-gray-300 truncate">{r.otherId}</span>
-                    </div>
-                  ))}
-                </div>
-              ))}
-              {(!selectedNodeData.relationships || selectedNodeData.relationships.length === 0) && (
-                <p className="text-xs text-gray-600 italic">No relationships</p>
+                }} title={selectedNodeData.id} />
               )}
             </div>
+          )}
 
-            {/* Navigate button */}
-            <div className="p-3 border-t border-gray-800">
-              <button
-                onClick={() => {
-                  if (selectedNodeData.node_type === 'Pattern') navigate(`/patterns/${selectedNodeData.id}`)
-                  else if (selectedNodeData.node_type === 'Technology') navigate(`/technologies/${selectedNodeData.id}`)
-                  else if (selectedNodeData.node_type === 'PBC') navigate(`/pbcs/${selectedNodeData.id}`)
-                }}
-                className="btn-primary w-full text-xs py-1.5"
-              >
-                View Details
-              </button>
+          {/* Expanded state */}
+          {!sidebarCollapsed && (
+            <div className="w-full h-full bg-gray-900/95 border-l border-gray-800 backdrop-blur-sm overflow-y-auto">
+              {selectedNodeData ? (
+                <>
+                  {/* Header */}
+                  <div className="flex items-center justify-between p-3 border-b border-gray-800 sticky top-0 bg-gray-900/95 backdrop-blur-sm">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{
+                        backgroundColor: (NODE_COLORS[getNodeTypeKey(selectedNodeData)] || NODE_COLORS.ABB).background
+                      }} />
+                      <span className="text-xs font-semibold text-white truncate">{selectedNodeData.id}</span>
+                    </div>
+                    <button onClick={() => setSidebarCollapsed(true)} className="text-gray-500 hover:text-gray-300 text-sm ml-2 flex-shrink-0" title="Minimize panel">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                    </button>
+                  </div>
+
+                  {/* Node info */}
+                  <div className="p-3 space-y-2 border-b border-gray-800">
+                    <p className="text-sm text-gray-200 font-medium">{selectedNodeData.name}</p>
+                    <div className="flex gap-3 text-[10px]">
+                      <div>
+                        <span className="text-gray-500 block">Type</span>
+                        <span className="text-gray-300">{selectedNodeData.node_type}{selectedNodeData.type ? ` / ${selectedNodeData.type}` : ''}</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-500 block">Status</span>
+                        <span className={`${
+                          selectedNodeData.status === 'ACTIVE' ? 'text-green-400' :
+                          selectedNodeData.status === 'DEPRECATED' ? 'text-red-400' : 'text-yellow-400'
+                        }`}>{selectedNodeData.status || '—'}</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-500 block">Category</span>
+                        <span className="text-gray-300">{selectedNodeData.category || '—'}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Relationships grouped by type */}
+                  <div className="p-3">
+                    <h4 className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                      Relationships ({selectedNodeData.relationships?.length || 0})
+                    </h4>
+                    {groupedRels && Object.entries(groupedRels).map(([type, rels]) => (
+                      <div key={type} className="mb-2">
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <div className="w-3 h-0.5 rounded" style={{ backgroundColor: EDGE_COLORS[type] || '#6b7280' }} />
+                          <span className="text-[10px] font-mono text-gray-400">{type}</span>
+                          <span className="text-[10px] text-gray-600">({rels.length})</span>
+                        </div>
+                        {rels.map((r, i) => (
+                          <div key={i} className="text-[11px] flex items-center gap-1.5 pl-4 py-0.5">
+                            <span className={r.direction === 'out' ? 'text-green-500' : 'text-blue-500'}>
+                              {r.direction === 'out' ? '→' : '←'}
+                            </span>
+                            <span className="text-gray-300 truncate">{r.otherId}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                    {(!selectedNodeData.relationships || selectedNodeData.relationships.length === 0) && (
+                      <p className="text-xs text-gray-600 italic">No relationships</p>
+                    )}
+                  </div>
+
+                  {/* Navigate button */}
+                  <div className="p-3 border-t border-gray-800">
+                    <button
+                      onClick={() => {
+                        if (selectedNodeData.node_type === 'Pattern') navigate(`/patterns/${selectedNodeData.id}`)
+                        else if (selectedNodeData.node_type === 'Technology') navigate(`/technologies/${selectedNodeData.id}`)
+                        else if (selectedNodeData.node_type === 'PBC') navigate(`/pbcs/${selectedNodeData.id}`)
+                      }}
+                      className="btn-primary w-full text-xs py-1.5"
+                    >
+                      View Details
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  {/* Empty state: no node selected */}
+                  <div className="flex items-center justify-between p-3 border-b border-gray-800">
+                    <span className="text-xs font-semibold text-gray-500">Node Details</span>
+                    <button onClick={() => setSidebarCollapsed(true)} className="text-gray-500 hover:text-gray-300 text-sm flex-shrink-0" title="Minimize panel">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                    </button>
+                  </div>
+                  <div className="p-4 text-center">
+                    <div className="text-gray-600 text-xs mb-2">
+                      <svg className="w-8 h-8 mx-auto mb-2 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" />
+                      </svg>
+                      Click a node to see its details and relationships
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </div>
   )

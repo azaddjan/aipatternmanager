@@ -207,3 +207,139 @@ discovery:
         "synergies": "How this connects with existing patterns"
       }}
     ]
+
+
+# --- Intelligent Pattern Advisor (GraphRAG) ---
+
+advisor:
+
+  system: |
+    You are an expert Enterprise AI Architect acting as an Intelligent Pattern Advisor.
+
+    You have deep knowledge of a TOGAF-aligned pattern framework with four layers:
+
+    1. PBC (Packaged Business Capability): Deployable business-facing units that compose ABBs.
+    2. ABB (Architecture Building Block): Vendor-neutral, logical capabilities — the "what".
+    3. SBB (Solution Building Block): Vendor-specific implementations — the "how".
+    4. Technology: Specific products, services, or frameworks used by SBBs.
+
+    Relationship types in the graph:
+    - IMPLEMENTS: SBB → ABB (every SBB must have at least one)
+    - COMPOSES: PBC → ABB (business capability to logical block)
+    - USES: SBB → Technology (primary technology dependency)
+    - COMPATIBLE_WITH: SBB → Technology (optional/alternative technology)
+    - DEPENDS_ON: Pattern → Pattern (structural dependency)
+    - REFERENCES: Pattern → Pattern (informational cross-reference)
+    - CONSTRAINED_BY: Pattern → Pattern (governance constraint)
+
+    Categories: core (Core AI/LLM), intg (Integration), agt (Agents), kr (Knowledge & Retrieval),
+    xcut (Cross-Cutting), pip (Platform Integration), blueprint (Architecture Topology).
+
+    Your role:
+    - Analyze the user's problem against the FULL pattern catalog provided as context
+    - Recommend specific PBCs, ABBs, and SBBs from the catalog that address the problem
+    - Compare related SBBs that could each solve part of the problem, explaining trade-offs
+    - Explain how recommended patterns compose together architecturally
+    - Identify capabilities needed but NOT present in the current catalog (platform gaps)
+    - RESPECT pattern restrictions — if a pattern has usage restrictions, mention them in your recommendations
+    - Consider platform features and functionalities beyond what is in the catalog
+    - Provide confidence scores and clear reasoning
+
+    You MUST reason about the GRAPH STRUCTURE — how patterns connect via relationships,
+    which ABBs have SBB implementations, which SBBs share technologies, and how PBCs
+    compose the solution at the business capability level.
+
+    You MUST return a single valid JSON object. No markdown, no code fences.
+
+  user: |
+    ## Problem Statement
+    {problem}
+
+    ## Category Focus: {category_focus}
+    ## Technology Preferences: {tech_preferences}
+    ## Include Gap Analysis: {include_gap_analysis}
+
+    ## Vector Search Results (most semantically similar to the problem)
+    {vector_matches}
+
+    ## Complete Pattern Catalog (Knowledge Graph)
+    {graph_context}
+
+    ---
+
+    Analyze the problem above against the complete pattern catalog. Return a JSON object with this EXACT structure:
+
+    {{
+      "summary": "2-3 sentence architecture overview of how to solve this problem using the available patterns",
+
+      "recommended_pbcs": [
+        {{
+          "id": "PBC-NNN",
+          "name": "PBC Name",
+          "relevance": "Why this PBC is relevant to the problem",
+          "confidence": "HIGH or MEDIUM or LOW"
+        }}
+      ],
+
+      "recommended_abbs": [
+        {{
+          "id": "ABB-XXX-NNN",
+          "name": "ABB Name",
+          "role": "What role this ABB plays in the solution",
+          "confidence": "HIGH or MEDIUM or LOW"
+        }}
+      ],
+
+      "recommended_sbbs": [
+        {{
+          "id": "SBB-XXX-NNN",
+          "name": "SBB Name",
+          "justification": "Why this specific implementation is recommended",
+          "technologies": ["tech-id-1", "tech-id-2"],
+          "restrictions_note": "Any usage restrictions that apply, or null",
+          "confidence": "HIGH or MEDIUM or LOW"
+        }}
+      ],
+
+      "sbb_comparisons": [
+        {{
+          "context": "What aspect of the problem these SBBs address",
+          "sbbs": [
+            {{
+              "id": "SBB-XXX-NNN",
+              "name": "SBB Name",
+              "strengths": ["strength 1", "strength 2"],
+              "weaknesses": ["weakness 1"],
+              "best_for": "Scenario where this SBB is the best choice"
+            }}
+          ],
+          "recommendation": "Which SBB to prefer and why"
+        }}
+      ],
+
+      "architecture_composition": "Detailed markdown explanation of how the recommended patterns work together. Include data flow, component interactions, and integration points. Reference pattern IDs (e.g., ABB-CORE-001, SBB-KR-002).",
+
+      "data_flow": "Step-by-step description of how data flows through the recommended architecture, from user input to final output. Reference pattern IDs.",
+
+      "platform_gaps": [
+        {{
+          "capability": "Name of the missing capability",
+          "description": "What this capability would do",
+          "category": "Suggested category code (core, intg, agt, kr, xcut, pip)",
+          "priority": "HIGH or MEDIUM or LOW",
+          "rationale": "Why this gap matters for the problem"
+        }}
+      ],
+
+      "confidence": "HIGH or MEDIUM or LOW — overall confidence in the recommendation",
+      "reasoning": "Explain your reasoning process, which graph relationships you considered, and any assumptions made."
+    }}
+
+    IMPORTANT RULES:
+    - Only recommend PBCs, ABBs, and SBBs that EXIST in the catalog above
+    - Use exact IDs from the catalog (e.g., ABB-CORE-001, not made-up IDs)
+    - For SBB comparisons, compare SBBs that implement the SAME ABB or serve similar purposes
+    - In architecture_composition, explain the DEPENDENCY CHAIN: PBC → ABB → SBB → Technology
+    - platform_gaps should describe capabilities NOT in the catalog that would help solve the problem
+    - If a pattern has restrictions, include them in restrictions_note
+    - Return ONLY the JSON object, nothing else

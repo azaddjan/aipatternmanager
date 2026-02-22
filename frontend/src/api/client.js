@@ -176,6 +176,10 @@ export function setApiKey(provider, key, secret = null) {
   })
 }
 
+export function testProvider(providerName) {
+  return request(`/admin/test-provider/${providerName}`, { method: 'POST' })
+}
+
 // --- Export ---
 
 export function exportHtmlUrl() {
@@ -190,12 +194,34 @@ export function exportDocxUrl() {
   return `${BASE_URL}/admin/export/docx`
 }
 
+export function exportJsonUrl() {
+  return `${BASE_URL}/admin/export/json`
+}
+
 // --- Import ---
 
-export async function importBackup(file) {
+export async function importPreview(file) {
   const formData = new FormData()
   formData.append('file', file)
-  const res = await fetch(`${BASE_URL}/admin/import`, {
+  const res = await fetch(`${BASE_URL}/admin/import/preview`, {
+    method: 'POST',
+    body: formData,
+  })
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(error.detail || `Preview failed: ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function importBackup(file, include = null) {
+  const formData = new FormData()
+  formData.append('file', file)
+  let url = `${BASE_URL}/admin/import`
+  if (include && include.length > 0) {
+    url += `?include=${include.join(',')}`
+  }
+  const res = await fetch(url, {
     method: 'POST',
     body: formData,
   })
@@ -204,6 +230,135 @@ export async function importBackup(file) {
     throw new Error(error.detail || `Import failed: ${res.status}`)
   }
   return res.json()
+}
+
+// --- Backups ---
+
+export function createBackup(name = '') {
+  return request('/admin/backups', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  })
+}
+
+export function fetchBackups() {
+  return request('/admin/backups')
+}
+
+export function downloadBackupUrl(filename) {
+  return `${BASE_URL}/admin/backups/${encodeURIComponent(filename)}`
+}
+
+export function deleteBackup(filename) {
+  return request(`/admin/backups/${encodeURIComponent(filename)}`, { method: 'DELETE' })
+}
+
+export function restoreBackup(filename) {
+  return request(`/admin/backups/${encodeURIComponent(filename)}/restore`, { method: 'POST' })
+}
+
+// --- System Status ---
+
+export function fetchSystemStatus() {
+  return request('/admin/system-status')
+}
+
+export function embedMissingNodes() {
+  return request('/admin/embed-missing', { method: 'POST' })
+}
+
+export function embedAllNodes() {
+  return request('/admin/embed-all', { method: 'POST' })
+}
+
+// --- Advisor (GraphRAG) ---
+
+export function analyzePattern(data) {
+  return request('/advisor/analyze', { method: 'POST', body: JSON.stringify(data) })
+}
+
+export function generateEmbeddings() {
+  return request('/advisor/embed', { method: 'POST' })
+}
+
+export function fetchEmbeddingStatus() {
+  return request('/advisor/embed/status')
+}
+
+// --- Advisor Reports ---
+
+export function fetchAdvisorReports(limit = 50) {
+  return request(`/advisor/reports?limit=${limit}`)
+}
+
+export function fetchAdvisorReport(id) {
+  return request(`/advisor/reports/${encodeURIComponent(id)}`)
+}
+
+export function updateAdvisorReport(id, data) {
+  return request(`/advisor/reports/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  })
+}
+
+export function deleteAdvisorReport(id) {
+  return request(`/advisor/reports/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export function deleteAllAdvisorReports() {
+  return request('/advisor/reports?confirm=true', { method: 'DELETE' })
+}
+
+export function cleanupAdvisorReports() {
+  return request('/advisor/reports/cleanup', { method: 'POST' })
+}
+
+export function advisorReportExportHtmlUrl(id) {
+  return `${BASE_URL}/advisor/reports/${encodeURIComponent(id)}/export/html`
+}
+
+export function advisorReportExportDocxUrl(id) {
+  return `${BASE_URL}/advisor/reports/${encodeURIComponent(id)}/export/docx`
+}
+
+// --- Pattern Health ---
+
+export function fetchPatternHealth() {
+  return request('/admin/pattern-health')
+}
+
+export function analyzePatternHealth(provider = null, model = null) {
+  const body = {}
+  if (provider) body.provider = provider
+  if (model) body.model = model
+  return request('/admin/pattern-health/analyze', { method: 'POST', body: JSON.stringify(body) })
+}
+
+// --- Health Analysis Persistence ---
+
+export function fetchLatestHealthAnalysis() {
+  return request('/admin/pattern-health/analyses/latest')
+}
+
+export function fetchHealthAnalyses(limit = 20) {
+  return request(`/admin/pattern-health/analyses?limit=${limit}`)
+}
+
+export function fetchHealthAnalysis(id) {
+  return request(`/admin/pattern-health/analyses/${encodeURIComponent(id)}`)
+}
+
+export function deleteHealthAnalysis(id) {
+  return request(`/admin/pattern-health/analyses/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export function healthAnalysisExportHtmlUrl(id) {
+  return `${BASE_URL}/admin/pattern-health/analyses/${encodeURIComponent(id)}/export/html`
+}
+
+export function healthAnalysisExportDocxUrl(id) {
+  return `${BASE_URL}/admin/pattern-health/analyses/${encodeURIComponent(id)}/export/docx`
 }
 
 // --- Discovery ---

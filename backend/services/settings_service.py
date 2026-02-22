@@ -14,6 +14,39 @@ SETTINGS_FILE = Path("/app/settings.json")
 
 DEFAULT_SETTINGS = {
     "default_provider": "anthropic",
+    "embedding": {
+        "provider": "openai",
+        "model": "text-embedding-3-small",
+        "embedding_providers": {
+            "openai": {
+                "models": [
+                    {"id": "text-embedding-3-small", "dimensions": 1536},
+                    {"id": "text-embedding-3-large", "dimensions": 3072},
+                    {"id": "text-embedding-ada-002", "dimensions": 1536},
+                ],
+            },
+            "ollama": {
+                "models": [
+                    {"id": "nomic-embed-text", "dimensions": 768},
+                    {"id": "mxbai-embed-large", "dimensions": 1024},
+                    {"id": "all-minilm", "dimensions": 384},
+                    {"id": "snowflake-arctic-embed", "dimensions": 1024},
+                ],
+            },
+            "bedrock": {
+                "models": [
+                    {"id": "amazon.titan-embed-text-v2:0", "dimensions": 1024},
+                    {"id": "amazon.titan-embed-text-v1", "dimensions": 1536},
+                    {"id": "cohere.embed-english-v3", "dimensions": 1024},
+                ],
+            },
+        },
+    },
+    "report_retention": {
+        "max_reports": 20,
+        "retention_days": 30,
+        "auto_cleanup": True,
+    },
     "providers": {
         "anthropic": {
             "enabled": True,
@@ -62,6 +95,8 @@ def _load_settings() -> dict:
             # Merge with defaults so new keys are added on upgrade
             merged = {**DEFAULT_SETTINGS, **data}
             merged["providers"] = {**DEFAULT_SETTINGS["providers"], **data.get("providers", {})}
+            merged["embedding"] = {**DEFAULT_SETTINGS["embedding"], **data.get("embedding", {})}
+            merged["report_retention"] = {**DEFAULT_SETTINGS["report_retention"], **data.get("report_retention", {})}
             return merged
         except Exception as e:
             logger.warning(f"Failed to load settings: {e}, using defaults")
@@ -84,7 +119,8 @@ def get_settings() -> dict:
     settings["providers"]["anthropic"]["key_set"] = bool(os.getenv("ANTHROPIC_API_KEY", ""))
     settings["providers"]["openai"]["key_set"] = bool(os.getenv("OPENAI_API_KEY", ""))
     settings["providers"]["bedrock"]["key_set"] = bool(
-        os.getenv("AWS_ACCESS_KEY_ID", "") and os.getenv("AWS_SECRET_ACCESS_KEY", "")
+        (os.getenv("AWS_ACCESS_KEY_ID", "") and os.getenv("AWS_SECRET_ACCESS_KEY", ""))
+        or os.getenv("AWS_PROFILE", "")
     )
 
     return settings
@@ -105,6 +141,26 @@ def update_settings(updates: dict) -> dict:
                 for k, v in prov_config.items():
                     if k not in ("key_set",):  # don't overwrite computed fields
                         settings["providers"][prov_name][k] = v
+
+    if "embedding" in updates:
+        for k, v in updates["embedding"].items():
+            if k not in ("embedding_providers",):  # don't overwrite provider catalog
+                settings["embedding"][k] = v
+        # If provider changed but model not specified, set default model for new provider
+        if "provider" in updates["embedding"] and "model" not in updates["embedding"]:
+            new_prov = updates["embedding"]["provider"]
+            emb_providers = settings["embedding"].get(
+                "embedding_providers", DEFAULT_SETTINGS["embedding"]["embedding_providers"]
+            )
+            prov_models = emb_providers.get(new_prov, {}).get("models", [])
+            if prov_models:
+                settings["embedding"]["model"] = prov_models[0]["id"]
+        # Reinitialize embedding service singleton when config changes
+        _reinit_embedding_service()
+
+    if "report_retention" in updates:
+        for k, v in updates["report_retention"].items():
+            settings["report_retention"][k] = v
 
     _save_settings(settings)
     return get_settings()
@@ -157,6 +213,60 @@ def _reinit_provider(name: str):
         logger.warning(f"Failed to reinit provider {name}: {e}")
 
 
+def get_retention_settings() -> dict:
+    """Get report retention configuration."""
+    settings = _load_settings()
+    return settings.get("report_retention", DEFAULT_SETTINGS["report_retention"])
+
+
+def get_embedding_settings() -> dict:
+    """Get the current embedding configuration."""
+    settings = _load_settings()
+    emb = settings.get("embedding", DEFAULT_SETTINGS["embedding"])
+    provider = emb.get("provider", "openai")
+    model = emb.get("model", "text-embedding-3-small")
+    emb_providers = emb.get("embedding_providers", DEFAULT_SETTINGS["embedding"]["embedding_providers"])
+
+    # Find dimensions for the current model
+    dimensions = 1536  # fallback
+    prov_config = emb_providers.get(provider, {})
+    for m in prov_config.get("models", []):
+        if m["id"] == model:
+            dimensions = m["dimensions"]
+            break
+
+    # Determine if current provider has credentials
+    if provider == "openai":
+        key_set = bool(os.getenv("OPENAI_API_KEY", ""))
+    elif provider == "ollama":
+        key_set = True  # Ollama doesn't need API key
+    elif provider == "bedrock":
+        key_set = bool(
+            (os.getenv("AWS_ACCESS_KEY_ID", "") and os.getenv("AWS_SECRET_ACCESS_KEY", ""))
+            or os.getenv("AWS_PROFILE", "")
+        )
+    else:
+        key_set = False
+
+    return {
+        "provider": provider,
+        "model": model,
+        "dimensions": dimensions,
+        "key_set": key_set,
+        "embedding_providers": emb_providers,
+    }
+
+
+def _reinit_embedding_service():
+    """Force re-initialization of the embedding service singleton after config change."""
+    try:
+        from routers.advisor import _get_embedding_svc
+        import routers.advisor as adv_mod
+        adv_mod._embedding_svc = None  # reset so next call rebuilds
+    except Exception as e:
+        logger.warning(f"Failed to reinit embedding service: {e}")
+
+
 def get_masked_key(provider: str) -> str:
     """Return a masked version of the API key for display."""
     if provider == "anthropic":
@@ -165,6 +275,9 @@ def get_masked_key(provider: str) -> str:
         key = os.getenv("OPENAI_API_KEY", "")
     elif provider == "bedrock":
         key = os.getenv("AWS_ACCESS_KEY_ID", "")
+        if not key:
+            profile = os.getenv("AWS_PROFILE", "")
+            return f"profile:{profile}" if profile else ""
     else:
         return ""
 

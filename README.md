@@ -25,15 +25,18 @@ Patterns are organized into categories: Core AI/LLM, Integration, Agents, Knowle
 ### Key Features
 
 - **Pattern CRUD** — Create, edit, and manage structured patterns with typed fields (intent, problem, solution, interfaces, invariants, etc.)
-- **Graph Visualization** — Interactive vis-network graph showing pattern relationships (DEPENDS_ON, IMPLEMENTS, CONSUMED_BY)
+- **Graph Visualization** — Interactive vis-network graph with always-visible collapsible detail sidebar, node search, type/category filtering, and double-click navigation
 - **AI Authoring** — Generate and enrich patterns using LLM providers (Anthropic, OpenAI, AWS Bedrock, Ollama)
 - **Pattern Discovery** — AI-powered discovery of missing patterns in the architecture
+- **Pattern Health Dashboard** — Four-dimension health scoring (Completeness, Relationships, Coverage, Problems) with weighted overall score, per-pattern drill-down, and trend tracking
+- **AI Deep Analysis** — LLM-powered 9-area semantic analysis of the entire pattern library covering architecture coherence, ABB↔SBB alignment, interface consistency, business capability gaps, vendor risk, content quality, cross-pattern overlap, PBC composition, and maturity roadmap
+- **Pattern Advisor** — AI-powered contextual advice for individual patterns with exportable reports (HTML & Word)
 - **Multi-format Export** — Export the full catalogue as:
   - Self-contained HTML (offline viewable, collapsible sidebar, embedded diagrams)
   - PowerPoint (dark navy theme, 30-slide deck with category deep-dives)
   - Word Document (cover page, TOC, page numbers, structured content)
   - JSON backup (full data export for backup/restore)
-- **Import/Restore** — Import patterns from JSON backup files
+- **Import/Restore** — Import patterns from JSON backup files with automatic database backup before restore
 - **Technology Registry** — Track vendor products, map them to SBBs, manage lifecycle status
 - **PBC Management** — Define business capabilities composed of ABBs
 - **Impact Analysis** — Understand ripple effects of changing a pattern
@@ -93,20 +96,30 @@ The database auto-seeds with built-in categories and seed patterns on first star
 │   │   ├── pbcs.py              # PBC management endpoints
 │   │   ├── categories.py        # Category endpoints
 │   │   ├── graph.py             # Graph query endpoints
-│   │   ├── admin.py             # Settings, export, import endpoints
+│   │   ├── admin.py             # Settings, export, import, health analysis
+│   │   ├── advisor.py           # Pattern advisor endpoints
 │   │   ├── ai_authoring.py      # AI-powered pattern generation
 │   │   └── discovery.py         # AI pattern discovery
 │   ├── services/
-│   │   ├── neo4j_service.py     # Neo4j database operations
+│   │   ├── neo4j_service.py     # Neo4j database operations & health scoring
 │   │   ├── ai_service.py        # AI orchestration
 │   │   ├── settings_service.py  # Configuration management
 │   │   ├── seed_service.py      # Database seeding
 │   │   ├── discovery_service.py # Pattern gap analysis
-│   │   ├── html_export_service.py   # HTML export
-│   │   ├── pptx_export_service.py   # PowerPoint export
-│   │   ├── docx_export_service.py   # Word export
+│   │   ├── advisor_service.py   # Pattern advisor AI service
+│   │   ├── embedding_service.py # Embedding generation for patterns
+│   │   ├── backup_service.py    # Automatic database backup
+│   │   ├── html_export_service.py   # Catalogue HTML export
+│   │   ├── pptx_export_service.py   # Catalogue PowerPoint export
+│   │   ├── docx_export_service.py   # Catalogue Word export
 │   │   ├── import_service.py        # JSON import/export
+│   │   ├── health_analysis_html_export_service.py  # Health analysis HTML report
+│   │   ├── health_analysis_docx_export_service.py  # Health analysis Word report
+│   │   ├── advisor_report_html_export_service.py   # Advisor report HTML export
+│   │   ├── advisor_report_docx_export_service.py   # Advisor report Word export
 │   │   └── llm/                 # LLM provider adapters
+│   │       ├── base_provider.py
+│   │       ├── provider_factory.py
 │   │       ├── anthropic_provider.py
 │   │       ├── openai_provider.py
 │   │       ├── bedrock_provider.py
@@ -121,21 +134,24 @@ The database auto-seeds with built-in categories and seed patterns on first star
 │   │   ├── App.jsx              # Main app with routing
 │   │   ├── api/client.js        # Backend API client
 │   │   ├── components/
-│   │   │   ├── Sidebar.jsx      # Navigation sidebar
-│   │   │   ├── GraphView.jsx    # vis-network graph visualization
-│   │   │   ├── PatternCard.jsx  # Pattern summary card
-│   │   │   └── AutoLinkedText.jsx
+│   │   │   ├── Sidebar.jsx          # Navigation sidebar
+│   │   │   ├── GraphView.jsx        # vis-network graph with persistent detail sidebar
+│   │   │   ├── PatternCard.jsx      # Pattern summary card
+│   │   │   ├── MarkdownContent.jsx  # Markdown renderer for AI content
+│   │   │   └── AutoLinkedText.jsx   # Auto-link pattern references
 │   │   └── pages/
 │   │       ├── Dashboard.jsx        # Overview dashboard
 │   │       ├── PatternList.jsx      # Pattern catalogue
 │   │       ├── PatternEditor.jsx    # Pattern create/edit form
 │   │       ├── PatternDetail.jsx    # Pattern detail view
+│   │       ├── PatternHealth.jsx    # Health dashboard & AI deep analysis
+│   │       ├── PatternAdvisor.jsx   # AI pattern advisor interface
 │   │       ├── PatternDiscovery.jsx # AI discovery interface
 │   │       ├── TechnologyRegistry.jsx
 │   │       ├── TechnologyDetail.jsx
 │   │       ├── PBCManager.jsx
 │   │       ├── PBCDetail.jsx
-│   │       ├── GraphExplorer.jsx
+│   │       ├── GraphExplorer.jsx    # Graph explorer with filters
 │   │       ├── ImpactAnalysis.jsx
 │   │       └── Admin.jsx            # Settings, export, import
 │   ├── Dockerfile
@@ -155,15 +171,23 @@ The database auto-seeds with built-in categories and seed patterns on first star
 | GET/POST | `/api/patterns` | List / create patterns |
 | GET/PUT/DELETE | `/api/patterns/{id}` | Pattern CRUD |
 | GET/POST | `/api/technologies` | List / create technologies |
+| GET/PUT/DELETE | `/api/technologies/{id}` | Technology CRUD |
 | GET/POST | `/api/pbcs` | List / create PBCs |
 | GET | `/api/categories` | List categories |
 | GET | `/api/graph/full` | Full graph data |
 | POST | `/api/ai/generate` | AI pattern generation |
 | POST | `/api/discovery/analyze` | AI gap analysis |
-| GET | `/api/admin/export/html` | Export as HTML |
-| GET | `/api/admin/export/pptx` | Export as PowerPoint |
-| GET | `/api/admin/export/docx` | Export as Word |
-| GET | `/api/admin/export/json` | Export as JSON backup |
+| GET | `/api/admin/pattern-health` | Pattern health scores & metrics |
+| POST | `/api/admin/pattern-health/analyze` | AI deep analysis (9-area) |
+| GET | `/api/admin/pattern-health/export/html` | Export health analysis as HTML |
+| GET | `/api/admin/pattern-health/export/docx` | Export health analysis as Word |
+| POST | `/api/advisor/analyze/{id}` | AI advisor analysis for a pattern |
+| GET | `/api/advisor/report/{id}/html` | Export advisor report as HTML |
+| GET | `/api/advisor/report/{id}/docx` | Export advisor report as Word |
+| GET | `/api/admin/export/html` | Export catalogue as HTML |
+| GET | `/api/admin/export/pptx` | Export catalogue as PowerPoint |
+| GET | `/api/admin/export/docx` | Export catalogue as Word |
+| GET | `/api/admin/export/json` | Export catalogue as JSON backup |
 | POST | `/api/admin/import` | Import from JSON backup |
 
 ## Export Formats
@@ -178,7 +202,13 @@ Self-contained single-file HTML with collapsible sidebar navigation, embedded fr
 Structured Word document with cover page, auto-updating table of contents, page numbers, patterns organized by category with metadata tables and structured fields.
 
 ### JSON Export
-Complete data backup including all patterns, technologies, PBCs, categories, and relationships. Can be re-imported to restore the full dataset.
+Complete data backup including all patterns, technologies, PBCs, categories, and relationships. Can be re-imported to restore the full dataset. Automatic backup is created before each import.
+
+### Health Analysis Reports
+Export the AI deep analysis results as self-contained HTML or Word documents, including executive summary, all 9 analysis areas with ratings and recommendations, maturity roadmap, and prioritized action plan.
+
+### Advisor Reports
+Export individual pattern advisor analysis as HTML or Word, including architecture alignment assessment, improvement recommendations, and relationship analysis.
 
 ## LLM Providers
 
