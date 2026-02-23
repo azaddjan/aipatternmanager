@@ -520,6 +520,11 @@ class ImportService:
             "functionality", "inbound_interfaces", "outbound_interfaces",
             "specific_functionality", "sbb_mapping",
             "consumed_by_ids", "works_with_ids", "business_capabilities",
+            # New metadata fields
+            "description", "tags", "deprecation_note", "restrictions",
+            "quality_attributes", "compliance_requirements",
+            "vendor", "deployment_model", "cost_tier", "licensing", "maturity",
+            "diagrams", "images",
         ]
 
         for field in structured_fields:

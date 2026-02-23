@@ -1,12 +1,13 @@
 import logging
+import os
 import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from services.neo4j_service import Neo4jService
-from services.seed_service import seed_database
 from services.llm import get_available_providers
 from services.embedding_service import EmbeddingService
 
@@ -25,7 +26,8 @@ async def lifespan(app: FastAPI):
     db_service = Neo4jService()
     if db_service.verify_connectivity():
         logger.info("Neo4j connected successfully")
-        seed_database(db_service)
+        db_service.create_constraints()
+        db_service.create_indexes()
         # Create vector indexes for semantic search (safe to run every startup)
         try:
             svc = EmbeddingService()
@@ -89,6 +91,11 @@ app.include_router(pbcs_router)
 app.include_router(admin_router)
 app.include_router(discovery_router)
 app.include_router(advisor_router)
+
+# Serve uploaded images
+UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/app/uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+app.mount("/api/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 
 @app.get("/api/health", tags=["System"])

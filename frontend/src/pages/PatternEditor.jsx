@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   fetchPattern, createPattern, updatePattern,
   fetchCategories, fetchPatterns, fetchProviders,
   aiGenerate, generatePatternId,
   fetchCategoryOverview, fetchTechnologies,
+  uploadPatternImage, deletePatternImage, getUploadUrl,
 } from '../api/client'
 
 const TYPES = ['AB', 'ABB', 'SBB']
@@ -88,7 +89,10 @@ export default function PatternEditor() {
     if (prefill.implements) parts.push(`Implements ABB: ${prefill.implements}`)
     return parts.join('\n')
   })
-  const [parentAbb, setParentAbb] = useState(prefill.implements || '')
+  const [parentAbbs, setParentAbbs] = useState(() => {
+    if (prefill.implements) return [prefill.implements]
+    return []
+  })
   const [aiLoading, setAiLoading] = useState(false)
   const [aiError, setAiError] = useState('')
 
@@ -112,6 +116,25 @@ export default function PatternEditor() {
   const [businessCaps, setBusinessCaps] = useState([])
   const [sbbMapping, setSbbMapping] = useState([])
   const [customCap, setCustomCap] = useState('')
+
+  // --- New metadata fields ---
+  const [description, setDescription] = useState('')
+  const [tags, setTags] = useState([])
+  const [tagInput, setTagInput] = useState('')
+  const [deprecationNote, setDeprecationNote] = useState('')
+  // ABB-specific
+  const [qualityAttributes, setQualityAttributes] = useState('')
+  const [complianceRequirements, setComplianceRequirements] = useState('')
+  // SBB-specific
+  const [vendor, setVendor] = useState('')
+  const [deploymentModel, setDeploymentModel] = useState('')
+  const [costTier, setCostTier] = useState('')
+  const [licensing, setLicensing] = useState('')
+  const [maturity, setMaturity] = useState('')
+  // Diagrams & Images
+  const [diagrams, setDiagrams] = useState([])
+  const [existingImages, setExistingImages] = useState([])
+  const [uploadingImage, setUploadingImage] = useState(false)
 
   // Merge known + existing capabilities for the checklist
   const allCapsSet = new Set([...ALL_BUSINESS_CAPABILITIES, ...businessCaps])
@@ -179,10 +202,24 @@ export default function PatternEditor() {
         setBusinessCaps(p.business_capabilities || [])
         setSbbMapping(p.sbb_mapping || [])
 
+        // New metadata fields
+        setDescription(p.description || '')
+        setTags(p.tags || [])
+        setDeprecationNote(p.deprecation_note || '')
+        setQualityAttributes(p.quality_attributes || '')
+        setComplianceRequirements(p.compliance_requirements || '')
+        setVendor(p.vendor || '')
+        setDeploymentModel(p.deployment_model || '')
+        setCostTier(p.cost_tier || '')
+        setLicensing(p.licensing || '')
+        setMaturity(p.maturity || '')
+        setDiagrams(p.diagrams || [])
+        setExistingImages(p.images || [])
+
         // Populate relationships from existing pattern
         if (p.relationships) {
-          const implRel = p.relationships.find(r => r.type === 'IMPLEMENTS' && r.target_label === 'Pattern')
-          if (implRel) setParentAbb(implRel.target_id)
+          const implRels = p.relationships.filter(r => r.type === 'IMPLEMENTS' && r.target_label === 'Pattern')
+          if (implRels.length > 0) setParentAbbs(implRels.map(r => r.target_id))
           const usesRels = p.relationships.filter(r => r.type === 'USES' && r.target_label === 'Technology')
           if (usesRels.length > 0) setSelectedTechs(usesRels.map(r => r.target_id))
           const compatRels = p.relationships.filter(r => r.type === 'COMPATIBLE_WITH' && r.target_label === 'Technology')
@@ -220,8 +257,8 @@ export default function PatternEditor() {
     try {
       const res = await aiGenerate({
         template_type: form.type,
-        parent_abb_id: parentAbb || null,
-        context_notes: contextNotes,
+        parent_abb_id: parentAbbs.length > 0 ? parentAbbs[0] : null,
+        context_notes: contextNotes + (parentAbbs.length > 1 ? `\nAlso implements ABBs: ${parentAbbs.slice(1).join(', ')}` : ''),
         provider: provider || null,
         model: model || null,
       })
@@ -302,11 +339,23 @@ export default function PatternEditor() {
         business_capabilities: businessCaps,
         sbb_mapping: sbbMapping,
         restrictions: sections['Restrictions'] || null,
+        // New metadata fields
+        description: description || null,
+        tags: tags,
+        deprecation_note: deprecationNote || null,
+        quality_attributes: qualityAttributes || null,
+        compliance_requirements: complianceRequirements || null,
+        vendor: vendor || null,
+        deployment_model: deploymentModel || null,
+        cost_tier: costTier || null,
+        licensing: licensing || null,
+        maturity: maturity || null,
+        diagrams: diagrams,
       }
 
       if (isNew) {
         if (!payload.id) delete payload.id
-        if (parentAbb) payload.implements_abb = parentAbb
+        if (parentAbbs.length > 0) payload.implements_abbs = parentAbbs
         if (selectedTechs.length > 0) payload.technology_ids = selectedTechs
         if (selectedCompatTechs.length > 0) payload.compatible_tech_ids = selectedCompatTechs
         if (selectedDeps.length > 0) payload.depends_on_ids = selectedDeps
@@ -314,7 +363,7 @@ export default function PatternEditor() {
         navigate(`/patterns/${created.id}`, { state: { _refresh: Date.now() } })
       } else {
         const { id: _, ...updateData } = payload
-        if (parentAbb) updateData.implements_abb = parentAbb
+        updateData.implements_abbs = parentAbbs
         updateData.technology_ids = selectedTechs
         updateData.compatible_tech_ids = selectedCompatTechs
         updateData.depends_on_ids = selectedDeps
@@ -510,11 +559,28 @@ export default function PatternEditor() {
           <h2 className="text-sm font-semibold text-gray-400">2. AI Generation Context</h2>
           {form.type === 'SBB' && (
             <div>
-              <label className="block text-xs text-gray-500 mb-1">Parent ABB (for SBBs)</label>
-              <select value={parentAbb} onChange={e => setParentAbb(e.target.value)} className="select w-full">
-                <option value="">None</option>
-                {abbs.map(a => <option key={a.id} value={a.id}>{a.id} - {a.name}</option>)}
-              </select>
+              <label className="block text-xs text-gray-500 mb-1">Implements ABBs (one SBB can realize multiple ABBs)</label>
+              <div className="bg-gray-800/50 rounded-lg border border-gray-700 p-2 max-h-36 overflow-y-auto space-y-1">
+                {abbs.length === 0 && <p className="text-xs text-gray-600">Loading ABBs...</p>}
+                {abbs.map(a => (
+                  <label key={a.id} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-700/30 rounded px-1 py-0.5">
+                    <input
+                      type="checkbox"
+                      checked={parentAbbs.includes(a.id)}
+                      onChange={e => {
+                        if (e.target.checked) setParentAbbs(prev => [...prev, a.id])
+                        else setParentAbbs(prev => prev.filter(x => x !== a.id))
+                      }}
+                      className="rounded border-gray-600"
+                    />
+                    <span className="text-blue-400 font-mono">{a.id}</span>
+                    <span className="text-gray-300">{a.name}</span>
+                  </label>
+                ))}
+              </div>
+              {parentAbbs.length > 0 && (
+                <p className="text-xs text-gray-500 mt-1">{parentAbbs.length} ABB{parentAbbs.length > 1 ? 's' : ''} selected</p>
+              )}
             </div>
           )}
           <div>
@@ -671,26 +737,109 @@ export default function PatternEditor() {
           </div>
         </div>
 
-        {/* Relationships: Parent ABB (SBB only) */}
+        {/* Relationships: Parent ABBs (SBB only — can implement multiple ABBs) */}
         {form.type === 'SBB' && (
           <div className="mt-4 pt-4 border-t border-gray-700/50">
             <h3 className="text-xs font-semibold text-gray-500 mb-3">Relationships</h3>
             <div>
               <label className="block text-xs text-gray-500 mb-1">
-                Implements ABB <span className="text-red-400">*</span>
+                Implements ABBs <span className="text-red-400">*</span>
+                <span className="font-normal text-gray-600 ml-2">One SBB can realize multiple ABBs</span>
               </label>
-              <select value={parentAbb} onChange={e => setParentAbb(e.target.value)} className="select w-full">
-                <option value="">{'\u2014'} Select Parent ABB {'\u2014'}</option>
-                {abbs.map(a => <option key={a.id} value={a.id}>{a.id} {'\u2014'} {a.name}</option>)}
-              </select>
-              {!parentAbb && (
-                <p className="text-xs text-orange-400 mt-1">Every SBB should implement an ABB</p>
+              <div className="bg-gray-800/50 rounded-lg border border-gray-700 p-2 max-h-44 overflow-y-auto space-y-1">
+                {abbs.length === 0 && <p className="text-xs text-gray-600">Loading ABBs...</p>}
+                {abbs.map(a => (
+                  <label key={a.id} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-700/30 rounded px-1 py-0.5">
+                    <input
+                      type="checkbox"
+                      checked={parentAbbs.includes(a.id)}
+                      onChange={e => {
+                        if (e.target.checked) setParentAbbs(prev => [...prev, a.id])
+                        else setParentAbbs(prev => prev.filter(x => x !== a.id))
+                      }}
+                      className="rounded border-gray-600"
+                    />
+                    <span className="text-blue-400 font-mono">{a.id}</span>
+                    <span className="text-gray-300">{a.name}</span>
+                  </label>
+                ))}
+              </div>
+              {parentAbbs.length > 0 ? (
+                <p className="text-xs text-gray-500 mt-1">{parentAbbs.length} ABB{parentAbbs.length > 1 ? 's' : ''} selected</p>
+              ) : (
+                <p className="text-xs text-orange-400 mt-1">Every SBB should implement at least one ABB</p>
               )}
             </div>
           </div>
         )}
 
         <CategoryOverviewPanel />
+      </div>
+
+      {/* Description & Tags (all types) */}
+      <div className="card">
+        <h2 className="text-sm font-semibold text-gray-400 mb-3">Description & Tags</h2>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Description</label>
+            <textarea
+              value={description}
+              onChange={e => setDescription(e.target.value)}
+              placeholder="Short summary of this pattern..."
+              className="input w-full text-sm resize-y"
+              rows={3}
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Tags</label>
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {tags.map(tag => (
+                <span key={tag} className="inline-flex items-center gap-1 bg-blue-500/15 text-blue-400 text-xs px-2 py-0.5 rounded-full">
+                  {tag}
+                  <button onClick={() => setTags(tags.filter(t => t !== tag))} className="hover:text-red-400">{'\u2715'}</button>
+                </span>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={tagInput}
+                onChange={e => setTagInput(e.target.value)}
+                placeholder="Add tag..."
+                className="input flex-1 text-sm"
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && tagInput.trim()) {
+                    e.preventDefault()
+                    const t = tagInput.trim().toLowerCase()
+                    if (!tags.includes(t)) setTags([...tags, t])
+                    setTagInput('')
+                  }
+                }}
+              />
+              <button
+                onClick={() => {
+                  const t = tagInput.trim().toLowerCase()
+                  if (t && !tags.includes(t)) setTags([...tags, t])
+                  setTagInput('')
+                }}
+                disabled={!tagInput.trim()}
+                className="btn-secondary text-xs"
+              >Add</button>
+            </div>
+          </div>
+          {form.status === 'DEPRECATED' && (
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Deprecation Note</label>
+              <textarea
+                value={deprecationNote}
+                onChange={e => setDeprecationNote(e.target.value)}
+                placeholder="Reason for deprecation, migration guidance..."
+                className="input w-full text-sm resize-y"
+                rows={2}
+              />
+            </div>
+          )}
+        </div>
       </div>
 
       {/* ===== SECTION-BASED CONTENT EDITING ===== */}
@@ -867,6 +1016,36 @@ export default function PatternEditor() {
             )}
           </div>
 
+          {/* Quality Attributes (ABB) */}
+          <div className="card">
+            <h2 className="text-sm font-semibold text-gray-400 mb-3">
+              Quality Attributes
+              <span className="font-normal text-gray-600 ml-2">NFR contract: latency, availability, throughput</span>
+            </h2>
+            <textarea
+              value={qualityAttributes}
+              onChange={e => setQualityAttributes(e.target.value)}
+              placeholder="Define quality attributes: latency targets, availability SLAs, throughput expectations..."
+              className="input w-full font-mono text-sm resize-y"
+              rows={4}
+            />
+          </div>
+
+          {/* Compliance Requirements (ABB) */}
+          <div className="card">
+            <h2 className="text-sm font-semibold text-gray-400 mb-3">
+              Compliance Requirements
+              <span className="font-normal text-gray-600 ml-2">GDPR, SOC2, ISO 27001, etc.</span>
+            </h2>
+            <textarea
+              value={complianceRequirements}
+              onChange={e => setComplianceRequirements(e.target.value)}
+              placeholder="Define compliance requirements: regulatory standards, data protection, audit requirements..."
+              className="input w-full font-mono text-sm resize-y"
+              rows={4}
+            />
+          </div>
+
           {/* Restrictions */}
           <div className="card">
             <h2 className="text-sm font-semibold text-gray-400 mb-3">
@@ -1028,6 +1207,63 @@ export default function PatternEditor() {
             </div>
           </div>
 
+          {/* Solution Details (SBB) */}
+          <div className="card">
+            <h2 className="text-sm font-semibold text-gray-400 mb-3">Solution Details</h2>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Vendor</label>
+                <input
+                  type="text"
+                  value={vendor}
+                  onChange={e => setVendor(e.target.value)}
+                  placeholder="e.g. AWS, Azure, Google"
+                  className="input w-full text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Deployment Model</label>
+                <select value={deploymentModel} onChange={e => setDeploymentModel(e.target.value)} className="select w-full">
+                  <option value="">-- Select --</option>
+                  <option value="SaaS">SaaS</option>
+                  <option value="self-hosted">Self-hosted</option>
+                  <option value="hybrid">Hybrid</option>
+                  <option value="managed">Managed</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Cost Tier</label>
+                <select value={costTier} onChange={e => setCostTier(e.target.value)} className="select w-full">
+                  <option value="">-- Select --</option>
+                  <option value="FREE">FREE</option>
+                  <option value="LOW">LOW</option>
+                  <option value="MEDIUM">MEDIUM</option>
+                  <option value="HIGH">HIGH</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Licensing</label>
+                <input
+                  type="text"
+                  value={licensing}
+                  onChange={e => setLicensing(e.target.value)}
+                  placeholder="e.g. open-source, commercial, pay-per-use"
+                  className="input w-full text-sm"
+                />
+              </div>
+              <div className="col-span-2">
+                <label className="block text-xs text-gray-500 mb-1">Maturity</label>
+                <select value={maturity} onChange={e => setMaturity(e.target.value)} className="select w-full">
+                  <option value="">-- Select --</option>
+                  <option value="POC">POC</option>
+                  <option value="pilot">Pilot</option>
+                  <option value="production-ready">Production-ready</option>
+                  <option value="battle-tested">Battle-tested</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
           {/* Restrictions */}
           <div className="card">
             <h2 className="text-sm font-semibold text-gray-400 mb-3">
@@ -1045,6 +1281,152 @@ export default function PatternEditor() {
         </>
       )}
 
+      {/* ===== DIAGRAMS (all types) ===== */}
+      <div className="card">
+        <h2 className="text-sm font-semibold text-gray-400 mb-3">
+          Diagrams
+          <span className="font-normal text-gray-600 ml-2">Mermaid diagrams</span>
+        </h2>
+        {diagrams.map((diag, i) => (
+          <div key={diag.id} className="mb-4 border border-gray-700 rounded-lg p-3">
+            <div className="flex items-center gap-2 mb-2">
+              <input
+                type="text"
+                value={diag.title}
+                onChange={e => {
+                  const updated = [...diagrams]
+                  updated[i] = { ...diag, title: e.target.value }
+                  setDiagrams(updated)
+                }}
+                placeholder="Diagram title"
+                className="input flex-1 text-sm"
+              />
+              <button
+                onClick={() => setDiagrams(diagrams.filter((_, j) => j !== i))}
+                className="text-red-400 hover:text-red-300 text-xs px-2 py-1"
+              >{'\u2715'} Remove</button>
+            </div>
+            <textarea
+              value={diag.content}
+              onChange={e => {
+                const updated = [...diagrams]
+                updated[i] = { ...diag, content: e.target.value }
+                setDiagrams(updated)
+              }}
+              placeholder={'graph TD\n  A[Start] --> B[End]'}
+              className="input w-full font-mono text-sm resize-y mb-2"
+              rows={8}
+            />
+            <MermaidPreview content={diag.content} />
+          </div>
+        ))}
+        <button
+          onClick={() => setDiagrams([...diagrams, { id: crypto.randomUUID(), title: '', content: '' }])}
+          className="btn-secondary text-xs"
+        >+ Add Diagram</button>
+      </div>
+
+      {/* ===== IMAGES (all types) ===== */}
+      {!isNew && (
+        <div className="card">
+          <h2 className="text-sm font-semibold text-gray-400 mb-3">
+            Images
+            <span className="font-normal text-gray-600 ml-2">Upload JPEG, PNG, or SVG</span>
+          </h2>
+          {existingImages.length > 0 && (
+            <div className="grid grid-cols-3 gap-3 mb-3">
+              {existingImages.map(img => (
+                <div key={img.id} className="border border-gray-700 rounded-lg p-2 group relative">
+                  <img
+                    src={getUploadUrl(img.filename)}
+                    alt={img.title}
+                    className="w-full h-32 object-cover rounded mb-1"
+                  />
+                  <p className="text-xs text-gray-400 truncate">{img.title}</p>
+                  <button
+                    onClick={async () => {
+                      if (!confirm(`Delete image "${img.title}"?`)) return
+                      try {
+                        await deletePatternImage(id, img.id)
+                        setExistingImages(existingImages.filter(x => x.id !== img.id))
+                      } catch (err) {
+                        alert(err.message)
+                      }
+                    }}
+                    className="absolute top-1 right-1 bg-red-600/80 text-white text-xs px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                  >{'\u2715'}</button>
+                </div>
+              ))}
+            </div>
+          )}
+          <input
+            type="file"
+            accept="image/jpeg,image/png,image/svg+xml"
+            disabled={uploadingImage}
+            onChange={async (e) => {
+              const file = e.target.files?.[0]
+              if (!file) return
+              setUploadingImage(true)
+              try {
+                const meta = await uploadPatternImage(id, file, file.name)
+                setExistingImages(prev => [...prev, meta])
+              } catch (err) {
+                alert(err.message)
+              }
+              setUploadingImage(false)
+              e.target.value = ''
+            }}
+            className="text-sm text-gray-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border file:border-gray-600 file:text-gray-300 file:bg-gray-800 file:cursor-pointer hover:file:bg-gray-700"
+          />
+          {uploadingImage && <p className="text-xs text-gray-500 mt-1">Uploading...</p>}
+        </div>
+      )}
+
+    </div>
+  )
+}
+
+
+// --- Mermaid Live Preview Component ---
+function MermaidPreview({ content }) {
+  const containerRef = useRef(null)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    if (!content || !containerRef.current) {
+      if (containerRef.current) containerRef.current.innerHTML = ''
+      setError(null)
+      return
+    }
+
+    let cancelled = false
+    const timer = setTimeout(() => {
+      import('mermaid').then(mod => {
+        if (cancelled) return
+        const mermaid = mod.default
+        mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose' })
+        const id = `mermaid-${Math.random().toString(36).slice(2)}`
+        mermaid.render(id, content).then(({ svg }) => {
+          if (!cancelled && containerRef.current) {
+            containerRef.current.innerHTML = svg
+            setError(null)
+          }
+        }).catch(err => {
+          if (!cancelled) {
+            setError(err.message || 'Invalid mermaid syntax')
+            if (containerRef.current) containerRef.current.innerHTML = ''
+          }
+        })
+      })
+    }, 500) // debounce
+
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [content])
+
+  return (
+    <div>
+      <div ref={containerRef} className="bg-gray-900 rounded p-2 overflow-auto min-h-[40px]" />
+      {error && <p className="text-red-400 text-xs mt-1">{error}</p>}
     </div>
   )
 }

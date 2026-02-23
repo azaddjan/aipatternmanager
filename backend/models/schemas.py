@@ -95,8 +95,24 @@ class PatternCreate(BaseModel):
     works_with_ids: list[str] = []   # pattern IDs
     # --- Shared all-type fields ---
     restrictions: Optional[str] = None  # usage restrictions, platform constraints, licensing
+    # --- New metadata fields (all types) ---
+    description: Optional[str] = None  # short summary
+    tags: list[str] = []  # cross-cutting labels for filtering
+    deprecation_note: Optional[str] = None  # reason for deprecation, migration guidance
+    # --- ABB-specific new fields ---
+    quality_attributes: Optional[str] = None  # NFR contract: latency, availability, throughput
+    compliance_requirements: Optional[str] = None  # GDPR, SOC2, ISO 27001, etc.
+    # --- SBB-specific new fields ---
+    vendor: Optional[str] = None  # vendor name
+    deployment_model: Optional[str] = None  # SaaS / self-hosted / hybrid / managed
+    cost_tier: Optional[str] = None  # FREE / LOW / MEDIUM / HIGH
+    licensing: Optional[str] = None  # open-source / commercial / BYOL / pay-per-use
+    maturity: Optional[str] = None  # POC / pilot / production-ready / battle-tested
+    # --- Diagrams & Images (JSON arrays) ---
+    diagrams: list[dict] = []  # [{id, title, content}] mermaid source
+    images: list[dict] = []  # [{id, title, filename, content_type, size}]
     # Relationship hints — auto-create edges on creation
-    implements_abb: Optional[str] = None  # ABB ID this SBB implements
+    implements_abbs: list[str] = []  # ABB IDs this SBB implements (can be multiple)
     technology_ids: list[str] = []  # Technology IDs this pattern USES (core dependency)
     compatible_tech_ids: list[str] = []  # Technology IDs this pattern is COMPATIBLE_WITH
     depends_on_ids: list[str] = []  # Pattern IDs this pattern DEPENDS_ON
@@ -130,9 +146,25 @@ class PatternUpdate(BaseModel):
     consumed_by_ids: Optional[list[str]] = None
     works_with_ids: Optional[list[str]] = None
     # --- Shared all-type fields ---
-    restrictions: Optional[str] = None  # usage restrictions, platform constraints, licensing
+    restrictions: Optional[str] = None
+    # --- New metadata fields (all types) ---
+    description: Optional[str] = None
+    tags: Optional[list[str]] = None
+    deprecation_note: Optional[str] = None
+    # --- ABB-specific new fields ---
+    quality_attributes: Optional[str] = None
+    compliance_requirements: Optional[str] = None
+    # --- SBB-specific new fields ---
+    vendor: Optional[str] = None
+    deployment_model: Optional[str] = None
+    cost_tier: Optional[str] = None
+    licensing: Optional[str] = None
+    maturity: Optional[str] = None
+    # --- Diagrams & Images (JSON arrays) ---
+    diagrams: Optional[list[dict]] = None
+    images: Optional[list[dict]] = None
     # Relationship updates
-    implements_abb: Optional[str] = None  # set/change the parent ABB
+    implements_abbs: Optional[list[str]] = None  # set/change the parent ABBs (can be multiple)
     technology_ids: Optional[list[str]] = None  # set/change core tech dependencies (USES)
     compatible_tech_ids: Optional[list[str]] = None  # set/change compatible techs (COMPATIBLE_WITH)
     depends_on_ids: Optional[list[str]] = None  # set/change DEPENDS_ON relationships

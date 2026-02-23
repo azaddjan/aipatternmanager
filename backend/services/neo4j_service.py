@@ -7,9 +7,9 @@ from typing import Optional
 from neo4j import GraphDatabase
 
 # Fields that are stored as JSON strings in Neo4j (lists of dicts)
-_JSON_FIELDS = {"sbb_mapping"}
+_JSON_FIELDS = {"sbb_mapping", "diagrams", "images"}
 # Fields that are stored as native Neo4j string lists
-_LIST_FIELDS = {"business_capabilities", "consumed_by_ids", "works_with_ids"}
+_LIST_FIELDS = {"business_capabilities", "consumed_by_ids", "works_with_ids", "tags"}
 
 
 class Neo4jService:
@@ -231,7 +231,9 @@ class Neo4jService:
         """Deserialize JSON string fields back to Python objects."""
         for key in _JSON_FIELDS:
             val = pattern.get(key)
-            if isinstance(val, str):
+            if val is None:
+                pattern[key] = []
+            elif isinstance(val, str):
                 try:
                     pattern[key] = json.loads(val)
                 except (json.JSONDecodeError, TypeError):
@@ -1125,6 +1127,7 @@ class Neo4jService:
         # Per-type field definitions (actual Neo4j property names)
         TYPE_FIELDS = {
             "AB": {
+                "description": "Description",
                 "intent": "Intent",
                 "problem": "Problem",
                 "solution": "Solution",
@@ -1136,22 +1139,31 @@ class Neo4jService:
                 "building_blocks_note": "Building Blocks",
             },
             "ABB": {
+                "description": "Description",
                 "functionality": "Functionality",
                 "inbound_interfaces": "Inbound Interfaces",
                 "outbound_interfaces": "Outbound Interfaces",
                 "business_capabilities": "Business Capabilities",
+                "quality_attributes": "Quality Attributes",
+                "compliance_requirements": "Compliance Requirements",
             },
             "SBB": {
+                "description": "Description",
                 "specific_functionality": "Specific Functionality",
                 "inbound_interfaces": "Inbound Interfaces",
                 "outbound_interfaces": "Outbound Interfaces",
                 "sbb_mapping": "SBB Mapping",
                 "business_capabilities": "Business Capabilities",
+                "vendor": "Vendor",
+                "deployment_model": "Deployment Model",
+                "cost_tier": "Cost Tier",
+                "licensing": "Licensing",
+                "maturity": "Maturity",
             },
         }
 
         # List fields (checked via size() > 0 rather than string non-empty)
-        LIST_FIELDS = {"business_capabilities", "sbb_mapping", "consumed_by_ids", "works_with_ids"}
+        LIST_FIELDS = {"business_capabilities", "sbb_mapping", "consumed_by_ids", "works_with_ids", "tags"}
 
         with self.session() as session:
             # ── 1. Overall Counts ──

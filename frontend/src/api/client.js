@@ -376,6 +376,32 @@ export function discoverPatterns(provider = null, model = null, focus = null) {
   return request(`/discovery/suggest${query ? `?${query}` : ''}`, { method: 'POST' })
 }
 
+// --- Pattern Images ---
+
+export async function uploadPatternImage(patternId, file, title = '') {
+  const formData = new FormData()
+  formData.append('file', file)
+  const url = `${BASE_URL}/patterns/${patternId}/images?title=${encodeURIComponent(title)}`
+  const res = await fetch(url, { method: 'POST', body: formData })
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(error.detail || `Upload failed: ${res.status}`)
+  }
+  return res.json()
+}
+
+export function deletePatternImage(patternId, imageId) {
+  return request(`/patterns/${patternId}/images/${imageId}`, { method: 'DELETE' })
+}
+
+export function getArtifactsUrl(patternId) {
+  return `${BASE_URL}/patterns/${patternId}/artifacts`
+}
+
+export function getUploadUrl(filename) {
+  return `${BASE_URL}/uploads/${filename}`
+}
+
 // --- System ---
 
 export function fetchHealth() {

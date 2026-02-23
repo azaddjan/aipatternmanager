@@ -77,7 +77,7 @@ Patterns are organized into categories: Core AI/LLM, Integration, Agents, Knowle
    - **API docs**: http://localhost:8000/docs
    - **Neo4j Browser**: http://localhost:7474 (credentials: `neo4j` / `patternmanager2026`)
 
-The database auto-seeds with built-in categories and seed patterns on first startup.
+The database creates constraints, indexes, and built-in categories on first startup.
 
 ## Project Structure
 
@@ -104,7 +104,6 @@ The database auto-seeds with built-in categories and seed patterns on first star
 │   │   ├── neo4j_service.py     # Neo4j database operations & health scoring
 │   │   ├── ai_service.py        # AI orchestration
 │   │   ├── settings_service.py  # Configuration management
-│   │   ├── seed_service.py      # Database seeding
 │   │   ├── discovery_service.py # Pattern gap analysis
 │   │   ├── advisor_service.py   # Pattern advisor AI service
 │   │   ├── embedding_service.py # Embedding generation for patterns
@@ -127,8 +126,6 @@ The database auto-seeds with built-in categories and seed patterns on first star
 │   ├── static/
 │   │   ├── framework_diagram.png    # Framework diagram for exports
 │   │   └── pptx_assets/             # Icon assets for PPTX slides
-│   └── seed_data/
-│       └── patterns.json        # Initial pattern seed data
 ├── frontend/
 │   ├── src/
 │   │   ├── App.jsx              # Main app with routing

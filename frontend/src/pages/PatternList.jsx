@@ -33,9 +33,18 @@ export default function PatternList() {
       .finally(() => setLoading(false))
   }, [filters])
 
-  const filtered = patterns.filter(p =>
-    !search || p.name.toLowerCase().includes(search.toLowerCase()) || p.id.toLowerCase().includes(search.toLowerCase())
-  )
+  const filtered = patterns.filter(p => {
+    if (!search) return true
+    const q = search.toLowerCase()
+    return (
+      p.name?.toLowerCase().includes(q) ||
+      p.id?.toLowerCase().includes(q) ||
+      p.description?.toLowerCase().includes(q) ||
+      p.category?.toLowerCase().includes(q) ||
+      p.vendor?.toLowerCase().includes(q) ||
+      (p.tags || []).some(t => t.toLowerCase().includes(q))
+    )
+  })
 
   return (
     <div className="space-y-6">
@@ -51,7 +60,7 @@ export default function PatternList() {
       <div className="flex items-center gap-3 flex-wrap">
         <input
           type="text"
-          placeholder="Search by name or ID..."
+          placeholder="Search by name, ID, description, tags, or vendor..."
           value={search}
           onChange={e => setSearch(e.target.value)}
           className="input w-64"

@@ -903,7 +903,30 @@ code {{
 
         # Metadata table
         parts.append(self._metadata_table(pattern))
+
+        # Tags
+        tags = pattern.get("tags", [])
+        if tags:
+            parts.append('<div style="margin:8px 0;">')
+            for tag in tags:
+                parts.append(f'<span class="cap-pill" style="background:#1e3a5f;color:#60a5fa;">{self._escape(tag)}</span>')
+            parts.append('</div>')
+
         parts.append('<hr>')
+
+        # Description (shared across all types)
+        desc = pattern.get("description")
+        if desc:
+            parts.append('<h2>Description</h2>')
+            parts.append(self._render_text(desc))
+            parts.append('<hr>')
+
+        # Deprecation note
+        dep_note = pattern.get("deprecation_note")
+        if dep_note:
+            parts.append('<div style="background:#7f1d1d;border:1px solid #dc2626;border-radius:6px;padding:12px;margin-bottom:16px;">')
+            parts.append(f'<strong style="color:#fca5a5;">⚠ Deprecation Note:</strong> <span style="color:#fecaca;">{self._escape(dep_note)}</span>')
+            parts.append('</div>')
 
         if ptype == "AB":
             parts.append(self._ab_detail(pattern))
@@ -911,6 +934,25 @@ code {{
             parts.append(self._abb_detail(pattern))
         elif ptype == "SBB":
             parts.append(self._sbb_detail(pattern))
+
+        # Diagrams (shared across all types)
+        diagrams = pattern.get("diagrams", [])
+        if diagrams:
+            parts.append('<h2>Diagrams</h2>')
+            for diag in diagrams:
+                title = diag.get("title", "Untitled")
+                content = diag.get("content", "")
+                parts.append(f'<h3>{self._escape(title)}</h3>')
+                parts.append(f'<pre style="background:#1a1a2e;padding:12px;border-radius:6px;overflow-x:auto;"><code>{self._escape(content)}</code></pre>')
+            parts.append('<hr>')
+
+        # Restrictions (shared across all types)
+        restrictions = pattern.get("restrictions")
+        if restrictions:
+            parts.append('<div style="background:#78350f;border:1px solid #f59e0b;border-radius:6px;padding:12px;margin-bottom:16px;">')
+            parts.append(f'<strong style="color:#fbbf24;">⚠ Restrictions:</strong>')
+            parts.append(f'<div style="color:#fde68a;margin-top:4px;">{self._render_inline(restrictions)}</div>')
+            parts.append('</div>')
 
         parts.append('</div></div>')
         return "\n".join(parts)
@@ -985,6 +1027,20 @@ code {{
             parts.append('</ul>')
             parts.append('<hr>')
 
+        # Quality Attributes
+        qa = p.get("quality_attributes")
+        if qa:
+            parts.append('<h2>Quality Attributes</h2>')
+            parts.append(self._render_text(qa))
+            parts.append('<hr>')
+
+        # Compliance Requirements
+        cr = p.get("compliance_requirements")
+        if cr:
+            parts.append('<h2>Compliance Requirements</h2>')
+            parts.append(self._render_text(cr))
+            parts.append('<hr>')
+
         # Interoperability
         consumed = p.get("consumed_by_ids", [])
         works_with = p.get("works_with_ids", [])
@@ -1038,6 +1094,25 @@ code {{
         if func:
             parts.append('<h2>Specific Functionality</h2>')
             parts.append(self._render_text(func))
+            parts.append('<hr>')
+
+        # Solution Details table (SBB-specific metadata)
+        sol_fields = [
+            ("Vendor", p.get("vendor")),
+            ("Deployment Model", p.get("deployment_model")),
+            ("Cost Tier", p.get("cost_tier")),
+            ("Licensing", p.get("licensing")),
+            ("Maturity", p.get("maturity")),
+        ]
+        sol_rows = [(label, val) for label, val in sol_fields if val]
+        if sol_rows:
+            parts.append('<h2>Solution Details</h2>')
+            parts.append('<div class="table-wrapper"><table>')
+            parts.append('<thead><tr><th>Property</th><th>Value</th></tr></thead>')
+            parts.append('<tbody>')
+            for label, val in sol_rows:
+                parts.append(f'<tr><td><strong>{label}</strong></td><td>{self._escape(val)}</td></tr>')
+            parts.append('</tbody></table></div>')
             parts.append('<hr>')
 
         # Interfaces

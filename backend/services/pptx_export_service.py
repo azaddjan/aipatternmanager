@@ -327,6 +327,12 @@ class PptxExportService:
 
     def _get_short_desc(self, pattern):
         """Get a short one-line description from a pattern."""
+        # Prefer the explicit description field first
+        desc = pattern.get("description", "")
+        if desc:
+            first = desc.split("\n")[0].strip()
+            clean = re.sub(r'\*\*(.+?)\*\*', r'\1', first)
+            return clean[:80]
         for field in ["specific_functionality", "functionality", "intent"]:
             val = pattern.get(field, "")
             if val:
@@ -1000,8 +1006,12 @@ class PptxExportService:
             cat_label = cat_map.get(abb.get("category", ""), abb.get("category", ""))
             self._tb(slide, Inches(0.7), y + Inches(0.04), Inches(2.0), Inches(0.25),
                      abb["id"], size=10, bold=True, color=BLUE)
+            name_text = abb.get("name", "")
+            tags = abb.get("tags", [])
+            if tags:
+                name_text += f"  [{', '.join(tags[:3])}]"
             self._tb(slide, Inches(2.7), y + Inches(0.04), Inches(4.0), Inches(0.25),
-                     abb.get("name", ""), size=10)
+                     name_text, size=10)
             self._tb(slide, Inches(7.2), y + Inches(0.04), Inches(2.0), Inches(0.25),
                      cat_label, size=10, color=MUTED)
             y_val += 0.4

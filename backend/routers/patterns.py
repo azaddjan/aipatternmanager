@@ -1,8 +1,12 @@
-from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, HTTPException, Query, UploadFile, File
+from fastapi.responses import JSONResponse, StreamingResponse
 from typing import Optional
+import io
+import os
 import re
 import threading
+import uuid
+import zipfile
 
 from models.schemas import (
     PatternCreate, PatternUpdate,
@@ -10,6 +14,10 @@ from models.schemas import (
 )
 
 router = APIRouter(prefix="/api/patterns", tags=["Patterns"])
+
+UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/app/uploads")
+ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/svg+xml"}
+MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10 MB
 
 
 def _auto_embed_pattern(pattern_id: str):
@@ -97,12 +105,12 @@ def create_pattern(data: PatternCreate):
         raise HTTPException(status_code=409, detail=f"Pattern {pattern_id} already exists")
 
     # Extract relationship fields before creating the node
-    implements_abb = data.implements_abb
+    implements_abbs = data.implements_abbs or []
     technology_ids = data.technology_ids or []
     compatible_tech_ids = data.compatible_tech_ids or []
     depends_on_ids = data.depends_on_ids or []
 
-    pattern_data = data.model_dump(exclude={"implements_abb", "technology_ids", "compatible_tech_ids", "depends_on_ids"})
+    pattern_data = data.model_dump(exclude={"implements_abbs", "technology_ids", "compatible_tech_ids", "depends_on_ids"})
     pattern_data["id"] = pattern_id
 
     # Validate consumed_by_ids and works_with_ids reference existing patterns
@@ -110,9 +118,10 @@ def create_pattern(data: PatternCreate):
 
     pattern = db.create_pattern(pattern_data)
 
-    # Auto-create IMPLEMENTS relationship (SBB -> ABB)
-    if implements_abb and db.pattern_exists(implements_abb):
-        db.add_relationship(pattern_id, implements_abb, "IMPLEMENTS")
+    # Auto-create IMPLEMENTS relationships (SBB -> ABBs) — one SBB can realize multiple ABBs
+    for abb_id in implements_abbs:
+        if abb_id and db.pattern_exists(abb_id):
+            db.add_relationship(pattern_id, abb_id, "IMPLEMENTS")
 
     # Auto-create USES relationships (Pattern -> Technology) — core dependencies
     for tech_id in technology_ids:
@@ -142,13 +151,13 @@ def update_pattern(
     db = get_db()
 
     # Extract relationship fields
-    implements_abb = data.implements_abb
+    implements_abbs = data.implements_abbs
     technology_ids = data.technology_ids
     compatible_tech_ids = data.compatible_tech_ids
     depends_on_ids = data.depends_on_ids
 
-    update_data = data.model_dump(exclude_none=True, exclude={"implements_abb", "technology_ids", "compatible_tech_ids", "depends_on_ids"})
-    if not update_data and implements_abb is None and technology_ids is None and compatible_tech_ids is None and depends_on_ids is None:
+    update_data = data.model_dump(exclude_none=True, exclude={"implements_abbs", "technology_ids", "compatible_tech_ids", "depends_on_ids"})
+    if not update_data and implements_abbs is None and technology_ids is None and compatible_tech_ids is None and depends_on_ids is None:
         raise HTTPException(status_code=400, detail="No fields to update")
 
     # Validate consumed_by_ids and works_with_ids reference existing patterns
@@ -166,9 +175,9 @@ def update_pattern(
         if not pattern:
             raise HTTPException(status_code=404, detail=f"Pattern {pattern_id} not found")
 
-    # Update IMPLEMENTS relationship if provided
-    if implements_abb is not None:
-        _replace_implements(db, pattern_id, implements_abb)
+    # Update IMPLEMENTS relationships if provided
+    if implements_abbs is not None:
+        _replace_implements(db, pattern_id, implements_abbs)
 
     # Update USES relationships if provided
     if technology_ids is not None:
@@ -206,17 +215,18 @@ def _validate_interop_ids(db, consumed_by_ids, works_with_ids):
         )
 
 
-def _replace_implements(db, pattern_id: str, abb_id: str):
-    """Replace the IMPLEMENTS relationship for a pattern."""
+def _replace_implements(db, pattern_id: str, abb_ids: list[str]):
+    """Replace the IMPLEMENTS relationships for a pattern (SBB can realize multiple ABBs)."""
     # Remove existing IMPLEMENTS rels
     with db.session() as session:
         session.run(
             "MATCH (p:Pattern {id: $pid})-[r:IMPLEMENTS]->() DELETE r",
             pid=pattern_id,
         )
-    # Add new one if provided
-    if abb_id and db.pattern_exists(abb_id):
-        db.add_relationship(pattern_id, abb_id, "IMPLEMENTS")
+    # Add new ones
+    for abb_id in abb_ids:
+        if abb_id and db.pattern_exists(abb_id):
+            db.add_relationship(pattern_id, abb_id, "IMPLEMENTS")
 
 
 def _replace_uses(db, pattern_id: str, tech_ids: list[str]):
@@ -262,9 +272,127 @@ def _replace_depends_on(db, pattern_id: str, dep_ids: list[str]):
 @router.delete("/{pattern_id}")
 def delete_pattern(pattern_id: str):
     db = get_db()
+    # Fetch pattern first to get image files for cleanup
+    pattern = db.get_pattern(pattern_id)
+    if not pattern:
+        raise HTTPException(status_code=404, detail=f"Pattern {pattern_id} not found")
+
     if not db.delete_pattern(pattern_id):
         raise HTTPException(status_code=404, detail=f"Pattern {pattern_id} not found")
+
+    # Clean up image files from filesystem
+    for img in pattern.get("images", []):
+        filepath = os.path.join(UPLOAD_DIR, img.get("filename", ""))
+        if filepath and os.path.isfile(filepath):
+            try:
+                os.remove(filepath)
+            except OSError:
+                pass
+
     return {"deleted": pattern_id}
+
+
+# --- Image Upload / Delete ---
+
+@router.post("/{pattern_id}/images", status_code=201)
+async def upload_image(
+    pattern_id: str,
+    file: UploadFile = File(...),
+    title: str = Query("", description="Optional title for the image"),
+):
+    db = get_db()
+    pattern = db.get_pattern(pattern_id)
+    if not pattern:
+        raise HTTPException(status_code=404, detail=f"Pattern {pattern_id} not found")
+
+    if file.content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(status_code=400, detail=f"Unsupported file type: {file.content_type}. Allowed: jpeg, png, svg")
+
+    contents = await file.read()
+    if len(contents) > MAX_IMAGE_SIZE:
+        raise HTTPException(status_code=400, detail="File too large (max 10 MB)")
+
+    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else "png"
+    image_id = str(uuid.uuid4())
+    filename = f"{image_id}.{ext}"
+
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    with open(os.path.join(UPLOAD_DIR, filename), "wb") as f:
+        f.write(contents)
+
+    image_meta = {
+        "id": image_id,
+        "title": title or file.filename or filename,
+        "filename": filename,
+        "content_type": file.content_type,
+        "size": len(contents),
+    }
+
+    images = pattern.get("images", [])
+    images.append(image_meta)
+    db.update_pattern(pattern_id, {"images": images})
+
+    return image_meta
+
+
+@router.delete("/{pattern_id}/images/{image_id}")
+def delete_image(pattern_id: str, image_id: str):
+    db = get_db()
+    pattern = db.get_pattern(pattern_id)
+    if not pattern:
+        raise HTTPException(status_code=404, detail=f"Pattern {pattern_id} not found")
+
+    images = pattern.get("images", [])
+    target = next((img for img in images if img.get("id") == image_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail=f"Image {image_id} not found on pattern {pattern_id}")
+
+    # Delete file from filesystem
+    filepath = os.path.join(UPLOAD_DIR, target.get("filename", ""))
+    if filepath and os.path.isfile(filepath):
+        try:
+            os.remove(filepath)
+        except OSError:
+            pass
+
+    # Update pattern images list
+    images = [img for img in images if img.get("id") != image_id]
+    db.update_pattern(pattern_id, {"images": images})
+
+    return {"deleted": image_id}
+
+
+# --- Artifact Export ---
+
+@router.get("/{pattern_id}/artifacts")
+def export_artifacts(pattern_id: str):
+    db = get_db()
+    pattern = db.get_pattern(pattern_id)
+    if not pattern:
+        raise HTTPException(status_code=404, detail=f"Pattern {pattern_id} not found")
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        # Add uploaded images
+        for img in pattern.get("images", []):
+            filepath = os.path.join(UPLOAD_DIR, img.get("filename", ""))
+            if os.path.isfile(filepath):
+                arc_name = f"images/{img.get('title', img['filename'])}_{img['filename']}"
+                zf.write(filepath, arc_name)
+
+        # Add mermaid diagrams as .mmd files
+        for diag in pattern.get("diagrams", []):
+            title = diag.get("title") or diag.get("id", "untitled")
+            safe_title = re.sub(r'[^\w\-. ]', '_', title)
+            zf.writestr(f"diagrams/{safe_title}.mmd", diag.get("content", ""))
+
+    buf.seek(0)
+    filename = f"{pattern_id}_artifacts.zip"
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/{pattern_id}/graph")

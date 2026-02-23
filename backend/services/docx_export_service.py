@@ -297,6 +297,33 @@ class DocxExportService:
 
         doc.add_paragraph("")  # spacer
 
+        # Tags
+        tags = pattern.get("tags", [])
+        if tags:
+            para = doc.add_paragraph()
+            run = para.add_run("Tags: ")
+            run.bold = True
+            run.font.size = Pt(9)
+            run = para.add_run(", ".join(tags))
+            run.font.size = Pt(9)
+            run.font.color.rgb = RGBColor(0x33, 0x82, 0xF6)
+
+        # Description (shared across all types)
+        desc = pattern.get("description")
+        if desc:
+            doc.add_heading("Description", level=3)
+            self._add_structured_text(doc, desc)
+
+        # Deprecation note
+        dep_note = pattern.get("deprecation_note")
+        if dep_note:
+            para = doc.add_paragraph()
+            run = para.add_run("Deprecation Note: ")
+            run.bold = True
+            run.font.color.rgb = RGBColor(0xDC, 0x26, 0x26)
+            run = para.add_run(dep_note)
+            run.font.color.rgb = RGBColor(0xDC, 0x26, 0x26)
+
         # Type-specific content
         if ptype == "AB":
             self._render_ab_fields(doc, pattern)
@@ -304,6 +331,32 @@ class DocxExportService:
             self._render_abb_fields(doc, pattern)
         elif ptype == "SBB":
             self._render_sbb_fields(doc, pattern)
+
+        # Diagrams (shared across all types)
+        diagrams = pattern.get("diagrams", [])
+        if diagrams:
+            doc.add_heading("Diagrams", level=3)
+            for diag in diagrams:
+                title = diag.get("title", "Untitled")
+                content = diag.get("content", "")
+                para = doc.add_paragraph()
+                run = para.add_run(title)
+                run.bold = True
+                if content:
+                    code_para = doc.add_paragraph()
+                    run = code_para.add_run(content)
+                    run.font.name = 'Consolas'
+                    run.font.size = Pt(8)
+                    run.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
+
+        # Restrictions (shared across all types)
+        restrictions = pattern.get("restrictions")
+        if restrictions:
+            para = doc.add_paragraph()
+            run = para.add_run("Restrictions: ")
+            run.bold = True
+            run.font.color.rgb = RGBColor(0xF5, 0x9E, 0x0B)
+            para.add_run(restrictions)
 
         # Relationships
         rels = pattern.get("relationships", [])
@@ -317,9 +370,9 @@ class DocxExportService:
             hdr[2].text = "Name"
             for r in rels:
                 row = rel_table.add_row()
-                row.cells[0].text = r.get("type", "")
-                row.cells[1].text = r.get("target_id", "")
-                row.cells[2].text = r.get("target_name", "")
+                row.cells[0].text = r.get("type") or ""
+                row.cells[1].text = r.get("target_id") or ""
+                row.cells[2].text = r.get("target_name") or ""
 
     def _render_ab_fields(self, doc, p):
         """Render Architecture Blueprint specific fields."""
@@ -353,6 +406,14 @@ class DocxExportService:
             doc.add_heading("Outbound Interfaces", level=3)
             self._add_structured_text(doc, p["outbound_interfaces"])
 
+        if p.get("quality_attributes"):
+            doc.add_heading("Quality Attributes", level=3)
+            self._add_structured_text(doc, p["quality_attributes"])
+
+        if p.get("compliance_requirements"):
+            doc.add_heading("Compliance Requirements", level=3)
+            self._add_structured_text(doc, p["compliance_requirements"])
+
         caps = p.get("business_capabilities", [])
         if caps:
             doc.add_heading("Business Capabilities", level=3)
@@ -363,6 +424,28 @@ class DocxExportService:
         if p.get("specific_functionality"):
             doc.add_heading("Specific Functionality", level=3)
             self._add_structured_text(doc, p["specific_functionality"])
+
+        # Solution Details table
+        sol_fields = [
+            ("Vendor", p.get("vendor")),
+            ("Deployment Model", p.get("deployment_model")),
+            ("Cost Tier", p.get("cost_tier")),
+            ("Licensing", p.get("licensing")),
+            ("Maturity", p.get("maturity")),
+        ]
+        sol_rows = [(label, val) for label, val in sol_fields if val]
+        if sol_rows:
+            doc.add_heading("Solution Details", level=3)
+            table = doc.add_table(rows=0, cols=2)
+            table.style = 'Light Shading Accent 1'
+            for label, val in sol_rows:
+                row = table.add_row()
+                row.cells[0].text = label
+                row.cells[1].text = str(val)
+                for paragraph in row.cells[0].paragraphs:
+                    for run in paragraph.runs:
+                        run.bold = True
+            doc.add_paragraph("")  # spacer
 
         if p.get("inbound_interfaces"):
             doc.add_heading("Inbound Interfaces", level=3)

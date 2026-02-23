@@ -63,7 +63,9 @@ export default function TechnologyRegistry() {
     !search ||
     t.name.toLowerCase().includes(search.toLowerCase()) ||
     t.id.toLowerCase().includes(search.toLowerCase()) ||
-    t.vendor.toLowerCase().includes(search.toLowerCase())
+    t.vendor.toLowerCase().includes(search.toLowerCase()) ||
+    (t.description || '').toLowerCase().includes(search.toLowerCase()) ||
+    (t.category || '').toLowerCase().includes(search.toLowerCase())
   )
 
   // Group by category for grid display
@@ -111,7 +113,7 @@ export default function TechnologyRegistry() {
       <div className="flex gap-3 flex-wrap">
         <input
           type="text"
-          placeholder="Search by name, ID, or vendor..."
+          placeholder="Search by name, ID, vendor, description, or category..."
           value={search}
           onChange={e => setSearch(e.target.value)}
           className="input w-64"

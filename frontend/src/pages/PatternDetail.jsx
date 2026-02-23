@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useParams, Link, useNavigate, useLocation } from 'react-router-dom'
-import { fetchPattern, deletePattern, fetchPatternGraph } from '../api/client'
+import { fetchPattern, deletePattern, fetchPatternGraph, getArtifactsUrl, getUploadUrl } from '../api/client'
 import AutoLinkedText from '../components/AutoLinkedText'
 import MarkdownContent from '../components/MarkdownContent'
 import GraphView from '../components/GraphView'
@@ -36,7 +36,14 @@ export default function PatternDetail() {
   }, [loadPattern, location.key, location.state])
 
   const handleDelete = async () => {
-    if (!confirm(`Delete pattern ${id}? This cannot be undone.`)) return
+    const imgCount = pattern?.images?.length || 0
+    const diagCount = pattern?.diagrams?.length || 0
+    const hasArtifacts = imgCount > 0 || diagCount > 0
+    let msg = `Delete pattern ${id}? This cannot be undone.`
+    if (hasArtifacts) {
+      msg += `\n\nThis pattern has ${imgCount} image(s) and ${diagCount} diagram(s). They will be deleted.\nDownload artifacts first from the button in the header.`
+    }
+    if (!confirm(msg)) return
     try {
       await deletePattern(id)
       navigate('/patterns')
@@ -81,6 +88,13 @@ export default function PatternDetail() {
           <p className="text-gray-500 text-sm mt-1">
             Category: {pattern.category} &middot; Version: {pattern.version}
           </p>
+          {pattern.tags?.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              {pattern.tags.map(tag => (
+                <span key={tag} className="px-2 py-0.5 bg-blue-500/15 text-blue-400 text-xs rounded-full">{tag}</span>
+              ))}
+            </div>
+          )}
           {pattern.deprecation_note && (
             <p className="text-red-400 text-sm mt-1 bg-red-500/10 rounded px-2 py-1 inline-block">
               {pattern.deprecation_note}
@@ -88,6 +102,9 @@ export default function PatternDetail() {
           )}
         </div>
         <div className="flex gap-2">
+          {(pattern.images?.length > 0 || pattern.diagrams?.length > 0) && (
+            <a href={getArtifactsUrl(id)} download className="btn-secondary">Download Artifacts</a>
+          )}
           <Link to={`/patterns/${id}/edit`} className="btn-secondary">Edit</Link>
           <Link to={`/impact?id=${id}`} className="btn-secondary">Impact Analysis</Link>
           <button onClick={handleDelete} className="btn-danger">Delete</button>
@@ -135,14 +152,22 @@ export default function PatternDetail() {
 function StructuredContent({ pattern }) {
   const type = pattern.type
 
-  if (type === 'AB') return <ABContent p={pattern} />
-  if (type === 'ABB') return <ABBContent p={pattern} />
-  if (type === 'SBB') return <SBBContent p={pattern} />
-
-  // Fallback for unknown types
-  return (
+  let typeContent = null
+  if (type === 'AB') typeContent = <ABContent p={pattern} />
+  else if (type === 'ABB') typeContent = <ABBContent p={pattern} />
+  else if (type === 'SBB') typeContent = <SBBContent p={pattern} />
+  else typeContent = (
     <div className="card">
       <p className="text-gray-500 italic">No structured content available for this pattern type.</p>
+    </div>
+  )
+
+  return (
+    <div className="space-y-4">
+      <ContentSection title="Description" content={pattern.description} />
+      {typeContent}
+      <DiagramsSection diagrams={pattern.diagrams} />
+      <ImagesSection images={pattern.images} />
     </div>
   )
 }
@@ -170,6 +195,8 @@ function ABBContent({ p }) {
       <ContentSection title="Functionality" content={p.functionality} />
       <InterfaceSection title="Inbound Interfaces" content={p.inbound_interfaces} />
       <InterfaceSection title="Outbound Interfaces" content={p.outbound_interfaces} />
+      <ContentSection title="Quality Attributes" content={p.quality_attributes} />
+      <ContentSection title="Compliance Requirements" content={p.compliance_requirements} />
       <CapabilitiesSection capabilities={p.business_capabilities} />
       <RestrictionsSection restrictions={p.restrictions} />
       <InteropSection title="Consumed By" ids={p.consumed_by_ids} />
@@ -179,43 +206,65 @@ function ABBContent({ p }) {
 }
 
 function SBBContent({ p }) {
-  // Find parent ABB from IMPLEMENTS relationships
-  const parentAbb = useMemo(() => {
+  // Find ALL parent ABBs from IMPLEMENTS relationships (SBB can realize multiple ABBs)
+  const parentAbbs = useMemo(() => {
     const rels = p.relationships || []
-    const impl = rels.find(r => r.type === 'IMPLEMENTS' && r.target_id?.startsWith('ABB-'))
-    return impl ? { id: impl.target_id, name: impl.target_name } : null
+    return rels
+      .filter(r => r.type === 'IMPLEMENTS' && r.target_id?.startsWith('ABB-'))
+      .map(r => ({ id: r.target_id, name: r.target_name }))
   }, [p.relationships])
 
-  // Fetch parent ABB's business capabilities
-  const [inheritedCaps, setInheritedCaps] = useState(null)
+  // Fetch business capabilities from ALL parent ABBs and merge them
+  const [inheritedCapsMap, setInheritedCapsMap] = useState({}) // { abbId: [caps] }
   useEffect(() => {
-    if (!parentAbb) return
-    fetchPattern(parentAbb.id)
-      .then(abb => setInheritedCaps(abb.business_capabilities || []))
-      .catch(() => setInheritedCaps(null))
-  }, [parentAbb])
+    if (parentAbbs.length === 0) return
+    Promise.all(
+      parentAbbs.map(abb =>
+        fetchPattern(abb.id)
+          .then(data => ({ id: abb.id, caps: data.business_capabilities || [] }))
+          .catch(() => ({ id: abb.id, caps: [] }))
+      )
+    ).then(results => {
+      const map = {}
+      results.forEach(r => { map[r.id] = r.caps })
+      setInheritedCapsMap(map)
+    })
+  }, [parentAbbs])
+
+  // Merge all inherited capabilities (deduplicated)
+  const allInheritedCaps = useMemo(() => {
+    const capSet = new Set()
+    Object.values(inheritedCapsMap).forEach(caps => caps.forEach(c => capSet.add(c)))
+    return [...capSet].sort()
+  }, [inheritedCapsMap])
 
   return (
     <div className="space-y-4">
       <ContentSection title="Specific Functionality" content={p.specific_functionality} />
+      <SolutionDetailsSection p={p} />
       <InterfaceSection title="Inbound Interfaces" content={p.inbound_interfaces} />
       <InterfaceSection title="Outbound Interfaces" content={p.outbound_interfaces} />
       <MappingSection mapping={p.sbb_mapping} />
-      {inheritedCaps && inheritedCaps.length > 0 && (
+      {allInheritedCaps.length > 0 && (
         <div className="card">
           <h3 className="text-sm font-semibold text-gray-400 mb-3">
             Business Capabilities
-            {parentAbb && (
+            {parentAbbs.length > 0 && (
               <span className="font-normal text-gray-600 ml-2">
                 inherited via{' '}
-                <Link to={`/patterns/${parentAbb.id}`} className="text-blue-400 hover:underline">
-                  {parentAbb.id}
-                </Link>
+                {parentAbbs.map((abb, i) => (
+                  <span key={abb.id}>
+                    {i > 0 && ', '}
+                    <Link to={`/patterns/${abb.id}`} className="text-blue-400 hover:underline">
+                      {abb.id}
+                    </Link>
+                  </span>
+                ))}
               </span>
             )}
           </h3>
           <div className="flex flex-wrap gap-2">
-            {inheritedCaps.map((cap, i) => (
+            {allInheritedCaps.map((cap, i) => (
               <span key={i} className="px-3 py-1 bg-blue-500/10 text-blue-300 text-sm rounded-full border border-blue-500/20">
                 {cap}
               </span>
@@ -319,6 +368,106 @@ function InteropSection({ title, ids }) {
           >
             {pid}
           </Link>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/* ---------- Solution Details (SBB) ---------- */
+
+function SolutionDetailsSection({ p }) {
+  if (!p.vendor && !p.deployment_model && !p.cost_tier && !p.licensing && !p.maturity) return null
+  const items = [
+    { label: 'Vendor', value: p.vendor },
+    { label: 'Deployment', value: p.deployment_model },
+    { label: 'Cost Tier', value: p.cost_tier },
+    { label: 'Licensing', value: p.licensing },
+    { label: 'Maturity', value: p.maturity },
+  ].filter(x => x.value)
+  return (
+    <div className="card">
+      <h3 className="text-sm font-semibold text-gray-400 mb-3">Solution Details</h3>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        {items.map(({ label, value }) => (
+          <div key={label}>
+            <span className="text-xs text-gray-500">{label}</span>
+            <p className="text-sm text-gray-200">{value}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/* ---------- Diagrams Section ---------- */
+
+function DiagramsSection({ diagrams }) {
+  if (!diagrams || diagrams.length === 0) return null
+  return (
+    <div className="card">
+      <h3 className="text-sm font-semibold text-gray-400 mb-3">Diagrams ({diagrams.length})</h3>
+      <div className="space-y-4">
+        {diagrams.map(diag => (
+          <div key={diag.id}>
+            {diag.title && <p className="text-sm text-gray-300 font-medium mb-2">{diag.title}</p>}
+            <MermaidRenderer content={diag.content} />
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function MermaidRenderer({ content }) {
+  const containerRef = useRef(null)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    if (!content || !containerRef.current) return
+    let cancelled = false
+    import('mermaid').then(mod => {
+      if (cancelled) return
+      const mermaid = mod.default
+      mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose' })
+      const id = `mermaid-${Math.random().toString(36).slice(2)}`
+      mermaid.render(id, content).then(({ svg }) => {
+        if (!cancelled && containerRef.current) {
+          containerRef.current.innerHTML = svg
+          setError(null)
+        }
+      }).catch(err => {
+        if (!cancelled) setError(err.message || 'Render error')
+      })
+    })
+    return () => { cancelled = true }
+  }, [content])
+
+  return (
+    <div>
+      <div ref={containerRef} className="bg-gray-900 rounded p-3 overflow-auto" />
+      {error && <p className="text-red-400 text-xs mt-1">{error}</p>}
+    </div>
+  )
+}
+
+/* ---------- Images Section ---------- */
+
+function ImagesSection({ images }) {
+  if (!images || images.length === 0) return null
+  return (
+    <div className="card">
+      <h3 className="text-sm font-semibold text-gray-400 mb-3">Images ({images.length})</h3>
+      <div className="grid grid-cols-2 gap-4">
+        {images.map(img => (
+          <div key={img.id}>
+            <img
+              src={getUploadUrl(img.filename)}
+              alt={img.title}
+              className="w-full rounded-lg border border-gray-700"
+            />
+            {img.title && <p className="text-xs text-gray-500 mt-1">{img.title}</p>}
+          </div>
         ))}
       </div>
     </div>
