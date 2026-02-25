@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useParams, Link, useNavigate, useLocation } from 'react-router-dom'
-import { fetchPattern, deletePattern, fetchPatternGraph, getArtifactsUrl, getUploadUrl, authenticatedDownload } from '../api/client'
+import { fetchPattern, deletePattern, fetchPatternGraph, fetchImpactAnalysis, aiPatternAssist, getArtifactsUrl, getUploadUrl, authenticatedDownload } from '../api/client'
 import AutoLinkedText from '../components/AutoLinkedText'
 import MarkdownContent from '../components/MarkdownContent'
 import GraphView from '../components/GraphView'
@@ -14,6 +14,7 @@ export default function PatternDetail() {
   const { canEditPattern } = useAuth()
   const [pattern, setPattern] = useState(null)
   const [graphData, setGraphData] = useState(null)
+  const [impactData, setImpactData] = useState(null)
   const [tab, setTab] = useState('content') // content | relationships | graph
   const [loading, setLoading] = useState(true)
 
@@ -36,6 +37,12 @@ export default function PatternDetail() {
   useEffect(() => {
     loadPattern()
   }, [loadPattern, location.key, location.state])
+
+  // Eagerly load impact data for AI context
+  useEffect(() => {
+    if (!pattern) return
+    if (!impactData) fetchImpactAnalysis(id).then(setImpactData).catch(() => {})
+  }, [pattern])
 
   const handleDelete = async () => {
     const imgCount = pattern?.images?.length || 0
@@ -135,7 +142,13 @@ export default function PatternDetail() {
       </div>
 
       {/* Tab Content */}
-      {tab === 'content' && <StructuredContent pattern={pattern} />}
+      {tab === 'content' && (
+        <StructuredContent
+          pattern={pattern}
+          impactData={impactData}
+          graphData={graphData}
+        />
+      )}
 
       {tab === 'relationships' && (
         <div className="space-y-4">
@@ -157,7 +170,7 @@ export default function PatternDetail() {
 
 /* ---------- Structured Content Renderer ---------- */
 
-function StructuredContent({ pattern }) {
+function StructuredContent({ pattern, impactData, graphData }) {
   const type = pattern.type
 
   let typeContent = null
@@ -174,8 +187,174 @@ function StructuredContent({ pattern }) {
     <div className="space-y-4">
       <ContentSection title="Description" content={pattern.description} />
       {typeContent}
+      <PatternAIAssistant pattern={pattern} impactData={impactData} graphData={graphData} />
       <DiagramsSection diagrams={pattern.diagrams} />
       <ImagesSection images={pattern.images} />
+    </div>
+  )
+}
+
+/* ---------- AI Assistant Components ---------- */
+
+function SparkleIcon() {
+  return (
+    <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
+      <path d="M10 2a1 1 0 011 1v1.323l3.954 1.582a1 1 0 01.588.764l.003.046-.003.046a1 1 0 01-.588.764L11 9.107V11a1 1 0 11-2 0V9.107L5.046 7.525a1 1 0 01-.588-.764L4.455 6.715l.003-.046a1 1 0 01.588-.764L9 4.323V3a1 1 0 011-1zM5 14a1 1 0 011 1v1h1a1 1 0 110 2H6v1a1 1 0 11-2 0v-1H3a1 1 0 110-2h1v-1a1 1 0 011-1zm10 0a1 1 0 011 1v1h1a1 1 0 110 2h-1v1a1 1 0 11-2 0v-1h-1a1 1 0 110-2h1v-1a1 1 0 011-1z" />
+    </svg>
+  )
+}
+
+function Spinner({ text }) {
+  return (
+    <span className="flex items-center gap-1.5">
+      <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z"/></svg>
+      {text}
+    </span>
+  )
+}
+
+function PatternAIAssistant({ pattern, impactData, graphData }) {
+  const [prompt, setPrompt] = useState('')
+  const [result, setResult] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [expanded, setExpanded] = useState(true)
+
+  // Clean pattern data — strip large/internal fields
+  const cleanPatternForAI = (p) => {
+    if (!p) return {}
+    const { embedding, created_at, updated_at, images, diagrams, ...rest } = p
+    return rest
+  }
+
+  // Build enriched context from relationships, impact, graph, technologies
+  const buildEnrichedContext = () => {
+    const parts = []
+    const rels = pattern.relationships || []
+
+    // Relationships summary
+    const relsByType = {}
+    rels.forEach(r => {
+      if (!relsByType[r.type]) relsByType[r.type] = []
+      relsByType[r.type].push(r)
+    })
+    if (Object.keys(relsByType).length > 0) {
+      const relSummary = Object.entries(relsByType).map(([type, items]) =>
+        `${type}: ${items.map(r => `${r.target_id}(${r.target_name || ''})`).join(', ')}`
+      ).join('. ')
+      parts.push(`Relationships: ${relSummary}`)
+    }
+
+    // Technologies used (from USES relationships)
+    const techRels = rels.filter(r => r.type === 'USES')
+    if (techRels.length > 0) {
+      parts.push(`Technologies used: ${techRels.map(r => `${r.target_id}(${r.target_name || ''})`).join(', ')}`)
+    }
+
+    // Impact data
+    if (impactData) {
+      const affected = impactData.affected_patterns || []
+      const active = affected.filter(p => p.status === 'ACTIVE').length
+      if (affected.length > 0) {
+        parts.push(`Impact Analysis: ${affected.length} affected patterns (${active} active). Patterns: ${affected.slice(0, 15).map(p => `${p.id}(${p.type},${p.status})`).join(', ')}${affected.length > 15 ? ` +${affected.length - 15} more` : ''}`)
+      } else {
+        parts.push('Impact Analysis: No downstream affected patterns.')
+      }
+    }
+
+    // Graph data
+    if (graphData) {
+      const nodes = graphData.nodes || []
+      const edges = graphData.edges || []
+      const nodeTypes = {}
+      nodes.forEach(n => {
+        const t = n.node_type || n.type || 'unknown'
+        nodeTypes[t] = (nodeTypes[t] || 0) + 1
+      })
+      parts.push(`Graph: ${nodes.length} nodes (${Object.entries(nodeTypes).map(([t, c]) => `${t}=${c}`).join(', ')}), ${edges.length} edges`)
+    }
+
+    return parts.length > 0 ? '\n\nAdditional context from the system:\n' + parts.join('\n') : ''
+  }
+
+  const handleGenerate = async (userPrompt) => {
+    const q = userPrompt || prompt
+    if (!q.trim()) return
+    setResult(null)
+    setLoading(true)
+    try {
+      const enriched = buildEnrichedContext()
+      const res = await aiPatternAssist({
+        action: 'custom',
+        pattern_data: cleanPatternForAI(pattern),
+        custom_prompt: q.trim(),
+        extra_context: enriched || undefined,
+      })
+      setResult(res.result)
+    } catch (err) {
+      setResult(`Error: ${err.message}`)
+    }
+    setLoading(false)
+  }
+
+  return (
+    <div className="card border border-purple-500/20">
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-sm font-semibold text-purple-400 flex items-center gap-1.5">
+          <SparkleIcon /> AI Assistant
+        </h3>
+        <div className="flex items-center gap-2">
+          {result && (
+            <button
+              onClick={() => { setResult(null); setPrompt('') }}
+              className="text-xs text-gray-500 hover:text-red-400 transition-colors"
+            >
+              Clear
+            </button>
+          )}
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+          >
+            {expanded ? 'Collapse' : 'Expand'}
+          </button>
+        </div>
+      </div>
+      {expanded && (
+        <>
+          <div className="flex gap-2 mb-3">
+            <input
+              value={prompt}
+              onChange={e => setPrompt(e.target.value)}
+              placeholder="Ask anything — AI knows relationships, impact, graph data... (e.g., 'Suggest improvements', 'Migration risk?', 'How is this used?')"
+              className="input flex-1 text-sm"
+              onKeyDown={e => e.key === 'Enter' && handleGenerate()}
+            />
+            <button
+              onClick={() => handleGenerate()}
+              disabled={loading}
+              className="px-4 py-1.5 text-sm rounded-lg bg-purple-600/30 text-purple-300 hover:bg-purple-600/50 disabled:opacity-50 transition-colors flex items-center gap-1.5"
+            >
+              {loading ? <Spinner text="Generating..." /> : (<><SparkleIcon /> Generate</>)}
+            </button>
+          </div>
+          {result && (
+            <div className="bg-gray-900/50 rounded-lg px-3 py-2 max-h-64 overflow-y-auto">
+              <MarkdownContent content={typeof result === 'string' ? result : JSON.stringify(result, null, 2)} />
+              <div className="flex gap-2 mt-2">
+                <button
+                  onClick={() => { setResult(null); setPrompt('') }}
+                  className="px-3 py-1 text-xs rounded bg-gray-700 text-gray-400 hover:bg-gray-600 transition-colors"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+      {!expanded && (
+        <p className="text-xs text-gray-600">Click "Expand" to use AI to ask questions about this pattern.</p>
+      )}
     </div>
   )
 }

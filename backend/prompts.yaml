@@ -38,11 +38,11 @@ authoring:
     Relationship types:
     - IMPLEMENTS: SBB → ABB (every SBB must have at least one)
     - COMPOSES: PBC → ABB (business capability to logical block)
-    - USES: SBB → Technology (primary technology dependency)
-    - COMPATIBLE_WITH: SBB → Technology (optional/alternative technology)
-    - DEPENDS_ON: Pattern → Pattern (structural dependency)
-    - REFERENCES: Pattern → Pattern (informational cross-reference)
-    - CONSTRAINED_BY: Pattern → Pattern (governance constraint)
+    - USES: SBB → Technology (primary technology dependency — SBB only, NEVER ABB)
+    - COMPATIBLE_WITH: SBB → Technology (optional/alternative — SBB only, NEVER ABB)
+    - DEPENDS_ON: SBB → Pattern (structural dependency — SBB only, NEVER ABB)
+    - REFERENCES: Pattern → Pattern (informational cross-reference — any type)
+    - CONSTRAINED_BY: Pattern → Pattern (governance constraint — any type)
 
     Categories (code → label):
     - core → Core AI/LLM
@@ -59,8 +59,13 @@ authoring:
     - SBB: SBB-{{CAT}}-nnn (e.g., SBB-CORE-001, SBB-AGT-003)
 
     Key domain rules:
-    - ABBs are vendor-neutral; SBBs are vendor-specific
-    - Every SBB must reference its primary technologies
+    - ABBs are ABSTRACT, VENDOR-NEUTRAL logical capabilities — they define WHAT is needed, not HOW
+    - ABBs NEVER have technology dependencies, compatible technologies, or USES/COMPATIBLE_WITH relationships
+    - ABBs NEVER reference specific products, vendors, or cloud services
+    - ABBs may reference other ABBs via REFERENCES (informational) or CONSTRAINED_BY (governance)
+    - SBBs are CONCRETE, VENDOR-SPECIFIC implementations — they define HOW an ABB is realized
+    - Every SBB implements one or more ABBs and must reference its primary technologies via USES
+    - SBBs can have COMPATIBLE_WITH, DEPENDS_ON, and USES relationships to technologies/patterns
     - All LLM-calling patterns should reference guardrail patterns (xcut category)
     - Cross-cutting patterns can be referenced by any pattern via REFERENCES
 
@@ -78,6 +83,8 @@ authoring:
     For AB (Architecture Blueprint), return:
     {{
       "name": "Pattern Name",
+      "description": "Concise 2-3 sentence summary of this blueprint's purpose and scope",
+      "tags": ["tag-one", "tag-two", "tag-three"],
       "intent": "One-paragraph purpose statement explaining what this blueprint frames",
       "problem": "The architectural challenge this blueprint addresses",
       "solution": "High-level resolution description",
@@ -86,15 +93,19 @@ authoring:
       "inter_element_contracts": "How the structural elements interact with each other",
       "related_patterns_text": "References to related patterns and ADRs",
       "related_adrs": "Related Architecture Decision Records",
-      "building_blocks_note": "How ABBs and SBBs relate to this blueprint"
+      "restrictions": "Known limitations, constraints, or anti-patterns to avoid"
     }}
 
     For ABB (Architecture Building Block), return:
     {{
       "name": "Pattern Name",
+      "description": "Concise 2-3 sentence summary of this building block's capabilities",
+      "tags": ["tag-one", "tag-two", "tag-three"],
       "functionality": "Detailed vendor-neutral description of what this building block does. 3-5 paragraphs.",
+      "quality_attributes": "Key quality attributes: scalability, reliability, performance, security characteristics",
       "inbound_interfaces": "Description of inbound interfaces (APIs, events, protocols)",
       "outbound_interfaces": "Description of outbound interfaces",
+      "restrictions": "Known limitations, constraints, or vendor-neutrality boundaries",
       "business_capabilities": ["Capability 1", "Capability 2", "Capability 3"],
       "consumed_by_ids": [],
       "works_with_ids": []
@@ -103,9 +114,12 @@ authoring:
     For SBB (Solution Building Block), return:
     {{
       "name": "Pattern Name",
+      "description": "Concise 2-3 sentence summary of this implementation",
+      "tags": ["tag-one", "tag-two", "tag-three"],
       "specific_functionality": "Detailed vendor-specific description of implementation. 3-5 paragraphs.",
       "inbound_interfaces": "Description of inbound interfaces",
       "outbound_interfaces": "Description of outbound interfaces",
+      "restrictions": "Known limitations, vendor lock-in risks, or constraints",
       "sbb_mapping": [
         {{"key": "Runtime", "value": "e.g. AWS Lambda / Docker / Kubernetes"}},
         {{"key": "Hosting", "value": "e.g. Cloud / On-prem / Hybrid"}},
@@ -119,6 +133,9 @@ authoring:
     - Fill ALL fields with detailed, substantive content
     - For ABBs: keep descriptions vendor-neutral (no specific product names in functionality)
     - For SBBs: include specific vendor/product references
+    - description should be a concise 2-3 sentence summary
+    - tags should be 5-10 lowercase, hyphenated strings (e.g., "vector-search", "cloud-managed", "real-time")
+    - quality_attributes (ABB only) should cover scalability, reliability, performance, security
     - business_capabilities should be an array of 3-8 capability strings
     - sbb_mapping should be an array of 3-6 key-value objects describing the implementation mapping
     - Return ONLY the JSON object, nothing else
@@ -447,11 +464,11 @@ field_assist:
     Relationship types:
     - IMPLEMENTS: SBB → ABB (every SBB must have at least one)
     - COMPOSES: PBC → ABB (business capability to logical block)
-    - USES: SBB → Technology (primary technology dependency)
-    - COMPATIBLE_WITH: SBB → Technology (optional/alternative technology)
-    - DEPENDS_ON: Pattern → Pattern (structural dependency)
-    - REFERENCES: Pattern → Pattern (informational cross-reference)
-    - CONSTRAINED_BY: Pattern → Pattern (governance constraint)
+    - USES: SBB → Technology (primary technology dependency — SBB only, NEVER ABB)
+    - COMPATIBLE_WITH: SBB → Technology (optional/alternative — SBB only, NEVER ABB)
+    - DEPENDS_ON: SBB → Pattern (structural dependency — SBB only, NEVER ABB)
+    - REFERENCES: Pattern → Pattern (informational cross-reference — any type)
+    - CONSTRAINED_BY: Pattern → Pattern (governance constraint — any type)
 
     Categories: core (Core AI/LLM), intg (Integration), agt (Agents), kr (Knowledge & Retrieval),
     xcut (Cross-Cutting), pip (Platform Integration), blueprint (Architecture Topology).
@@ -695,3 +712,52 @@ technology_suggest:
     - If you're not sure about a URL, use an empty string
     - Keep description concise but informative
     - The id should be a lowercase kebab-case slug suitable for use as a unique identifier
+
+# --- Technology Assist (field-level AI for technology detail page) ---
+
+technology_assist:
+
+  system: |
+    You are an expert Enterprise Technology Analyst and documentation specialist.
+    You help improve technology registry entries by rewriting descriptions, suggesting
+    best practices, and providing actionable health improvement recommendations.
+    Be concise, professional, and specific to enterprise architecture contexts.
+
+  rewrite_description: |
+    Rewrite and improve the description for this technology. Make it clear, professional,
+    and informative for an enterprise architecture technology registry.
+    Focus on: what it does, key capabilities, and primary use case.
+    Keep it to 1-3 sentences.
+
+    Technology:
+    {tech_context}
+
+    Return ONLY the improved description text, nothing else.
+
+  suggest_notes: |
+    Suggest useful technical notes for this technology in an enterprise context.
+    Include: licensing info, integration considerations, security notes, scaling guidance,
+    and best practices.
+    Use bullet points. Keep it concise (3-6 bullets).
+
+    Technology:
+    {tech_context}
+
+    Return ONLY the notes text with bullet points, nothing else.
+
+  health_recommendations: |
+    Analyze this technology registry entry and provide specific, actionable recommendations
+    to improve its completeness and health score.
+
+    Technology:
+    {tech_context}
+    {health_context}
+
+    Return a JSON object:
+    {{
+      "recommendations": [
+        {{"title": "Short title", "description": "Specific action to take", "priority": "high|medium|low"}}
+      ]
+    }}
+
+    Focus on the most impactful improvements first. Maximum 5 recommendations.

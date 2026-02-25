@@ -32,6 +32,7 @@ SECTION_LABELS = {
     "advisor_clarify": "Advisor Clarification",
     "field_assist": "Field Assist",
     "technology_suggest": "Technology Suggest",
+    "technology_assist": "Technology Assist",
 }
 
 

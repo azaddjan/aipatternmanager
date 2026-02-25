@@ -2,8 +2,8 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   fetchPattern, createPattern, updatePattern,
-  fetchCategories, fetchPatterns, fetchProviders,
-  aiGenerate, generatePatternId,
+  fetchCategories, fetchPatterns, fetchPBCs,
+  aiGenerate, aiAnalyzeContext, generatePatternId,
   fetchCategoryOverview, fetchTechnologies,
   uploadPatternImage, deletePatternImage, getUploadUrl,
   aiSmartAction, fetchTeams,
@@ -13,37 +13,13 @@ import { useAuth } from '../contexts/AuthContext'
 
 const TYPES = ['AB', 'ABB', 'SBB']
 
-// --- Predefined Business Capabilities ---
-const ALL_BUSINESS_CAPABILITIES = [
-  'Intelligent Automation',
-  'Customer Service Agents',
-  'Process Automation',
-  'Decision Support',
-  'Autonomous Workflow Execution',
-  'Natural Language Interaction',
-  'Content Generation',
-  'Text Understanding',
-  'Information Extraction',
-  'AI/ML Model Access',
-  'Multi-Model Strategy',
-  'Cost Governance and FinOps',
-  'Vendor Portability',
-  'Tool Integration',
-  'Enterprise Connectivity',
-  'API Management',
-  'Agent Action Governance',
-  'Semantic Search',
-  'RAG (Retrieval-Augmented Generation)',
-  'Knowledge Management',
-  'Document Intelligence',
-  'Vendor Pluggability',
-  'Provider Abstraction',
-  'Service-level Integration',
-  'Input/Output Safety',
-  'Responsible AI',
-  'Compliance',
-  'Content Moderation',
-]
+const TYPE_DESCRIPTIONS = {
+  AB:  { name: 'Architecture Blueprint',      desc: 'High-level pattern defining structure, intent, and constraints across the system' },
+  ABB: { name: 'Architecture Building Block', desc: 'Abstract functional component defining capabilities, interfaces, and quality attributes' },
+  SBB: { name: 'Solution Building Block',     desc: 'Concrete implementation realizing one or more ABBs with specific technology choices' },
+}
+
+// Business capabilities are now loaded from PBC database (not hardcoded)
 
 
 export default function PatternEditor() {
@@ -67,6 +43,7 @@ export default function PatternEditor() {
   // Categories loaded from API
   const [categories, setCategories] = useState([])
   const [abbs, setAbbs] = useState([])
+  const [pbcs, setPbcs] = useState([])
   const [teams, setTeams] = useState([])
   const [originalTeamId, setOriginalTeamId] = useState(null)
   const [technologies, setTechnologies] = useState([])
@@ -77,16 +54,14 @@ export default function PatternEditor() {
   const [selectedCompatTechs, setSelectedCompatTechs] = useState([])
   const [allPatterns, setAllPatterns] = useState([])
   const [selectedDeps, setSelectedDeps] = useState([])
-  const [providers, setProviders] = useState([])
   const [catOverview, setCatOverview] = useState(null)
   const [catOverviewLoading, setCatOverviewLoading] = useState(false)
+  const [catOverviewOpen, setCatOverviewOpen] = useState(false)
 
   // AI-first workflow step: 'setup' -> 'generating' -> 'editor'
   const [step, setStep] = useState(isNew ? 'setup' : 'editor')
 
   // AI config
-  const [provider, setProvider] = useState('')
-  const [model, setModel] = useState('')
   const [contextNotes, setContextNotes] = useState(() => {
     if (!hasPrefill) return ''
     const parts = []
@@ -101,6 +76,11 @@ export default function PatternEditor() {
   })
   const [aiLoading, setAiLoading] = useState(false)
   const [aiError, setAiError] = useState('')
+
+  // AI Analysis state
+  const [aiAnalysis, setAiAnalysis] = useState(null)
+  const [analysisLoading, setAnalysisLoading] = useState(false)
+  const [followUpAnswers, setFollowUpAnswers] = useState({})
 
   // Pattern form — metadata
   const [form, setForm] = useState({
@@ -143,8 +123,9 @@ export default function PatternEditor() {
   const [existingImages, setExistingImages] = useState([])
   const [uploadingImage, setUploadingImage] = useState(false)
 
-  // Merge known + existing capabilities for the checklist
-  const allCapsSet = new Set([...ALL_BUSINESS_CAPABILITIES, ...businessCaps])
+  // Build capabilities list from PBC database + any existing caps on the pattern
+  const pbcNames = pbcs.map(p => p.name)
+  const allCapsSet = new Set([...pbcNames, ...businessCaps])
   const allCapsList = [...allCapsSet].sort()
 
   // Load initial data
@@ -153,15 +134,8 @@ export default function PatternEditor() {
     fetchPatterns({ type: 'ABB', limit: 100 }).then(res => setAbbs(res.patterns || [])).catch(() => {})
     fetchPatterns({ limit: 500 }).then(res => setAllPatterns(res.patterns || [])).catch(() => {})
     fetchTechnologies().then(res => setTechnologies(res.technologies || [])).catch(() => {})
+    fetchPBCs().then(res => setPbcs(res.pbcs || [])).catch(() => {})
     if (isAdmin) fetchTeams().then(setTeams).catch(() => {})
-    fetchProviders().then(res => {
-      setProviders(res.providers || [])
-      const def = res.providers?.find(p => p.is_default)
-      if (def) {
-        setProvider(def.name)
-        setModel(def.default_model)
-      }
-    }).catch(() => {})
   }, [])
 
   // Permission check: redirect if user can't create/edit
@@ -273,16 +247,61 @@ export default function PatternEditor() {
     }
   }, [form.category])
 
+  // AI Analysis: predict category, relationships, and ask follow-up questions
+  const handleAnalyze = async () => {
+    if (!contextNotes.trim()) {
+      setAiError('Please describe your pattern before analyzing')
+      return
+    }
+    setAnalysisLoading(true)
+    setAiError('')
+    setAiAnalysis(null)
+    try {
+      const res = await aiAnalyzeContext({
+        template_type: form.type,
+        context_notes: contextNotes,
+        provider: null,
+        model: null,
+      })
+      setAiAnalysis(res)
+      // Auto-set category from AI suggestion
+      if (res.suggested_category) {
+        setField('category', res.suggested_category)
+      }
+      // Auto-set predicted ABBs (for SBB)
+      if (res.predicted_abbs?.length > 0) {
+        setParentAbbs(res.predicted_abbs)
+      }
+      setFollowUpAnswers({})
+    } catch (err) {
+      setAiError(err.message)
+    }
+    setAnalysisLoading(false)
+  }
+
   const handleAIGenerate = async () => {
     setAiLoading(true)
     setAiError('')
     try {
+      // Build enriched context from follow-up answers and analysis
+      let enriched = ''
+      if (aiAnalysis?.follow_up_questions && Object.keys(followUpAnswers).length > 0) {
+        const parts = aiAnalysis.follow_up_questions.map((q, i) =>
+          followUpAnswers[i] ? `${q.question}: ${followUpAnswers[i]}` : null
+        ).filter(Boolean)
+        if (parts.length > 0) enriched = parts.join('\n')
+      }
+      if (aiAnalysis?.context_summary) {
+        enriched = (enriched ? enriched + '\n\n' : '') + 'System context: ' + aiAnalysis.context_summary
+      }
+
       const res = await aiGenerate({
         template_type: form.type,
         parent_abb_id: parentAbbs.length > 0 ? parentAbbs[0] : null,
         context_notes: contextNotes + (parentAbbs.length > 1 ? `\nAlso implements ABBs: ${parentAbbs.slice(1).join(', ')}` : ''),
-        provider: provider || null,
-        model: model || null,
+        enriched_context: enriched || null,
+        provider: null,
+        model: null,
       })
 
       // res.content is now a structured JSON object
@@ -312,6 +331,14 @@ export default function PatternEditor() {
         outbound: generated.outbound_interfaces || '',
       })
 
+      // Description & Tags
+      if (generated.description) setDescription(generated.description)
+      if (generated.tags?.length > 0) setTags(generated.tags)
+
+      // Quality attributes & restrictions
+      if (generated.quality_attributes) setQualityAttributes(generated.quality_attributes)
+      if (generated.restrictions) setSections(prev => ({ ...prev, 'Restrictions': generated.restrictions }))
+
       if (generated.business_capabilities?.length > 0) {
         setBusinessCaps(generated.business_capabilities)
       }
@@ -337,60 +364,66 @@ export default function PatternEditor() {
     setError('')
     try {
       // Build structured payload — no markdown reconstruction!
+      // Use empty string (not null) for clearable text fields so backend doesn't skip them
+      const text = v => (v === undefined || v === null) ? '' : v
+
       const payload = {
         ...form,
         // AB fields
-        intent: sections['Intent'] || null,
-        problem: sections['Problem'] || null,
-        solution: sections['Solution'] || null,
-        structural_elements: sections['Structural Elements'] || null,
-        invariants: sections['Invariants'] || null,
-        inter_element_contracts: sections['Inter-Element Contracts'] || null,
-        related_patterns_text: sections['Related Patterns'] || null,
-        related_adrs: sections['Related ADRs'] || null,
-        building_blocks_note: sections['Note on Building Blocks'] || null,
+        intent: text(sections['Intent']),
+        problem: text(sections['Problem']),
+        solution: text(sections['Solution']),
+        structural_elements: text(sections['Structural Elements']),
+        invariants: text(sections['Invariants']),
+        inter_element_contracts: text(sections['Inter-Element Contracts']),
+        related_patterns_text: text(sections['Related Patterns']),
+        related_adrs: text(sections['Related ADRs']),
+        building_blocks_note: text(sections['Note on Building Blocks']),
         // ABB fields
-        functionality: sections['Functionality'] || null,
+        functionality: text(sections['Functionality']),
         // SBB fields
-        specific_functionality: sections['Specific Functionality'] || null,
+        specific_functionality: text(sections['Specific Functionality']),
         // Shared fields
-        inbound_interfaces: interfaces.inbound || null,
-        outbound_interfaces: interfaces.outbound || null,
+        inbound_interfaces: text(interfaces.inbound),
+        outbound_interfaces: text(interfaces.outbound),
         consumed_by_ids: interop.consumedBy,
         works_with_ids: interop.worksWith,
         business_capabilities: businessCaps,
         sbb_mapping: sbbMapping,
-        restrictions: sections['Restrictions'] || null,
+        restrictions: text(sections['Restrictions']),
         // New metadata fields
-        description: description || null,
+        description: text(description),
         tags: tags,
-        deprecation_note: deprecationNote || null,
-        quality_attributes: qualityAttributes || null,
-        compliance_requirements: complianceRequirements || null,
-        vendor: vendor || null,
-        deployment_model: deploymentModel || null,
-        cost_tier: costTier || null,
-        licensing: licensing || null,
-        maturity: maturity || null,
+        deprecation_note: text(deprecationNote),
+        quality_attributes: text(qualityAttributes),
+        compliance_requirements: text(complianceRequirements),
+        vendor: text(vendor),
+        deployment_model: text(deploymentModel),
+        cost_tier: text(costTier),
+        licensing: text(licensing),
+        maturity: text(maturity),
         diagrams: diagrams,
       }
+
+      // ABBs are abstract concepts — they NEVER have technology or dependency relationships
+      const isSBB = form.type === 'SBB'
 
       if (isNew) {
         if (!payload.id) delete payload.id
         if (parentAbbs.length > 0) payload.implements_abbs = parentAbbs
-        if (selectedTechs.length > 0) payload.technology_ids = selectedTechs
-        if (selectedCompatTechs.length > 0) payload.compatible_tech_ids = selectedCompatTechs
-        if (selectedDeps.length > 0) payload.depends_on_ids = selectedDeps
+        if (isSBB && selectedTechs.length > 0) payload.technology_ids = selectedTechs
+        if (isSBB && selectedCompatTechs.length > 0) payload.compatible_tech_ids = selectedCompatTechs
+        if (isSBB && selectedDeps.length > 0) payload.depends_on_ids = selectedDeps
         // Admin can assign team on create via query param
         const teamIdForCreate = isAdmin && form.team_id ? form.team_id : null
         const created = await createPattern(payload, teamIdForCreate)
         navigate(`/patterns/${created.id}`, { state: { _refresh: Date.now() } })
       } else {
         const { id: _, team_id: _tid, ...updateData } = payload
-        updateData.implements_abbs = parentAbbs
-        updateData.technology_ids = selectedTechs
-        updateData.compatible_tech_ids = selectedCompatTechs
-        updateData.depends_on_ids = selectedDeps
+        updateData.implements_abbs = isSBB ? parentAbbs : []
+        updateData.technology_ids = isSBB ? selectedTechs : []
+        updateData.compatible_tech_ids = isSBB ? selectedCompatTechs : []
+        updateData.depends_on_ids = isSBB ? selectedDeps : []
         // Pass team_id only if admin changed it
         const teamChanged = isAdmin && form.team_id !== originalTeamId
         const teamIdParam = teamChanged ? (form.team_id || '') : null
@@ -405,8 +438,6 @@ export default function PatternEditor() {
 
   const setField = (key, value) => setForm(f => ({ ...f, [key]: value }))
   const setSection = (name, value) => setSections(s => ({ ...s, [name]: value }))
-
-  const currentProvider = providers.find(p => p.name === provider)
 
   // Section display name → API field name mapping
   const SECTION_FIELD_MAP = {
@@ -470,8 +501,8 @@ export default function PatternEditor() {
         pattern_context: buildPatternContext(),
         pattern_type: form.type,
         pattern_id: id || null,
-        provider: provider || null,
-        model: model || null,
+        provider: null,
+        model: null,
       })
       setSmartResult({ action, data: res.result })
     } catch (err) {
@@ -510,7 +541,7 @@ export default function PatternEditor() {
     setSmartResult(null)
   }
 
-  // --- Category Overview Panel ---
+  // --- Category Overview Panel (collapsible) ---
   const CategoryOverviewPanel = () => {
     if (catOverviewLoading) {
       return <div className="text-xs text-gray-600 mt-2">Loading category overview...</div>
@@ -518,45 +549,50 @@ export default function PatternEditor() {
     if (!catOverview) return null
 
     return (
-      <div className="bg-gray-800/50 rounded-lg p-3 mt-2 border border-gray-700/50">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-semibold text-gray-400">{catOverview.label} Overview</span>
-          <div className="flex gap-3 text-xs text-gray-500">
-            <span>{catOverview.abb_count} ABBs</span>
-            <span>{catOverview.sbb_count} SBBs</span>
-          </div>
-        </div>
-        {catOverview.abbs && catOverview.abbs.length > 0 ? (
-          <div className="space-y-1.5">
-            {catOverview.abbs.map(abb => (
-              <div key={abb.id} className="text-xs">
-                <div className="flex items-center gap-2">
-                  <span className="text-blue-400 font-mono">{abb.id}</span>
-                  <span className="text-gray-300">{abb.name}</span>
-                  <span className="text-gray-600 ml-auto">{abb.sbb_count} SBBs</span>
-                </div>
-                {abb.sbbs && abb.sbbs.length > 0 && (
-                  <div className="ml-4 mt-0.5 space-y-0.5">
-                    {abb.sbbs.slice(0, 3).map(sbb => (
-                      <div key={sbb.id} className="flex items-center gap-2 text-gray-500">
-                        <span className="text-gray-600">{'\u2514'}</span>
-                        <span className="font-mono">{sbb.id}</span>
-                        <span>{sbb.name}</span>
-                        <span className={`ml-auto ${
-                          sbb.status === 'ACTIVE' ? 'text-green-500' : 'text-yellow-500'
-                        }`}>{sbb.status}</span>
+      <div className="mt-2">
+        <button
+          onClick={() => setCatOverviewOpen(!catOverviewOpen)}
+          className="flex items-center gap-2 text-xs text-gray-500 hover:text-gray-300 transition-colors"
+        >
+          <span className={`transition-transform duration-200 ${catOverviewOpen ? 'rotate-90' : ''}`} style={{ display: 'inline-block' }}>&#9654;</span>
+          <span>{catOverview.label} Overview</span>
+          <span className="text-gray-600">({catOverview.abb_count} ABBs, {catOverview.sbb_count} SBBs)</span>
+        </button>
+        {catOverviewOpen && (
+          <div className="bg-gray-800/50 rounded-lg p-3 mt-2 border border-gray-700/50">
+            {catOverview.abbs && catOverview.abbs.length > 0 ? (
+              <div className="space-y-1.5">
+                {catOverview.abbs.map(abb => (
+                  <div key={abb.id} className="text-xs">
+                    <div className="flex items-center gap-2">
+                      <span className="text-blue-400 font-mono">{abb.id}</span>
+                      <span className="text-gray-300">{abb.name}</span>
+                      <span className="text-gray-600 ml-auto">{abb.sbb_count} SBBs</span>
+                    </div>
+                    {abb.sbbs && abb.sbbs.length > 0 && (
+                      <div className="ml-4 mt-0.5 space-y-0.5">
+                        {abb.sbbs.slice(0, 3).map(sbb => (
+                          <div key={sbb.id} className="flex items-center gap-2 text-gray-500">
+                            <span className="text-gray-600">{'\u2514'}</span>
+                            <span className="font-mono">{sbb.id}</span>
+                            <span>{sbb.name}</span>
+                            <span className={`ml-auto ${
+                              sbb.status === 'ACTIVE' ? 'text-green-500' : 'text-yellow-500'
+                            }`}>{sbb.status}</span>
+                          </div>
+                        ))}
+                        {abb.sbbs.length > 3 && (
+                          <div className="text-gray-600 ml-4">+{abb.sbbs.length - 3} more</div>
+                        )}
                       </div>
-                    ))}
-                    {abb.sbbs.length > 3 && (
-                      <div className="text-gray-600 ml-4">+{abb.sbbs.length - 3} more</div>
                     )}
                   </div>
-                )}
+                ))}
               </div>
-            ))}
+            ) : (
+              <p className="text-xs text-gray-600">No patterns in this category yet</p>
+            )}
           </div>
-        ) : (
-          <p className="text-xs text-gray-600">No patterns in this category yet</p>
         )}
       </div>
     )
@@ -634,146 +670,289 @@ export default function PatternEditor() {
   // --- SETUP STEP: AI-first new pattern creation ---
   if (step === 'setup' && isNew) {
     return (
-      <div className="space-y-6 max-w-3xl mx-auto">
+      <div className="max-w-2xl mx-auto space-y-6">
+        {/* Header */}
         <div>
           <h1 className="text-2xl font-bold text-white">Create New Pattern</h1>
-          <p className="text-gray-500 text-sm mt-1">AI will generate a draft based on your specifications</p>
+          <p className="text-gray-500 text-sm mt-1">Describe your pattern and let AI handle the rest</p>
         </div>
 
-        {/* Step 1: Pattern Type & Category */}
-        <div className="card space-y-4">
-          <h2 className="text-sm font-semibold text-gray-400">1. Pattern Type & Category</h2>
-          <div className="grid grid-cols-3 gap-4">
-            {TYPES.map(t => (
-              <button
-                key={t}
-                onClick={() => setField('type', t)}
-                className={`p-4 rounded-lg border text-center transition-colors ${
-                  form.type === t
-                    ? t === 'AB' ? 'bg-orange-600/20 border-orange-500/50 text-orange-400'
-                    : t === 'ABB' ? 'bg-blue-600/20 border-blue-500/50 text-blue-400'
-                    : 'bg-green-600/20 border-green-500/50 text-green-400'
-                    : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600'
-                }`}
-              >
-                <div className="text-lg font-bold">{t}</div>
-                <div className="text-xs mt-1">
-                  {t === 'AB' ? 'Architecture Blueprint' : t === 'ABB' ? 'Architecture Building Block' : 'Solution Building Block'}
-                </div>
-              </button>
-            ))}
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">Category</label>
-            <select
-              value={form.category}
-              onChange={e => setField('category', e.target.value)}
-              className="select w-full"
-            >
-              {categories.map(c => (
-                <option key={c.code} value={c.code}>{c.label} ({c.code})</option>
-              ))}
-            </select>
-          </div>
-          {previewId && (
-            <div className="text-sm text-gray-500">
-              Auto-generated ID: <span className="font-mono text-blue-400">{previewId}</span>
-            </div>
-          )}
-          <CategoryOverviewPanel />
-        </div>
+        {/* Input card: Type + Description */}
+        <div className="card space-y-6">
 
-        {/* Step 2: Context for AI */}
-        <div className="card space-y-4">
-          <h2 className="text-sm font-semibold text-gray-400">2. AI Generation Context</h2>
-          {form.type === 'SBB' && (
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Implements ABBs (one SBB can realize multiple ABBs)</label>
-              <div className="bg-gray-800/50 rounded-lg border border-gray-700 p-2 max-h-36 overflow-y-auto space-y-1">
-                {abbs.length === 0 && <p className="text-xs text-gray-600">Loading ABBs...</p>}
-                {abbs.map(a => (
-                  <label key={a.id} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-700/30 rounded px-1 py-0.5">
-                    <input
-                      type="checkbox"
-                      checked={parentAbbs.includes(a.id)}
-                      onChange={e => {
-                        if (e.target.checked) setParentAbbs(prev => [...prev, a.id])
-                        else setParentAbbs(prev => prev.filter(x => x !== a.id))
-                      }}
-                      className="rounded border-gray-600"
-                    />
-                    <span className="text-blue-400 font-mono">{a.id}</span>
-                    <span className="text-gray-300">{a.name}</span>
-                  </label>
-                ))}
-              </div>
-              {parentAbbs.length > 0 && (
-                <p className="text-xs text-gray-500 mt-1">{parentAbbs.length} ABB{parentAbbs.length > 1 ? 's' : ''} selected</p>
-              )}
-            </div>
-          )}
+          {/* Pattern Type */}
           <div>
-            <label className="block text-xs text-gray-500 mb-1">Context Notes</label>
+            <label className="block text-xs font-semibold text-gray-400 mb-3">Pattern Type</label>
+            <div className="grid grid-cols-3 gap-3">
+              {TYPES.map(t => {
+                const info = TYPE_DESCRIPTIONS[t]
+                const isSelected = form.type === t
+                const colorClass = isSelected
+                  ? t === 'AB' ? 'bg-orange-600/20 border-orange-500/50 text-orange-400'
+                  : t === 'ABB' ? 'bg-blue-600/20 border-blue-500/50 text-blue-400'
+                  : 'bg-green-600/20 border-green-500/50 text-green-400'
+                  : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:border-gray-600'
+                return (
+                  <button
+                    key={t}
+                    onClick={() => {
+                      setField('type', t)
+                      // Reset analysis when type changes
+                      if (t !== form.type) {
+                        setAiAnalysis(null)
+                        setParentAbbs([])
+                      }
+                    }}
+                    className={`p-4 rounded-lg border text-left transition-all ${colorClass}`}
+                  >
+                    <div className={`text-lg font-bold ${isSelected ? '' : 'text-gray-300'}`}>{t}</div>
+                    <div className={`text-xs font-medium mt-0.5 ${isSelected ? '' : 'text-gray-400'}`}>{info.name}</div>
+                    <div className="text-xs text-gray-500 mt-1.5 leading-relaxed">{info.desc}</div>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          <div className="border-t border-gray-800" />
+
+          {/* Describe Your Pattern */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-400 mb-2">Describe Your Pattern</label>
             <textarea
               value={contextNotes}
               onChange={e => setContextNotes(e.target.value)}
-              placeholder="Describe what this pattern should cover, any specific technologies or requirements..."
-              className="input w-full h-28 resize-none"
+              placeholder={form.type === 'SBB'
+                ? 'What does this solution implement? E.g., "Vector search using Pinecone for knowledge retrieval, cloud-managed, with hybrid search support..."'
+                : form.type === 'ABB'
+                ? 'What capability does this define? E.g., "Semantic search engine for enterprise knowledge bases, supporting multiple embedding models..."'
+                : 'What is this architecture blueprint about? E.g., "RAG architecture for enterprise document intelligence with multi-tenant support..."'
+              }
+              className="input w-full h-36 resize-none text-sm"
             />
+            <p className="text-xs text-gray-600 mt-1">
+              AI will analyze your description, suggest the best category, predict relationships, and ask follow-up questions
+            </p>
           </div>
         </div>
 
-        {/* Step 3: LLM Provider */}
-        <div className="card space-y-3">
-          <h2 className="text-sm font-semibold text-gray-400">3. LLM Provider</h2>
-          <div className="flex gap-2 items-center flex-wrap">
-            {providers.map(p => (
-              <button
-                key={p.name}
-                onClick={() => { setProvider(p.name); setModel(p.default_model) }}
-                className={`px-4 py-2 rounded-lg text-sm border transition-colors ${
-                  provider === p.name
-                    ? 'bg-blue-600/20 border-blue-500/50 text-blue-400'
-                    : p.available
-                      ? 'bg-gray-800 border-gray-700 text-gray-300 hover:border-gray-600'
-                      : 'bg-gray-800/50 border-gray-800 text-gray-600 cursor-not-allowed'
-                }`}
-                disabled={!p.available}
-              >
-                {p.name}
-                {p.is_default && <span className="text-xs ml-1 text-gray-500">(default)</span>}
-              </button>
-            ))}
-            <input
-              type="text"
-              value={model}
-              onChange={e => setModel(e.target.value)}
-              placeholder="Model name"
-              className="input w-48 ml-auto"
-            />
-          </div>
-        </div>
-
-        {/* Actions */}
+        {/* Error */}
         {aiError && (
           <div className="bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg px-4 py-3 text-sm">{aiError}</div>
         )}
 
-        <div className="flex gap-3">
-          <button
-            onClick={handleAIGenerate}
-            disabled={aiLoading}
-            className="btn-primary flex-1 py-3 text-base"
-          >
-            {aiLoading ? 'Generating with AI...' : 'Generate Pattern with AI'}
-          </button>
-          <button
-            onClick={() => setStep('editor')}
-            className="btn-secondary py-3"
-          >
-            Skip AI, Write Manually
-          </button>
-        </div>
+        {/* Actions: Analyze or Write Manually */}
+        {!aiAnalysis && (
+          <div className="flex gap-3">
+            <button
+              onClick={handleAnalyze}
+              disabled={analysisLoading || !contextNotes.trim()}
+              className="btn-primary flex-1 py-3 text-base"
+            >
+              {analysisLoading ? (
+                <span className="flex items-center justify-center gap-2">
+                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z"/></svg>
+                  Analyzing...
+                </span>
+              ) : (
+                <span className="flex items-center justify-center gap-2">
+                  <span>&#10024;</span> Analyze with AI
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => setStep('editor')}
+              className="btn-secondary py-3"
+            >
+              Write Manually
+            </button>
+          </div>
+        )}
+
+        {/* AI Analysis Results */}
+        {aiAnalysis && (
+          <div className="card border border-purple-500/20 space-y-5">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-purple-400 flex items-center gap-1.5">
+                <span>&#10024;</span> AI Analysis
+              </h3>
+              <button
+                onClick={() => { setAiAnalysis(null); setFollowUpAnswers({}) }}
+                className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+              >
+                Re-analyze
+              </button>
+            </div>
+
+            {/* Type Guidance — shown when user's description doesn't match selected type */}
+            {aiAnalysis.type_guidance && (
+              <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg px-4 py-3">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className="text-amber-400 text-sm">&#9888;</span>
+                  <span className="text-xs font-semibold text-amber-400">Type Guidance</span>
+                </div>
+                <p className="text-xs text-amber-200/80 leading-relaxed whitespace-pre-line">{aiAnalysis.type_guidance}</p>
+              </div>
+            )}
+
+            {/* Suggested Name */}
+            {aiAnalysis.suggested_name && (
+              <div>
+                <label className="block text-xs font-semibold text-gray-400 mb-1">Suggested Name</label>
+                <p className="text-sm text-white">{aiAnalysis.suggested_name}</p>
+              </div>
+            )}
+
+            {/* Suggested Category */}
+            <div>
+              <label className="block text-xs font-semibold text-gray-400 mb-1">Suggested Category</label>
+              {aiAnalysis.category_reasoning && (
+                <p className="text-xs text-gray-500 mb-2">{aiAnalysis.category_reasoning}</p>
+              )}
+              <div className="flex items-center gap-3">
+                <select
+                  value={form.category}
+                  onChange={e => setField('category', e.target.value)}
+                  className="select flex-1"
+                >
+                  {categories.map(c => (
+                    <option key={c.code} value={c.code}>{c.label} ({c.code})</option>
+                  ))}
+                </select>
+                {previewId && (
+                  <span className="text-xs text-gray-500">
+                    ID: <span className="font-mono text-blue-400">{previewId}</span>
+                  </span>
+                )}
+              </div>
+              <CategoryOverviewPanel />
+            </div>
+
+            {/* Predicted ABBs (SBB only) */}
+            {form.type === 'SBB' && aiAnalysis.predicted_abbs && (
+              <div>
+                <label className="block text-xs font-semibold text-gray-400 mb-1">
+                  Predicted ABBs
+                  <span className="font-normal text-gray-600 ml-2">AI predicted which ABBs this SBB implements</span>
+                </label>
+                {aiAnalysis.abb_reasoning && (
+                  <p className="text-xs text-gray-500 mb-2">{aiAnalysis.abb_reasoning}</p>
+                )}
+                <div className="bg-gray-800/50 rounded-lg border border-gray-700 p-2 max-h-40 overflow-y-auto space-y-1">
+                  {abbs.length === 0 && <p className="text-xs text-gray-600">Loading ABBs...</p>}
+                  {/* Show predicted ABBs first, then the rest */}
+                  {[...abbs].sort((a, b) => {
+                    const aP = (aiAnalysis.predicted_abbs || []).includes(a.id) ? 0 : 1
+                    const bP = (aiAnalysis.predicted_abbs || []).includes(b.id) ? 0 : 1
+                    return aP - bP
+                  }).map(a => {
+                    const isPredicted = (aiAnalysis.predicted_abbs || []).includes(a.id)
+                    return (
+                      <label key={a.id} className={`flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-700/30 rounded px-1 py-0.5 ${isPredicted ? 'bg-purple-500/5' : ''}`}>
+                        <input
+                          type="checkbox"
+                          checked={parentAbbs.includes(a.id)}
+                          onChange={e => {
+                            if (e.target.checked) setParentAbbs(prev => [...prev, a.id])
+                            else setParentAbbs(prev => prev.filter(x => x !== a.id))
+                          }}
+                          className="rounded border-gray-600"
+                        />
+                        <span className="text-blue-400 font-mono">{a.id}</span>
+                        <span className="text-gray-300">{a.name}</span>
+                        {isPredicted && <span className="text-purple-400 text-[10px] ml-auto">AI predicted</span>}
+                      </label>
+                    )
+                  })}
+                </div>
+                {parentAbbs.length > 0 && (
+                  <p className="text-xs text-gray-500 mt-1">{parentAbbs.length} ABB{parentAbbs.length > 1 ? 's' : ''} selected</p>
+                )}
+              </div>
+            )}
+
+            {/* Predicted PBCs (ABB only) */}
+            {form.type === 'ABB' && aiAnalysis.predicted_pbcs && aiAnalysis.predicted_pbcs.length > 0 && (
+              <div>
+                <label className="block text-xs font-semibold text-gray-400 mb-1">
+                  Predicted Business Capabilities
+                  <span className="font-normal text-gray-600 ml-2">PBCs that may compose this ABB</span>
+                </label>
+                {aiAnalysis.pbc_reasoning && (
+                  <p className="text-xs text-gray-500 mb-2">{aiAnalysis.pbc_reasoning}</p>
+                )}
+                <div className="flex flex-wrap gap-2">
+                  {aiAnalysis.predicted_pbcs.map(pbcId => (
+                    <span key={pbcId} className="px-2 py-1 text-xs rounded bg-teal-500/10 text-teal-400 border border-teal-500/20 font-mono">
+                      {pbcId}
+                    </span>
+                  ))}
+                </div>
+                <p className="text-xs text-gray-600 mt-1">These can be linked after the pattern is created</p>
+              </div>
+            )}
+
+            {/* Follow-up Questions */}
+            {aiAnalysis.follow_up_questions && aiAnalysis.follow_up_questions.length > 0 && (
+              <div>
+                <label className="block text-xs font-semibold text-gray-400 mb-2">Follow-up Questions</label>
+                <div className="space-y-3">
+                  {aiAnalysis.follow_up_questions.map((q, i) => (
+                    <div key={i}>
+                      <label className="block text-xs text-gray-300 mb-1">{q.question}</label>
+                      <input
+                        type="text"
+                        value={followUpAnswers[i] || ''}
+                        onChange={e => setFollowUpAnswers(prev => ({ ...prev, [i]: e.target.value }))}
+                        placeholder={q.hint || 'Optional — helps AI generate a better draft'}
+                        className="input w-full text-sm"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* System Context Summary */}
+            {aiAnalysis.context_summary && (
+              <div className="bg-gray-900/50 rounded-lg px-3 py-2">
+                <div className="flex items-center gap-1.5 mb-1">
+                  <span className="text-[10px] text-gray-500">&#128161;</span>
+                  <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">System Context</span>
+                </div>
+                <p className="text-xs text-gray-400 leading-relaxed">{aiAnalysis.context_summary}</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Generate button — only after analysis */}
+        {aiAnalysis && (
+          <div className="flex gap-3">
+            <button
+              onClick={handleAIGenerate}
+              disabled={aiLoading}
+              className="btn-primary flex-1 py-3 text-base"
+            >
+              {aiLoading ? (
+                <span className="flex items-center justify-center gap-2">
+                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z"/></svg>
+                  Generating draft...
+                </span>
+              ) : (
+                <span className="flex items-center justify-center gap-2">
+                  &#128640; Generate Draft
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => setStep('editor')}
+              className="btn-secondary py-3"
+            >
+              Write Manually
+            </button>
+          </div>
+        )}
       </div>
     )
   }
@@ -804,36 +983,6 @@ export default function PatternEditor() {
       {aiError && (
         <div className="bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg px-4 py-3 text-sm">{aiError}</div>
       )}
-
-      {/* AI Provider Bar */}
-      <div className="card flex items-center gap-3">
-        <span className="text-xs text-gray-500 font-semibold">AI Provider:</span>
-        <div className="flex gap-1.5 items-center flex-wrap">
-          {providers.map(p => (
-            <button
-              key={p.name}
-              onClick={() => { setProvider(p.name); setModel(p.default_model) }}
-              className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-                provider === p.name
-                  ? 'bg-purple-600/20 border border-purple-500/40 text-purple-400'
-                  : p.available
-                    ? 'bg-gray-800 border border-gray-700 text-gray-400 hover:border-gray-600'
-                    : 'bg-gray-800/50 border border-gray-800 text-gray-600 cursor-not-allowed'
-              }`}
-              disabled={!p.available}
-            >
-              {p.name}
-            </button>
-          ))}
-        </div>
-        <input
-          type="text"
-          value={model}
-          onChange={e => setModel(e.target.value)}
-          placeholder="Model"
-          className="input text-xs py-1 px-2 w-44 ml-auto"
-        />
-      </div>
 
       {/* AI Smart Actions */}
       <div className="card">
@@ -1194,8 +1343,8 @@ export default function PatternEditor() {
               patternContext={buildPatternContext()}
               patternType={form.type}
               patternId={id || null}
-              provider={provider}
-              model={model}
+              provider={null}
+              model={null}
             />
           </div>
           <div>
@@ -1247,8 +1396,8 @@ export default function PatternEditor() {
                 patternContext={buildPatternContext()}
                 patternType={form.type}
                 patternId={id || null}
-                provider={provider}
-                model={model}
+                provider={null}
+                model={null}
               />
             </div>
           )}
@@ -1261,7 +1410,7 @@ export default function PatternEditor() {
       {form.type === 'AB' && (
         <>
           {['Intent', 'Problem', 'Solution', 'Structural Elements', 'Invariants',
-            'Inter-Element Contracts', 'Related Patterns', 'Related ADRs', 'Note on Building Blocks', 'Restrictions'
+            'Inter-Element Contracts', 'Related Patterns', 'Related ADRs', 'Restrictions'
           ].map(name => (
             <div key={name} className="card">
               <h2 className="text-sm font-semibold text-gray-400 mb-3">{name}</h2>
@@ -1274,8 +1423,8 @@ export default function PatternEditor() {
                 patternContext={buildPatternContext()}
                 patternType={form.type}
                 patternId={id || null}
-                provider={provider}
-                model={model}
+                provider={null}
+                model={null}
               />
             </div>
           ))}
@@ -1297,8 +1446,8 @@ export default function PatternEditor() {
               patternContext={buildPatternContext()}
               patternType={form.type}
               patternId={id || null}
-              provider={provider}
-              model={model}
+              provider={null}
+              model={null}
             />
           </div>
 
@@ -1317,8 +1466,8 @@ export default function PatternEditor() {
                   patternContext={buildPatternContext()}
                   patternType={form.type}
                   patternId={id || null}
-                  provider={provider}
-                  model={model}
+                  provider={null}
+                  model={null}
                 />
               </div>
               <div>
@@ -1332,8 +1481,8 @@ export default function PatternEditor() {
                   patternContext={buildPatternContext()}
                   patternType={form.type}
                   patternId={id || null}
-                  provider={provider}
-                  model={model}
+                  provider={null}
+                  model={null}
                 />
               </div>
             </div>
@@ -1358,40 +1507,6 @@ export default function PatternEditor() {
                 filterTypes={['ABB', 'SBB']}
               />
             </div>
-          </div>
-
-          {/* Depending Technology — core dependency, multi-select */}
-          <div className="card">
-            <h2 className="text-sm font-semibold text-gray-400 mb-3">Depending Technology</h2>
-            <p className="text-xs text-gray-600 mb-2">Core technology dependencies required for this building block</p>
-            <TechPicker
-              label="Core Dependencies"
-              selected={selectedTechs}
-              onChange={setSelectedTechs}
-            />
-          </div>
-
-          {/* Compatible Technologies — optional, multi-select */}
-          <div className="card">
-            <h2 className="text-sm font-semibold text-gray-400 mb-3">Compatible Technologies</h2>
-            <p className="text-xs text-gray-600 mb-2">Technologies this building block can work with or integrate into</p>
-            <TechPicker
-              label="Compatible With"
-              selected={selectedCompatTechs}
-              onChange={setSelectedCompatTechs}
-            />
-          </div>
-
-          {/* Dependent Building Blocks — multi-select (ABB/SBB only) */}
-          <div className="card">
-            <h2 className="text-sm font-semibold text-gray-400 mb-3">Dependent Building Blocks</h2>
-            <PatternPicker
-              label="Depends On"
-              selected={selectedDeps}
-              onChange={setSelectedDeps}
-              excludeId={form.id}
-              filterTypes={['ABB', 'SBB']}
-            />
           </div>
 
           {/* Business Capabilities — multi-select */}
@@ -1464,8 +1579,8 @@ export default function PatternEditor() {
               patternContext={buildPatternContext()}
               patternType={form.type}
               patternId={id || null}
-              provider={provider}
-              model={model}
+              provider={null}
+              model={null}
             />
           </div>
 
@@ -1484,8 +1599,8 @@ export default function PatternEditor() {
               patternContext={buildPatternContext()}
               patternType={form.type}
               patternId={id || null}
-              provider={provider}
-              model={model}
+              provider={null}
+              model={null}
             />
           </div>
 
@@ -1504,8 +1619,8 @@ export default function PatternEditor() {
               patternContext={buildPatternContext()}
               patternType={form.type}
               patternId={id || null}
-              provider={provider}
-              model={model}
+              provider={null}
+              model={null}
             />
           </div>
         </>
@@ -1526,8 +1641,8 @@ export default function PatternEditor() {
               patternContext={buildPatternContext()}
               patternType={form.type}
               patternId={id || null}
-              provider={provider}
-              model={model}
+              provider={null}
+              model={null}
             />
           </div>
 
@@ -1546,8 +1661,8 @@ export default function PatternEditor() {
                   patternContext={buildPatternContext()}
                   patternType={form.type}
                   patternId={id || null}
-                  provider={provider}
-                  model={model}
+                  provider={null}
+                  model={null}
                 />
               </div>
               <div>
@@ -1561,8 +1676,8 @@ export default function PatternEditor() {
                   patternContext={buildPatternContext()}
                   patternType={form.type}
                   patternId={id || null}
-                  provider={provider}
-                  model={model}
+                  provider={null}
+                  model={null}
                 />
               </div>
             </div>
@@ -1742,8 +1857,8 @@ export default function PatternEditor() {
               patternContext={buildPatternContext()}
               patternType={form.type}
               patternId={id || null}
-              provider={provider}
-              model={model}
+              provider={null}
+              model={null}
             />
           </div>
         </>

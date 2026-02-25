@@ -114,3 +114,39 @@ def get_technology_impact(tech_id: str, _user=Depends(get_current_user_or_anonym
         raise HTTPException(status_code=404, detail=f"Technology {tech_id} not found")
     patterns = db.get_technology_impact(tech_id)
     return {"technology": tech, "affected_patterns": patterns, "count": len(patterns)}
+
+
+@router.get("/{tech_id}/graph")
+def get_technology_graph(tech_id: str, _user=Depends(get_current_user_or_anonymous)):
+    db = get_db()
+    tech = db.get_technology(tech_id)
+    if not tech:
+        raise HTTPException(status_code=404, detail=f"Technology {tech_id} not found")
+    return db.get_technology_subgraph(tech_id)
+
+
+@router.get("/{tech_id}/alternatives")
+def get_technology_alternatives(tech_id: str, _user=Depends(get_current_user_or_anonymous)):
+    db = get_db()
+    tech = db.get_technology(tech_id)
+    if not tech:
+        raise HTTPException(status_code=404, detail=f"Technology {tech_id} not found")
+    return {"alternatives": db.get_technology_alternatives(tech_id)}
+
+
+@router.get("/{tech_id}/adoption")
+def get_technology_adoption(tech_id: str, _user=Depends(get_current_user_or_anonymous)):
+    db = get_db()
+    tech = db.get_technology(tech_id)
+    if not tech:
+        raise HTTPException(status_code=404, detail=f"Technology {tech_id} not found")
+    return db.get_technology_adoption(tech_id)
+
+
+@router.get("/{tech_id}/health")
+def get_technology_health(tech_id: str, _user=Depends(get_current_user_or_anonymous)):
+    db = get_db()
+    tech = db.get_technology(tech_id)
+    if not tech:
+        raise HTTPException(status_code=404, detail=f"Technology {tech_id} not found")
+    return db.get_technology_health(tech_id)

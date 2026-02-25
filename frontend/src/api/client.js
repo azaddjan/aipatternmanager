@@ -184,6 +184,26 @@ export function fetchTechnologyImpact(id) {
   return request(`/technologies/${id}/impact`)
 }
 
+export function fetchTechnologyGraph(id) {
+  return request(`/technologies/${id}/graph`)
+}
+
+export function fetchTechnologyAlternatives(id) {
+  return request(`/technologies/${id}/alternatives`)
+}
+
+export function fetchTechnologyAdoption(id) {
+  return request(`/technologies/${id}/adoption`)
+}
+
+export function fetchTechnologyHealth(id) {
+  return request(`/technologies/${id}/health`)
+}
+
+export function aiTechnologyAssist(data) {
+  return request('/ai/technology-assist', { method: 'POST', body: JSON.stringify(data) })
+}
+
 // --- Categories ---
 
 export function fetchCategories() {
@@ -245,6 +265,10 @@ export function aiGenerate(data) {
   return request('/ai/generate', { method: 'POST', body: JSON.stringify(data) })
 }
 
+export function aiAnalyzeContext(data) {
+  return request('/ai/analyze-context', { method: 'POST', body: JSON.stringify(data) })
+}
+
 export function fetchProviders() {
   return request('/ai/providers')
 }
@@ -259,6 +283,14 @@ export function aiSmartAction(data) {
 
 export function aiTechnologySuggest(data) {
   return request('/ai/technology-suggest', { method: 'POST', body: JSON.stringify(data) })
+}
+
+export function aiPatternAssist(data) {
+  return request('/ai/pattern-assist', { method: 'POST', body: JSON.stringify(data) })
+}
+
+export function aiPBCAssist(data) {
+  return request('/ai/pbc-assist', { method: 'POST', body: JSON.stringify(data) })
 }
 
 // --- Admin ---

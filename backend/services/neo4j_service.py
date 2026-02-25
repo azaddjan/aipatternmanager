@@ -420,11 +420,13 @@ class Neo4jService:
         return technologies, total
 
     def create_technology(self, data: dict) -> dict:
+        now = datetime.now(timezone.utc).isoformat()
         query = """
         CREATE (t:Technology {
             id: $id, name: $name, vendor: $vendor, category: $category,
             status: $status, description: $description, cost_tier: $cost_tier,
-            doc_url: $doc_url, website: $website, notes: $notes
+            doc_url: $doc_url, website: $website, notes: $notes,
+            created_at: $created_at, updated_at: $updated_at
         })
         RETURN t
         """
@@ -433,11 +435,14 @@ class Neo4jService:
         data.setdefault("doc_url", "")
         data.setdefault("website", "")
         data.setdefault("notes", "")
+        data["created_at"] = now
+        data["updated_at"] = now
         with self.session() as session:
             result = session.run(query, **data)
             return dict(result.single()["t"])
 
     def update_technology(self, tech_id: str, data: dict) -> Optional[dict]:
+        data["updated_at"] = datetime.now(timezone.utc).isoformat()
         set_clauses = ", ".join(f"t.{k} = ${k}" for k in data)
         query = f"MATCH (t:Technology {{id: $id}}) SET {set_clauses} RETURN t"
         data["id"] = tech_id
@@ -476,6 +481,208 @@ class Neo4jService:
             records = session.run(query, id=tech_id)
             tech["used_by_patterns"] = [dict(r) for r in records]
         return tech
+
+    def get_technology_subgraph(self, tech_id: str) -> dict:
+        """Get the subgraph around a technology for visualization."""
+        query = """
+        MATCH (t:Technology {id: $id})
+        OPTIONAL MATCH (sbb:Pattern)-[:USES]->(t)
+        OPTIONAL MATCH (sbb)-[:IMPLEMENTS]->(abb:Pattern)
+        WHERE abb IS NOT NULL
+        OPTIONAL MATCH (compat:Pattern)-[:COMPATIBLE_WITH]->(t)
+        WITH t,
+             collect(DISTINCT sbb) AS sbbs,
+             collect(DISTINCT abb) AS abbs,
+             collect(DISTINCT compat) AS compats
+        WITH [t] + sbbs + abbs + compats AS all_nodes
+        UNWIND all_nodes AS n
+        WITH collect(DISTINCT n) AS nodes
+        UNWIND nodes AS n
+        OPTIONAL MATCH (n)-[r]->(target)
+        WHERE target IN nodes AND (type(r) IN ['USES', 'IMPLEMENTS', 'COMPATIBLE_WITH', 'DEPENDS_ON'])
+        WITH nodes, collect(DISTINCT r) AS rels
+        RETURN
+            [n IN nodes | {id: n.id, name: n.name, type: coalesce(n.type, ''),
+                           category: coalesce(n.category, ''), status: coalesce(n.status, ''),
+                           node_type: labels(n)[0]}] AS nodes,
+            [r IN rels WHERE r IS NOT NULL | {source: startNode(r).id, target: endNode(r).id,
+                          type: type(r)}] AS edges
+        """
+        with self.session() as session:
+            record = session.run(query, id=tech_id).single()
+            if not record:
+                return {"nodes": [], "edges": []}
+            return {"nodes": record["nodes"], "edges": record["edges"]}
+
+    def get_technology_alternatives(self, tech_id: str) -> list:
+        """Get alternative technologies: same category + shared SBB co-usage."""
+        query = """
+        MATCH (t:Technology {id: $id})
+        // Same category alternatives
+        OPTIONAL MATCH (alt1:Technology)
+        WHERE alt1.category = t.category AND alt1.id <> t.id
+        WITH t, collect(DISTINCT alt1) AS cat_alts
+
+        // Shared SBB alternatives (other techs used by same SBBs)
+        OPTIONAL MATCH (sbb:Pattern)-[:USES]->(t)
+        OPTIONAL MATCH (sbb)-[:USES]->(alt2:Technology)
+        WHERE alt2.id <> t.id
+        WITH t, cat_alts, collect(DISTINCT alt2) AS sbb_alts
+
+        // Combine and deduplicate
+        WITH t, cat_alts, sbb_alts,
+             [a IN cat_alts | a.id] AS cat_ids
+        WITH t, cat_alts + [a IN sbb_alts WHERE NOT a.id IN cat_ids] AS all_alts,
+             cat_ids
+        UNWIND all_alts AS alt
+        // Count usage of each alternative
+        OPTIONAL MATCH (p:Pattern)-[:USES]->(alt)
+        WITH alt, count(p) AS usage_count, alt.id IN cat_ids AS same_category
+        RETURN alt.id AS id, alt.name AS name, alt.vendor AS vendor,
+               alt.category AS category, alt.status AS status,
+               alt.cost_tier AS cost_tier, alt.description AS description,
+               usage_count, same_category
+        ORDER BY usage_count DESC
+        LIMIT 20
+        """
+        with self.session() as session:
+            records = session.run(query, id=tech_id)
+            return [dict(r) for r in records]
+
+    def get_technology_adoption(self, tech_id: str) -> dict:
+        """Get adoption/usage breakdown for a technology."""
+        query = """
+        MATCH (t:Technology {id: $id})
+        OPTIONAL MATCH (p:Pattern)-[:USES]->(t)
+        WITH t, collect(p) AS patterns
+        WITH t, patterns, size(patterns) AS total,
+             [p IN patterns WHERE p.type = 'SBB' | p] AS sbbs,
+             [p IN patterns WHERE p.type = 'ABB' | p] AS abbs,
+             [p IN patterns WHERE p.type = 'AB' | p] AS abs,
+             [p IN patterns WHERE p.status = 'ACTIVE' | p] AS active,
+             [p IN patterns WHERE p.status = 'DRAFT' | p] AS draft,
+             [p IN patterns WHERE p.status = 'DEPRECATED' | p] AS deprecated
+        RETURN total,
+               size(sbbs) AS sbb_count, size(abbs) AS abb_count, size(abs) AS ab_count,
+               size(active) AS active_count, size(draft) AS draft_count, size(deprecated) AS deprecated_count
+        """
+        with self.session() as session:
+            record = session.run(query, id=tech_id).single()
+            if not record:
+                return {"total_patterns": 0, "by_type": {}, "by_status": {}, "by_category": [], "by_team": []}
+
+            result = {
+                "total_patterns": record["total"],
+                "by_type": {"SBB": record["sbb_count"], "ABB": record["abb_count"], "AB": record["ab_count"]},
+                "by_status": {"ACTIVE": record["active_count"], "DRAFT": record["draft_count"], "DEPRECATED": record["deprecated_count"]},
+            }
+
+        # Category breakdown
+        cat_query = """
+        MATCH (p:Pattern)-[:USES]->(t:Technology {id: $id})
+        WITH p.category AS category, count(p) AS cnt
+        WHERE category IS NOT NULL
+        RETURN category, cnt ORDER BY cnt DESC
+        """
+        with self.session() as session:
+            records = session.run(cat_query, id=tech_id)
+            result["by_category"] = [{"category": r["category"], "count": r["cnt"]} for r in records]
+
+        # Team breakdown
+        team_query = """
+        MATCH (p:Pattern)-[:USES]->(t:Technology {id: $id})
+        OPTIONAL MATCH (p)-[:OWNED_BY]->(team:Team)
+        WITH coalesce(team.name, 'Unassigned') AS team_name, count(p) AS cnt
+        RETURN team_name, cnt ORDER BY cnt DESC
+        """
+        with self.session() as session:
+            records = session.run(team_query, id=tech_id)
+            result["by_team"] = [{"team_name": r["team_name"], "count": r["cnt"]} for r in records]
+
+        return result
+
+    def get_technology_health(self, tech_id: str) -> dict:
+        """Calculate health score for a technology (0-100)."""
+        tech = self.get_technology(tech_id)
+        if not tech:
+            return {}
+
+        # 1. Completeness (40%) — 7 fields
+        check_fields = ["description", "vendor", "category", "cost_tier", "doc_url", "website", "notes"]
+        filled = sum(1 for f in check_fields if tech.get(f) and str(tech.get(f, "")).strip())
+        total_fields = len(check_fields)
+        missing_fields = [f for f in check_fields if not (tech.get(f) and str(tech.get(f, "")).strip())]
+        completeness_score = (filled / total_fields) * 100
+
+        # 2. Usage (30%) — active pattern ratio
+        patterns = self.get_technology_impact(tech_id)
+        active_count = sum(1 for p in patterns if p.get("status") == "ACTIVE")
+        deprecated_count = sum(1 for p in patterns if p.get("status") == "DEPRECATED")
+        total_patterns = len(patterns)
+
+        if total_patterns == 0:
+            usage_score = 20  # No usage = low score
+        else:
+            usage_score = (active_count / total_patterns) * 100
+
+        # 3. Documentation (20%)
+        has_doc_url = bool(tech.get("doc_url") and str(tech.get("doc_url", "")).strip())
+        has_website = bool(tech.get("website") and str(tech.get("website", "")).strip())
+        if has_doc_url and has_website:
+            doc_score = 100
+        elif has_doc_url or has_website:
+            doc_score = 50
+        else:
+            doc_score = 0
+
+        # 4. Problems (10%) — penalty-based, start at 100
+        problems = []
+        problem_score = 100
+
+        # Error: deprecated tech used by active patterns
+        if tech.get("status") == "DEPRECATED" and active_count > 0:
+            problems.append({"severity": "error", "message": f"Deprecated but used by {active_count} active pattern(s)"})
+            problem_score -= 15 * min(active_count, 5)
+
+        # Warning: no usage
+        if total_patterns == 0:
+            problems.append({"severity": "warning", "message": "Not used by any patterns"})
+            problem_score -= 5
+
+        # Warning: missing description
+        if not tech.get("description") or not str(tech.get("description", "")).strip():
+            problems.append({"severity": "warning", "message": "Missing description"})
+            problem_score -= 5
+
+        # Warning: no category
+        if not tech.get("category") or not str(tech.get("category", "")).strip():
+            problems.append({"severity": "warning", "message": "Missing category"})
+            problem_score -= 5
+
+        problem_score = max(0, problem_score)
+
+        # Weighted total
+        health_score = round(
+            completeness_score * 0.4 +
+            usage_score * 0.3 +
+            doc_score * 0.2 +
+            problem_score * 0.1
+        )
+        health_score = max(0, min(100, health_score))
+
+        return {
+            "health_score": health_score,
+            "score_breakdown": {
+                "completeness": {"score": round(completeness_score), "weight": 40},
+                "usage": {"score": round(usage_score), "weight": 30},
+                "documentation": {"score": round(doc_score), "weight": 20},
+                "problems": {"score": round(problem_score), "weight": 10},
+            },
+            "field_completeness": {"filled": filled, "total": total_fields, "missing_fields": missing_fields},
+            "usage_stats": {"total_patterns": total_patterns, "active": active_count, "deprecated": deprecated_count},
+            "documentation": {"has_doc_url": has_doc_url, "has_website": has_website},
+            "problems": problems,
+        }
 
     def cascade_deprecate_technology(self, tech_id: str) -> list[dict]:
         """Deprecate all SBBs that use this technology.

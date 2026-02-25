@@ -244,6 +244,15 @@ class AIGenerateRequest(BaseModel):
     template_type: PatternType
     parent_abb_id: Optional[str] = None
     context_notes: str = ""
+    enriched_context: Optional[str] = None  # follow-up answers + system context from analysis
+    provider: Optional[LLMProvider] = None
+    model: Optional[str] = None
+
+
+class AIAnalyzeContextRequest(BaseModel):
+    """Request for AI to analyze user's pattern description and predict category, relationships, follow-ups."""
+    template_type: PatternType
+    context_notes: str
     provider: Optional[LLMProvider] = None
     model: Optional[str] = None
 
