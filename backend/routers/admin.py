@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Query
+from fastapi import APIRouter, HTTPException, UploadFile, File, Query, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -16,8 +16,9 @@ from services.pptx_export_service import PptxExportService
 from services.docx_export_service import DocxExportService
 from services.import_service import ImportService
 from services.backup_service import BackupService
+from middleware.dependencies import require_admin
 
-router = APIRouter(prefix="/api/admin", tags=["Admin"])
+router = APIRouter(prefix="/api/admin", tags=["Admin"], dependencies=[Depends(require_admin)])
 
 
 class CreateBackupRequest(BaseModel):
@@ -200,14 +201,37 @@ async def test_provider(provider_name: str):
 
 # --- Export ---
 
+def _resolve_team_filter(team_ids_param: Optional[str]):
+    """Parse comma-separated team_ids and resolve team names."""
+    if not team_ids_param:
+        return None, []
+    team_list = [t.strip() for t in team_ids_param.split(",") if t.strip()]
+    if not team_list:
+        return None, []
+    # Resolve names via auth_service
+    from services import auth_service
+    team_names = []
+    for tid in team_list:
+        try:
+            team = auth_service.get_team(tid)
+            if team:
+                team_names.append(team.get("name", tid))
+            else:
+                team_names.append(tid)
+        except Exception:
+            team_names.append(tid)
+    return team_list, team_names
+
+
 @router.get("/export/html")
-def export_html():
-    """Export all patterns, technologies, and PBCs as a self-contained HTML file."""
+def export_html(team_ids: Optional[str] = Query(None)):
+    """Export patterns, technologies, and PBCs as a self-contained HTML file."""
     from main import db_service
+    team_list, team_names = _resolve_team_filter(team_ids)
     exporter = HtmlExportService(db_service)
-    html_content = exporter.generate_html()
+    html_content = exporter.generate_html(team_ids=team_list, team_names=team_names)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    filename = f"AI_Architecture_Patterns_{timestamp}.html"
+    filename = f"Architecture_Patterns_{timestamp}.html"
     return StreamingResponse(
         io.BytesIO(html_content.encode("utf-8")),
         media_type="text/html",
@@ -216,13 +240,14 @@ def export_html():
 
 
 @router.get("/export/pptx")
-def export_pptx():
-    """Export all patterns as a PowerPoint presentation."""
+def export_pptx(team_ids: Optional[str] = Query(None)):
+    """Export patterns as a PowerPoint presentation."""
     from main import db_service
+    team_list, team_names = _resolve_team_filter(team_ids)
     exporter = PptxExportService(db_service)
-    pptx_bytes = exporter.generate_pptx()
+    pptx_bytes = exporter.generate_pptx(team_ids=team_list, team_names=team_names)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    filename = f"AI_Architecture_Patterns_{timestamp}.pptx"
+    filename = f"Architecture_Patterns_{timestamp}.pptx"
     return StreamingResponse(
         io.BytesIO(pptx_bytes),
         media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
@@ -231,13 +256,14 @@ def export_pptx():
 
 
 @router.get("/export/docx")
-def export_docx():
-    """Export all patterns as a Word document."""
+def export_docx(team_ids: Optional[str] = Query(None)):
+    """Export patterns as a Word document."""
     from main import db_service
+    team_list, team_names = _resolve_team_filter(team_ids)
     exporter = DocxExportService(db_service)
-    docx_bytes = exporter.generate_docx()
+    docx_bytes = exporter.generate_docx(team_ids=team_list, team_names=team_names)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    filename = f"AI_Architecture_Patterns_{timestamp}.docx"
+    filename = f"Architecture_Patterns_{timestamp}.docx"
     return StreamingResponse(
         io.BytesIO(docx_bytes),
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -253,7 +279,7 @@ def export_json():
     backup = importer.export_backup()
     json_bytes = json.dumps(backup, indent=2, default=str).encode("utf-8")
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    filename = f"AI_Architecture_Patterns_Backup_{timestamp}.json"
+    filename = f"Architecture_Patterns_Backup_{timestamp}.json"
     return StreamingResponse(
         io.BytesIO(json_bytes),
         media_type="application/json",
@@ -704,3 +730,102 @@ def restore_backup(filename: str):
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Restore failed: {e}")
+
+
+# ==========================================================================
+# AI Prompt Management
+# ==========================================================================
+
+class PromptUpdateRequest(BaseModel):
+    value: str
+
+
+class PromptTestRequest(BaseModel):
+    system_prompt: str
+    user_prompt: str = ""
+    provider: Optional[str] = None
+    model: Optional[str] = None
+
+
+@router.get("/prompts")
+def list_prompts():
+    """List all AI prompts with defaults, overrides, variables, and token estimates."""
+    from services.prompt_service import get_all_prompts, SECTION_LABELS
+
+    prompts = get_all_prompts()
+
+    # Group by section for frontend tree
+    sections = {}
+    for p in prompts:
+        section = p["section"]
+        if section not in sections:
+            sections[section] = {
+                "label": SECTION_LABELS.get(section, section),
+                "prompts": [],
+            }
+        sections[section]["prompts"].append(p)
+
+    return {"prompts": prompts, "sections": sections}
+
+
+@router.put("/prompts/{section}/{sub_prompt}")
+def update_prompt(section: str, sub_prompt: str, body: PromptUpdateRequest):
+    """Save a prompt override. Persists to Neo4j SystemConfig."""
+    from services.prompt_service import save_override
+
+    try:
+        result = save_override(section, sub_prompt, body.value)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.delete("/prompts/{section}/{sub_prompt}")
+def reset_prompt(section: str, sub_prompt: str):
+    """Reset a prompt to its YAML default (delete the override)."""
+    from services.prompt_service import delete_override
+
+    try:
+        result = delete_override(section, sub_prompt)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/prompts/test")
+async def test_prompt(body: PromptTestRequest):
+    """Test a prompt by sending it to the LLM and returning the response."""
+    import time
+
+    try:
+        provider = get_provider(body.provider)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if not provider.is_available():
+        raise HTTPException(
+            status_code=503,
+            detail=f"Provider '{provider.name}' is not available — API key not configured",
+        )
+
+    system_text = body.system_prompt or "You are a helpful assistant."
+    user_text = body.user_prompt or "Hello, please confirm you understand your role and respond briefly."
+
+    start = time.time()
+    try:
+        result = await provider.generate(
+            system_prompt=system_text,
+            user_prompt=user_text,
+            model=body.model,
+        )
+        elapsed = round((time.time() - start) * 1000)
+        return {
+            "status": "ok",
+            "response": result.get("content", ""),
+            "provider": result.get("provider", provider.name),
+            "model": result.get("model", ""),
+            "latency_ms": elapsed,
+        }
+    except Exception as e:
+        elapsed = round((time.time() - start) * 1000)
+        raise HTTPException(status_code=500, detail=f"LLM test failed ({elapsed}ms): {str(e)}")

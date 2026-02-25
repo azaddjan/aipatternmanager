@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Depends
 from fastapi.responses import JSONResponse, StreamingResponse
 from typing import Optional
 import io
@@ -12,6 +12,12 @@ from models.schemas import (
     PatternCreate, PatternUpdate,
     RelationshipCreate,
 )
+from middleware.dependencies import (
+    get_current_user_or_anonymous,
+    require_pattern_create_access,
+    check_pattern_write_access,
+)
+from services import auth_service
 
 router = APIRouter(prefix="/api/patterns", tags=["Patterns"])
 
@@ -63,6 +69,7 @@ def list_patterns(
     status: Optional[str] = Query(None, description="Filter by status"),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
+    _user=Depends(get_current_user_or_anonymous),
 ):
     db = get_db()
     patterns, total = db.list_patterns(type, category, status, skip, limit)
@@ -73,6 +80,7 @@ def list_patterns(
 def generate_id(
     type: str = Query(..., description="Pattern type: AB, ABB, SBB"),
     category: str = Query(..., description="Category code"),
+    _user=Depends(get_current_user_or_anonymous),
 ):
     """Preview the next auto-generated ID for a type+category combo."""
     db = get_db()
@@ -81,7 +89,7 @@ def generate_id(
 
 
 @router.get("/{pattern_id}")
-def get_pattern(pattern_id: str):
+def get_pattern(pattern_id: str, _user=Depends(get_current_user_or_anonymous)):
     db = get_db()
     pattern = db.get_pattern_with_relationships(pattern_id)
     if not pattern:
@@ -93,7 +101,11 @@ def get_pattern(pattern_id: str):
 
 
 @router.post("", status_code=201)
-def create_pattern(data: PatternCreate):
+def create_pattern(
+    data: PatternCreate,
+    team_id: Optional[str] = Query(None, description="Assign pattern to team (admin only)"),
+    current_user: dict = Depends(require_pattern_create_access),
+):
     db = get_db()
     # Auto-generate ID if not provided
     if data.id:
@@ -112,6 +124,10 @@ def create_pattern(data: PatternCreate):
 
     pattern_data = data.model_dump(exclude={"implements_abbs", "technology_ids", "compatible_tech_ids", "depends_on_ids"})
     pattern_data["id"] = pattern_id
+
+    # Track who created the pattern
+    pattern_data["created_by"] = current_user.get("name") or current_user.get("email", "")
+    pattern_data["created_by_id"] = current_user.get("id", "")
 
     # Validate consumed_by_ids and works_with_ids reference existing patterns
     _validate_interop_ids(db, pattern_data.get("consumed_by_ids"), pattern_data.get("works_with_ids"))
@@ -138,6 +154,11 @@ def create_pattern(data: PatternCreate):
         if db.pattern_exists(dep_id):
             db.add_relationship(pattern_id, dep_id, "DEPENDS_ON")
 
+    # Assign pattern to team: admin can override, otherwise auto-assign to user's team
+    assign_team = team_id if (team_id and current_user.get("role") == "admin") else current_user.get("team_id")
+    if assign_team:
+        auth_service.assign_pattern_to_team(pattern_id, assign_team)
+
     _auto_embed_pattern(pattern_id)
     return pattern
 
@@ -147,7 +168,10 @@ def update_pattern(
     pattern_id: str,
     data: PatternUpdate,
     version_bump: str = Query("patch", description="Version bump type: major, minor, patch, none"),
+    team_id: Optional[str] = Query(None, description="Reassign pattern to team (admin only)"),
+    current_user: dict = Depends(require_pattern_create_access),
 ):
+    check_pattern_write_access(current_user, pattern_id)
     db = get_db()
 
     # Extract relationship fields
@@ -194,6 +218,13 @@ def update_pattern(
     # Return the final pattern state
     if not pattern:
         pattern = db.get_pattern(pattern_id)
+
+    # Allow admin to reassign pattern team
+    if team_id is not None and current_user.get("role") == "admin":
+        if team_id:
+            auth_service.assign_pattern_to_team(pattern_id, team_id)
+        else:
+            auth_service.remove_pattern_team(pattern_id)
 
     _auto_embed_pattern(pattern_id)
     return pattern
@@ -270,7 +301,8 @@ def _replace_depends_on(db, pattern_id: str, dep_ids: list[str]):
 
 
 @router.delete("/{pattern_id}")
-def delete_pattern(pattern_id: str):
+def delete_pattern(pattern_id: str, current_user: dict = Depends(require_pattern_create_access)):
+    check_pattern_write_access(current_user, pattern_id)
     db = get_db()
     # Fetch pattern first to get image files for cleanup
     pattern = db.get_pattern(pattern_id)
@@ -299,7 +331,9 @@ async def upload_image(
     pattern_id: str,
     file: UploadFile = File(...),
     title: str = Query("", description="Optional title for the image"),
+    current_user: dict = Depends(require_pattern_create_access),
 ):
+    check_pattern_write_access(current_user, pattern_id)
     db = get_db()
     pattern = db.get_pattern(pattern_id)
     if not pattern:
@@ -336,7 +370,8 @@ async def upload_image(
 
 
 @router.delete("/{pattern_id}/images/{image_id}")
-def delete_image(pattern_id: str, image_id: str):
+def delete_image(pattern_id: str, image_id: str, current_user: dict = Depends(require_pattern_create_access)):
+    check_pattern_write_access(current_user, pattern_id)
     db = get_db()
     pattern = db.get_pattern(pattern_id)
     if not pattern:
@@ -365,7 +400,7 @@ def delete_image(pattern_id: str, image_id: str):
 # --- Artifact Export ---
 
 @router.get("/{pattern_id}/artifacts")
-def export_artifacts(pattern_id: str):
+def export_artifacts(pattern_id: str, _user=Depends(get_current_user_or_anonymous)):
     db = get_db()
     pattern = db.get_pattern(pattern_id)
     if not pattern:
@@ -396,7 +431,7 @@ def export_artifacts(pattern_id: str):
 
 
 @router.get("/{pattern_id}/graph")
-def get_pattern_graph(pattern_id: str):
+def get_pattern_graph(pattern_id: str, _user=Depends(get_current_user_or_anonymous)):
     db = get_db()
     if not db.pattern_exists(pattern_id):
         raise HTTPException(status_code=404, detail=f"Pattern {pattern_id} not found")
@@ -404,7 +439,8 @@ def get_pattern_graph(pattern_id: str):
 
 
 @router.post("/{pattern_id}/relationships", status_code=201)
-def add_relationship(pattern_id: str, data: RelationshipCreate):
+def add_relationship(pattern_id: str, data: RelationshipCreate, current_user: dict = Depends(require_pattern_create_access)):
+    check_pattern_write_access(current_user, pattern_id)
     db = get_db()
     if not db.pattern_exists(pattern_id):
         raise HTTPException(status_code=404, detail=f"Pattern {pattern_id} not found")
@@ -415,7 +451,8 @@ def add_relationship(pattern_id: str, data: RelationshipCreate):
 
 
 @router.delete("/{pattern_id}/relationships/{target_id}/{rel_type}")
-def remove_relationship(pattern_id: str, target_id: str, rel_type: str):
+def remove_relationship(pattern_id: str, target_id: str, rel_type: str, current_user: dict = Depends(require_pattern_create_access)):
+    check_pattern_write_access(current_user, pattern_id)
     db = get_db()
     db.remove_relationship(pattern_id, target_id, rel_type)
     return {"deleted": True, "source": pattern_id, "target": target_id, "type": rel_type}

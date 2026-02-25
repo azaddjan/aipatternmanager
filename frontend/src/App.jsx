@@ -1,5 +1,7 @@
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route, Navigate } from 'react-router-dom'
+import { useAuth } from './contexts/AuthContext'
 import Sidebar from './components/Sidebar'
+import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import PatternList from './pages/PatternList'
 import PatternDetail from './pages/PatternDetail'
@@ -14,8 +16,27 @@ import PatternDiscovery from './pages/PatternDiscovery'
 import PatternAdvisor from './pages/PatternAdvisor'
 import ImpactAnalysis from './pages/ImpactAnalysis'
 import PatternHealth from './pages/PatternHealth'
+import UserManagement from './pages/UserManagement'
+import TeamManagement from './pages/TeamManagement'
 
 export default function App() {
+  const { user, loading, isAdmin } = useAuth()
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
+        <div className="text-center">
+          <div className="text-4xl mb-4">🧩</div>
+          <p className="text-gray-400">Loading...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!user) {
+    return <Login />
+  }
+
   return (
     <div className="flex h-screen overflow-hidden">
       <Sidebar />
@@ -33,7 +54,9 @@ export default function App() {
           <Route path="/pbcs/:id" element={<PBCDetail />} />
           <Route path="/discovery" element={<PatternDiscovery />} />
           <Route path="/advisor" element={<PatternAdvisor />} />
-          <Route path="/admin" element={<Admin />} />
+          <Route path="/admin" element={isAdmin ? <Admin /> : <Navigate to="/" />} />
+          <Route path="/admin/users" element={isAdmin ? <UserManagement /> : <Navigate to="/" />} />
+          <Route path="/admin/teams" element={isAdmin ? <TeamManagement /> : <Navigate to="/" />} />
           <Route path="/health" element={<PatternHealth />} />
           <Route path="/impact" element={<ImpactAnalysis />} />
         </Routes>

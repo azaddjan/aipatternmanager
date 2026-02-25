@@ -1,9 +1,10 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from typing import Optional
 import logging
 import threading
 
 from models.schemas import TechnologyCreate, TechnologyUpdate
+from middleware.dependencies import get_current_user, get_current_user_or_anonymous
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,7 @@ def list_technologies(
     category: Optional[str] = Query(None),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
+    _user=Depends(get_current_user_or_anonymous),
 ):
     db = get_db()
     technologies, total = db.list_technologies(vendor, status, category, skip, limit)
@@ -43,7 +45,7 @@ def list_technologies(
 
 
 @router.get("/{tech_id}")
-def get_technology(tech_id: str):
+def get_technology(tech_id: str, _user=Depends(get_current_user_or_anonymous)):
     db = get_db()
     tech = db.get_technology_with_patterns(tech_id)
     if not tech:
@@ -52,7 +54,9 @@ def get_technology(tech_id: str):
 
 
 @router.post("", status_code=201)
-def create_technology(data: TechnologyCreate):
+def create_technology(data: TechnologyCreate, current_user: dict = Depends(get_current_user)):
+    if current_user.get("role") == "viewer":
+        raise HTTPException(status_code=403, detail="Viewers cannot create technologies")
     db = get_db()
     existing = db.get_technology(data.id)
     if existing:
@@ -63,7 +67,9 @@ def create_technology(data: TechnologyCreate):
 
 
 @router.put("/{tech_id}")
-def update_technology(tech_id: str, data: TechnologyUpdate):
+def update_technology(tech_id: str, data: TechnologyUpdate, current_user: dict = Depends(get_current_user)):
+    if current_user.get("role") == "viewer":
+        raise HTTPException(status_code=403, detail="Viewers cannot update technologies")
     db = get_db()
     update_data = data.model_dump(exclude_none=True)
     if not update_data:
@@ -91,7 +97,9 @@ def update_technology(tech_id: str, data: TechnologyUpdate):
 
 
 @router.delete("/{tech_id}")
-def delete_technology(tech_id: str):
+def delete_technology(tech_id: str, current_user: dict = Depends(get_current_user)):
+    if current_user.get("role") == "viewer":
+        raise HTTPException(status_code=403, detail="Viewers cannot delete technologies")
     db = get_db()
     if not db.delete_technology(tech_id):
         raise HTTPException(status_code=404, detail=f"Technology {tech_id} not found")
@@ -99,7 +107,7 @@ def delete_technology(tech_id: str):
 
 
 @router.get("/{tech_id}/impact")
-def get_technology_impact(tech_id: str):
+def get_technology_impact(tech_id: str, _user=Depends(get_current_user_or_anonymous)):
     db = get_db()
     tech = db.get_technology(tech_id)
     if not tech:

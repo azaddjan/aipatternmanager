@@ -5,24 +5,13 @@ Uses AI to identify gaps and recommend new architecture patterns.
 """
 import json
 import logging
-import yaml
-from pathlib import Path
 from typing import Optional
 
 from services.llm import get_provider
 from services.neo4j_service import Neo4jService
+from services.prompt_service import get_merged_prompts as _get_prompts
 
 logger = logging.getLogger(__name__)
-
-PROMPTS_FILE = Path("/app/prompts.yaml")
-
-_prompts_cache = None
-
-def _get_prompts() -> dict:
-    global _prompts_cache
-    if _prompts_cache is None:
-        _prompts_cache = yaml.safe_load(PROMPTS_FILE.read_text(encoding="utf-8"))
-    return _prompts_cache
 
 
 def get_inventory(db: Neo4jService) -> dict:

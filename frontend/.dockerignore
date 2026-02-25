@@ -1,0 +1,32 @@
+# Environment & secrets
+.env
+.env.*
+*.env
+
+# Dependencies (rebuilt in container)
+node_modules/
+
+# Build output
+dist/
+.vite/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Docker
+Dockerfile
+.dockerignore
+
+# Logs
+*.log

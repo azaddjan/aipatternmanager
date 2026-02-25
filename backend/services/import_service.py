@@ -27,6 +27,9 @@ class ImportService:
             raise ValueError(f"Invalid JSON: {e}")
 
         result = {
+            "teams": {"new": [], "updated": [], "unchanged": []},
+            "users": {"new": [], "updated": [], "unchanged": []},
+            "settings": {"new": [], "updated": [], "unchanged": []},
             "patterns": {"new": [], "updated": [], "unchanged": []},
             "technologies": {"new": [], "updated": [], "unchanged": []},
             "pbcs": {"new": [], "updated": [], "unchanged": []},
@@ -43,6 +46,7 @@ class ImportService:
         if isinstance(data, list):
             patterns, technologies, pbcs, categories = data, [], [], []
             advisor_reports, health_analyses = [], []
+            teams, users, settings = [], [], []
         elif isinstance(data, dict):
             patterns = data.get("patterns", [])
             technologies = data.get("technologies", [])
@@ -50,8 +54,62 @@ class ImportService:
             categories = data.get("categories", [])
             advisor_reports = data.get("advisor_reports", [])
             health_analyses = data.get("health_analyses", [])
+            teams = data.get("teams", [])
+            users = data.get("users", [])
+            settings = data.get("settings", [])
         else:
             raise ValueError("Unrecognized data format.")
+
+        # Preview teams
+        for team in teams:
+            tid = team.get("id", "")
+            if not tid:
+                continue
+            entry = {"id": tid, "name": team.get("name", "")}
+            with self.db.session() as session:
+                existing = session.run(
+                    "MATCH (t:Team {id: $id}) RETURN t.id AS id", {"id": tid}
+                ).single()
+            if existing:
+                result["teams"]["unchanged"].append(entry)
+                result["stats"]["total_unchanged"] += 1
+            else:
+                result["teams"]["new"].append(entry)
+                result["stats"]["total_new"] += 1
+
+        # Preview users
+        for user in users:
+            email = user.get("email", "")
+            if not email:
+                continue
+            entry = {"id": user.get("id", ""), "name": user.get("name", ""), "email": email}
+            with self.db.session() as session:
+                existing = session.run(
+                    "MATCH (u:User) WHERE u.email = $email RETURN u.id AS id", {"email": email}
+                ).single()
+            if existing:
+                result["users"]["unchanged"].append(entry)
+                result["stats"]["total_unchanged"] += 1
+            else:
+                result["users"]["new"].append(entry)
+                result["stats"]["total_new"] += 1
+
+        # Preview settings
+        for setting in settings:
+            key = setting.get("key", "")
+            if not key or key.startswith("prompt_override:"):
+                continue
+            entry = {"key": key}
+            with self.db.session() as session:
+                existing = session.run(
+                    "MATCH (c:SystemConfig {key: $key}) RETURN c.key AS key", {"key": key}
+                ).single()
+            if existing:
+                result["settings"]["updated"].append(entry)
+                result["stats"]["total_updated"] += 1
+            else:
+                result["settings"]["new"].append(entry)
+                result["stats"]["total_new"] += 1
 
         # Preview advisor reports
         for rpt in advisor_reports:
@@ -182,12 +240,25 @@ class ImportService:
         Args:
             json_data: The JSON string to import.
             include: Optional list of types to import, e.g.
-                     ["patterns", "technologies", "pbcs", "categories"].
+                     ["patterns", "technologies", "pbcs", "categories",
+                      "teams", "users", "settings"].
                      If None, imports everything.
 
         Supports two formats:
         1. Full backup: {"patterns": [...], "technologies": [...], ...}
         2. Legacy: [...] (array of patterns only)
+
+        Import order:
+        1. Teams (no dependencies)
+        2. Users (depends on Teams for MEMBER_OF)
+        3. Settings (no dependencies)
+        4. Categories (existing)
+        5. Patterns (existing)
+        6. OWNED_BY restoration (depends on Teams + Patterns)
+        7. Technologies (existing)
+        8. PBCs (existing)
+        9. Advisor Reports (existing)
+        10. Health Analyses (existing)
 
         Returns a summary of what was imported.
         """
@@ -197,11 +268,15 @@ class ImportService:
             raise ValueError(f"Invalid JSON: {e}")
 
         stats = {
+            "teams_imported": 0,
+            "users_imported": 0,
+            "settings_imported": 0,
             "patterns_imported": 0,
             "technologies_imported": 0,
             "pbcs_imported": 0,
             "categories_imported": 0,
             "relationships_imported": 0,
+            "owned_by_restored": 0,
             "advisor_reports_imported": 0,
             "health_analyses_imported": 0,
             "errors": [],
@@ -209,7 +284,8 @@ class ImportService:
 
         # Default: include everything
         if include is None:
-            include = ["patterns", "technologies", "pbcs", "categories",
+            include = ["teams", "users", "settings",
+                       "patterns", "technologies", "pbcs", "categories",
                        "advisor_reports", "health_analyses"]
 
         # Determine format
@@ -217,16 +293,34 @@ class ImportService:
             if "patterns" in include:
                 self._import_patterns(data, stats)
         elif isinstance(data, dict):
+            # 1. Teams first (no dependencies)
+            if "teams" in include and "teams" in data:
+                self._import_teams(data["teams"], stats)
+            # 2. Users (depends on Teams for MEMBER_OF)
+            if "users" in include and "users" in data:
+                self._import_users(data["users"], stats)
+            # 3. Settings
+            if "settings" in include and "settings" in data:
+                self._import_settings(data["settings"], stats)
+            # 4. Categories
             if "categories" in include and "categories" in data:
                 self._import_categories(data["categories"], stats)
+            # 5. Patterns
             if "patterns" in include and "patterns" in data:
                 self._import_patterns(data["patterns"], stats)
+            # 6. OWNED_BY restoration (only if both teams and patterns included)
+            if "teams" in include and "patterns" in include and "patterns" in data:
+                self._restore_owned_by(data["patterns"], stats)
+            # 7. Technologies
             if "technologies" in include and "technologies" in data:
                 self._import_technologies(data["technologies"], stats)
+            # 8. PBCs
             if "pbcs" in include and "pbcs" in data:
                 self._import_pbcs(data["pbcs"], stats)
+            # 9. Advisor Reports
             if "advisor_reports" in include and "advisor_reports" in data:
                 self._import_advisor_reports(data["advisor_reports"], stats)
+            # 10. Health Analyses
             if "health_analyses" in include and "health_analyses" in data:
                 self._import_health_analyses(data["health_analyses"], stats)
         else:
@@ -238,7 +332,7 @@ class ImportService:
         """
         Export all data as a JSON-serializable dict for backup.
         Includes patterns, technologies, PBCs, categories, advisor reports,
-        and health analyses.
+        health analyses, teams, users, and settings.
         """
         patterns, _ = self.db.list_patterns(limit=10000)
         full_patterns = []
@@ -279,9 +373,57 @@ class ImportService:
         except Exception:
             pass
 
+        # Export teams
+        teams = []
+        try:
+            with self.db.session() as session:
+                result = session.run("""
+                    MATCH (t:Team)
+                    RETURN t.id AS id, t.name AS name, t.description AS description,
+                           t.created_at AS created_at, t.updated_at AS updated_at
+                """)
+                for record in result:
+                    teams.append(dict(record))
+        except Exception:
+            pass
+
+        # Export users (include password_hash for full restore)
+        users = []
+        try:
+            with self.db.session() as session:
+                result = session.run("""
+                    MATCH (u:User)
+                    OPTIONAL MATCH (u)-[:MEMBER_OF]->(t:Team)
+                    RETURN u.id AS id, u.email AS email, u.name AS name,
+                           u.password_hash AS password_hash, u.role AS role,
+                           u.is_active AS is_active, u.created_at AS created_at,
+                           u.updated_at AS updated_at, t.id AS team_id
+                """)
+                for record in result:
+                    users.append(dict(record))
+        except Exception:
+            pass
+
+        # Export settings (exclude prompt overrides — those are managed separately)
+        settings = []
+        try:
+            with self.db.session() as session:
+                result = session.run("""
+                    MATCH (c:SystemConfig)
+                    WHERE NOT c.key STARTS WITH 'prompt_override:'
+                    RETURN c.key AS key, c.value_json AS value_json
+                """)
+                for record in result:
+                    settings.append(dict(record))
+        except Exception:
+            pass
+
         return {
             "export_date": datetime.now(timezone.utc).isoformat(),
-            "version": "1.1",
+            "version": "1.2",
+            "teams": teams,
+            "users": users,
+            "settings": settings,
             "patterns": full_patterns,
             "technologies": full_techs,
             "pbcs": pbcs,
@@ -293,6 +435,130 @@ class ImportService:
     # ------------------------------------------------------------------
     # Import helpers
     # ------------------------------------------------------------------
+
+    def _import_teams(self, teams: list, stats: dict):
+        """Import team nodes, preserving original IDs and timestamps."""
+        for team in teams:
+            try:
+                tid = team.get("id", "")
+                if not tid:
+                    continue
+                # Check if team already exists
+                with self.db.session() as session:
+                    existing = session.run(
+                        "MATCH (t:Team {id: $id}) RETURN t.id AS id",
+                        {"id": tid}
+                    ).single()
+                    if existing:
+                        continue  # Skip existing teams
+                    session.run("""
+                        CREATE (t:Team {
+                            id: $id,
+                            name: $name,
+                            description: $description,
+                            created_at: $created_at,
+                            updated_at: $updated_at
+                        })
+                    """, {
+                        "id": tid,
+                        "name": team.get("name", ""),
+                        "description": team.get("description", ""),
+                        "created_at": team.get("created_at", datetime.now(timezone.utc).isoformat()),
+                        "updated_at": team.get("updated_at", datetime.now(timezone.utc).isoformat()),
+                    })
+                stats["teams_imported"] += 1
+            except Exception as e:
+                stats["errors"].append(f"Team '{team.get('id', '?')}': {e}")
+
+    def _import_users(self, users: list, stats: dict):
+        """Import user nodes with MEMBER_OF relationships. Never overwrites existing users."""
+        for user in users:
+            try:
+                uid = user.get("id", "")
+                email = user.get("email", "")
+                if not uid or not email:
+                    continue
+                # Check if user already exists by email (never overwrite credentials)
+                with self.db.session() as session:
+                    existing = session.run(
+                        "MATCH (u:User) WHERE u.email = $email RETURN u.id AS id",
+                        {"email": email}
+                    ).single()
+                    if existing:
+                        continue  # Skip existing users
+                    session.run("""
+                        CREATE (u:User {
+                            id: $id,
+                            email: $email,
+                            name: $name,
+                            password_hash: $password_hash,
+                            role: $role,
+                            is_active: $is_active,
+                            created_at: $created_at,
+                            updated_at: $updated_at
+                        })
+                    """, {
+                        "id": uid,
+                        "email": email,
+                        "name": user.get("name", ""),
+                        "password_hash": user.get("password_hash", ""),
+                        "role": user.get("role", "viewer"),
+                        "is_active": user.get("is_active", True),
+                        "created_at": user.get("created_at", datetime.now(timezone.utc).isoformat()),
+                        "updated_at": user.get("updated_at", datetime.now(timezone.utc).isoformat()),
+                    })
+                    # Create MEMBER_OF relationship if team_id is present
+                    team_id = user.get("team_id")
+                    if team_id:
+                        session.run("""
+                            MATCH (u:User {id: $uid}), (t:Team {id: $tid})
+                            MERGE (u)-[:MEMBER_OF]->(t)
+                        """, {"uid": uid, "tid": team_id})
+                stats["users_imported"] += 1
+            except Exception as e:
+                stats["errors"].append(f"User '{user.get('email', '?')}': {e}")
+
+    def _import_settings(self, settings: list, stats: dict):
+        """Import system settings (SystemConfig nodes). Skips prompt overrides."""
+        now = datetime.now(timezone.utc).isoformat()
+        for setting in settings:
+            try:
+                key = setting.get("key", "")
+                if not key or key.startswith("prompt_override:"):
+                    continue
+                value_json = setting.get("value_json", "")
+                with self.db.session() as session:
+                    session.run("""
+                        MERGE (c:SystemConfig {key: $key})
+                        SET c.value_json = $value_json, c.updated_at = $now
+                    """, {"key": key, "value_json": value_json, "now": now})
+                stats["settings_imported"] += 1
+            except Exception as e:
+                stats["errors"].append(f"Setting '{setting.get('key', '?')}': {e}")
+
+    def _restore_owned_by(self, patterns: list, stats: dict):
+        """Restore OWNED_BY relationships between patterns and teams."""
+        for p in patterns:
+            try:
+                pid = p.get("id", "")
+                team_id = p.get("team_id")
+                if not pid or not team_id:
+                    continue
+                with self.db.session() as session:
+                    # Delete existing OWNED_BY, then create new one
+                    session.run("""
+                        MATCH (p:Pattern {id: $pid})-[r:OWNED_BY]->()
+                        DELETE r
+                    """, {"pid": pid})
+                    result = session.run("""
+                        MATCH (p:Pattern {id: $pid}), (t:Team {id: $tid})
+                        CREATE (p)-[:OWNED_BY]->(t)
+                        RETURN p.id AS id
+                    """, {"pid": pid, "tid": team_id})
+                    if result.single():
+                        stats["owned_by_restored"] += 1
+            except Exception as e:
+                stats["errors"].append(f"OWNED_BY '{p.get('id', '?')}' -> '{p.get('team_id', '?')}': {e}")
 
     def _import_categories(self, categories: list, stats: dict):
         """Import category nodes."""

@@ -1,4 +1,8 @@
-from fastapi import APIRouter, HTTPException
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException, Query, Depends
+
+from middleware.dependencies import get_current_user_or_anonymous
 
 router = APIRouter(prefix="/api/graph", tags=["Graph"])
 
@@ -9,14 +13,18 @@ def get_db():
 
 
 @router.get("/full")
-def get_full_graph():
-    """Complete pattern graph for visualization."""
+def get_full_graph(
+    team_id: Optional[str] = Query(None, description="Team ID to scope graph, 'all' for global, or omit for all"),
+    _user=Depends(get_current_user_or_anonymous),
+):
+    """Complete pattern graph for visualization. Optionally scoped to a team."""
     db = get_db()
-    return db.get_full_graph()
+    effective_team = None if (not team_id or team_id == "all") else team_id
+    return db.get_full_graph(team_id=effective_team)
 
 
 @router.get("/impact/{pattern_id}")
-def get_impact_analysis(pattern_id: str):
+def get_impact_analysis(pattern_id: str, _user=Depends(get_current_user_or_anonymous)):
     """Impact analysis: what depends on this pattern (what breaks if it changes)."""
     db = get_db()
     if not db.pattern_exists(pattern_id):
@@ -26,7 +34,7 @@ def get_impact_analysis(pattern_id: str):
 
 
 @router.get("/coverage")
-def get_coverage_matrix():
+def get_coverage_matrix(_user=Depends(get_current_user_or_anonymous)):
     """ABB coverage matrix: which ABBs have SBB implementations."""
     db = get_db()
     coverage = db.get_coverage_matrix()

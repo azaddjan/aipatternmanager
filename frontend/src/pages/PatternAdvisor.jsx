@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  analyzePattern, fetchEmbeddingStatus, fetchProviders, fetchCategories,
+  analyzePattern, clarifyProblem, fetchEmbeddingStatus, fetchProviders, fetchCategories,
   fetchAdvisorReports, fetchAdvisorReport, updateAdvisorReport,
   deleteAdvisorReport, deleteAllAdvisorReports, cleanupAdvisorReports,
   advisorReportExportHtmlUrl, advisorReportExportDocxUrl,
+  authenticatedDownload,
 } from '../api/client'
 import MarkdownContent from '../components/MarkdownContent'
 
@@ -56,6 +57,11 @@ export default function PatternAdvisor() {
   const [editTitleValue, setEditTitleValue] = useState('')
   const [reportsLoading, setReportsLoading] = useState(false)
 
+  // --- Clarification state ---
+  const [clarifying, setClarifying] = useState(false)
+  const [clarificationQuestions, setClarificationQuestions] = useState(null)
+  const [clarificationAnswers, setClarificationAnswers] = useState({})
+
   // Load providers, categories, embedding status, and reports on mount
   useEffect(() => {
     Promise.all([
@@ -94,11 +100,50 @@ export default function PatternAdvisor() {
       setError('Please describe your problem in at least 10 characters.')
       return
     }
-    setAnalyzing(true)
     setError('')
     setResult(null)
     setResultTab('overview')
     setSavedReportId(null)
+
+    // If we already have clarification answers, skip to full analysis
+    if (clarificationQuestions && Object.keys(clarificationAnswers).length > 0) {
+      await runFullAnalysis(clarificationAnswers)
+      return
+    }
+
+    // Step 1: Pre-flight clarification check
+    setClarifying(true)
+    try {
+      const clarifyData = {
+        problem: problem.trim(),
+        category_focus: categoryFocus || null,
+        technology_preferences: techPrefs ? techPrefs.split(',').map(t => t.trim()).filter(Boolean) : [],
+        provider: provider || null,
+        model: model || null,
+      }
+      const clarifyRes = await clarifyProblem(clarifyData)
+
+      if (clarifyRes.needs_clarification && clarifyRes.questions?.length > 0) {
+        // Show clarification questions
+        setClarificationQuestions(clarifyRes.questions)
+        setClarificationAnswers({})
+        setClarifying(false)
+        return
+      }
+    } catch (err) {
+      // If clarification fails, proceed to analysis anyway (graceful degradation)
+      console.warn('Clarification check failed, proceeding to analysis:', err.message)
+    }
+    setClarifying(false)
+
+    // Step 2: No clarification needed — proceed directly
+    await runFullAnalysis(null)
+  }
+
+  const runFullAnalysis = async (clarifications) => {
+    setAnalyzing(true)
+    setClarificationQuestions(null)
+    setClarificationAnswers({})
     try {
       const data = {
         problem: problem.trim(),
@@ -107,11 +152,11 @@ export default function PatternAdvisor() {
         include_gap_analysis: includeGaps,
         provider: provider || null,
         model: model || null,
+        clarifications: clarifications,
       }
       const res = await analyzePattern(data)
       setResult(res)
       setProgressStep(4)
-      // Capture saved report ID and refresh report list
       if (res.saved_report_id) {
         setSavedReportId(res.saved_report_id)
       }
@@ -120,6 +165,22 @@ export default function PatternAdvisor() {
       setError(err.message)
     }
     setAnalyzing(false)
+  }
+
+  const handleSkipClarification = () => {
+    setClarificationQuestions(null)
+    setClarificationAnswers({})
+    runFullAnalysis(null)
+  }
+
+  const handleSubmitClarifications = () => {
+    const answered = Object.values(clarificationAnswers).filter(v => v.trim()).length
+    if (answered === 0) {
+      setError('Please answer at least one question before continuing.')
+      return
+    }
+    setError('')
+    runFullAnalysis(clarificationAnswers)
   }
 
   // --- Report handlers ---
@@ -354,10 +415,15 @@ export default function PatternAdvisor() {
 
         <button
           onClick={handleAnalyze}
-          disabled={analyzing || problem.trim().length < 10}
+          disabled={analyzing || clarifying || problem.trim().length < 10}
           className="btn-primary w-full py-3 text-base"
         >
-          {analyzing ? (
+          {clarifying ? (
+            <span className="flex items-center justify-center gap-2">
+              <span className="animate-spin text-lg">&#9696;</span>
+              Checking...
+            </span>
+          ) : analyzing ? (
             <span className="flex items-center justify-center gap-2">
               <span className="animate-spin text-lg">&#9696;</span>
               Analyzing...
@@ -393,6 +459,92 @@ export default function PatternAdvisor() {
         </div>
       )}
 
+      {/* Clarification Loading */}
+      {clarifying && (
+        <div className="card flex items-center gap-3 text-sm text-gray-400">
+          <span className="animate-spin text-lg">&#9696;</span>
+          Evaluating your problem description...
+        </div>
+      )}
+
+      {/* Clarification Questions */}
+      {clarificationQuestions && !analyzing && (
+        <div className="card border border-blue-500/30 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-blue-400 flex items-center gap-2">
+              <span className="text-lg">❓</span>
+              A few questions to improve your analysis
+            </h3>
+            <button
+              onClick={handleSkipClarification}
+              className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+            >
+              Skip and analyze anyway →
+            </button>
+          </div>
+
+          <div className="space-y-4">
+            {clarificationQuestions.map(q => (
+              <div key={q.id} className="space-y-2">
+                <label className="block text-sm text-white font-medium">
+                  {q.question}
+                </label>
+                {q.context && (
+                  <p className="text-xs text-gray-500">{q.context}</p>
+                )}
+                {/* Suggested option buttons */}
+                {q.suggested_options?.length > 0 && (
+                  <div className="flex gap-2 flex-wrap">
+                    {q.suggested_options.map(opt => (
+                      <button
+                        key={opt}
+                        onClick={() => setClarificationAnswers(prev => ({
+                          ...prev,
+                          [q.id]: opt
+                        }))}
+                        className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${
+                          clarificationAnswers[q.id] === opt
+                            ? 'bg-blue-600/20 border-blue-500/50 text-blue-400'
+                            : 'bg-gray-800 border-gray-700 text-gray-300 hover:border-gray-600'
+                        }`}
+                      >
+                        {opt}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {/* Free-text input */}
+                <input
+                  type="text"
+                  value={clarificationAnswers[q.id] || ''}
+                  onChange={e => setClarificationAnswers(prev => ({
+                    ...prev,
+                    [q.id]: e.target.value
+                  }))}
+                  placeholder="Type your answer or select an option above..."
+                  className="input w-full text-sm"
+                />
+              </div>
+            ))}
+          </div>
+
+          <div className="flex gap-3">
+            <button
+              onClick={handleSubmitClarifications}
+              className="btn-primary flex-1 py-2.5"
+            >
+              Continue Analysis →
+            </button>
+            <button
+              onClick={handleSkipClarification}
+              className="px-4 py-2.5 rounded-lg bg-gray-800 text-gray-400 hover:text-gray-300 hover:bg-gray-700 transition-colors text-sm"
+            >
+              Skip
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Error */}
       {error && (
         <div className="bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg px-4 py-3 text-sm">
@@ -408,19 +560,18 @@ export default function PatternAdvisor() {
             <span className="text-green-300 font-mono text-sm font-medium">{savedReportId}</span>
           </div>
           <div className="flex items-center gap-3">
-            <a
-              href={advisorReportExportHtmlUrl(savedReportId)}
+            <button
+              onClick={() => authenticatedDownload(advisorReportExportHtmlUrl(savedReportId), `advisor-report-${savedReportId}.html`)}
               className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
-              target="_blank" rel="noopener noreferrer"
             >
               &#x2913; HTML
-            </a>
-            <a
-              href={advisorReportExportDocxUrl(savedReportId)}
+            </button>
+            <button
+              onClick={() => authenticatedDownload(advisorReportExportDocxUrl(savedReportId), `advisor-report-${savedReportId}.docx`)}
               className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
             >
               &#x2913; DOCX
-            </a>
+            </button>
           </div>
         </div>
       )}
@@ -603,21 +754,20 @@ export default function PatternAdvisor() {
                     >
                       Load
                     </button>
-                    <a
-                      href={advisorReportExportHtmlUrl(rpt.id)}
+                    <button
+                      onClick={() => authenticatedDownload(advisorReportExportHtmlUrl(rpt.id), `advisor-report-${rpt.id}.html`)}
                       className="text-xs px-2 py-1 rounded bg-gray-800 text-gray-400 hover:text-gray-300 hover:bg-gray-700 transition-colors"
-                      target="_blank" rel="noopener noreferrer"
                       title="Download HTML"
                     >
                       HTML
-                    </a>
-                    <a
-                      href={advisorReportExportDocxUrl(rpt.id)}
+                    </button>
+                    <button
+                      onClick={() => authenticatedDownload(advisorReportExportDocxUrl(rpt.id), `advisor-report-${rpt.id}.docx`)}
                       className="text-xs px-2 py-1 rounded bg-gray-800 text-gray-400 hover:text-gray-300 hover:bg-gray-700 transition-colors"
                       title="Download DOCX"
                     >
                       DOCX
-                    </a>
+                    </button>
                     <button
                       onClick={() => handleDeleteReport(rpt.id)}
                       className="text-xs px-2 py-1 rounded text-red-500/50 hover:text-red-400 hover:bg-red-500/10 transition-colors"

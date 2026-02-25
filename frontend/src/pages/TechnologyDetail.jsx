@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
-import { fetchTechnology, updateTechnology, deleteTechnology } from '../api/client'
+import { fetchTechnology, updateTechnology, deleteTechnology, aiTechnologySuggest } from '../api/client'
 
 const TECH_CATEGORIES = [
   'cloud-compute', 'cloud-ai', 'cloud-data', 'cloud-infra',
@@ -39,6 +39,30 @@ export default function TechnologyDetail() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [cascadeResult, setCascadeResult] = useState(null)
+  const [suggesting, setSuggesting] = useState(false)
+
+  const handleAISuggest = async () => {
+    const name = form.name || tech?.name
+    if (!name?.trim()) return
+    setSuggesting(true)
+    try {
+      const result = await aiTechnologySuggest({ name: name.trim(), partial_data: { id: tech?.id } })
+      const s = result.suggestion || {}
+      setForm(f => ({
+        ...f,
+        vendor: s.vendor || f.vendor,
+        category: s.category || f.category,
+        description: s.description || f.description,
+        cost_tier: s.cost_tier || f.cost_tier,
+        doc_url: s.doc_url || f.doc_url,
+        website: s.website || f.website,
+        notes: s.notes || f.notes,
+      }))
+    } catch (err) {
+      setError(`AI suggest failed: ${err.message}`)
+    }
+    setSuggesting(false)
+  }
 
   const load = () => {
     setLoading(true)
@@ -160,7 +184,24 @@ export default function TechnologyDetail() {
       {/* Edit Form */}
       {editing && (
         <div className="card space-y-4">
-          <h2 className="text-sm font-semibold text-gray-400">Edit Technology</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-gray-400">Edit Technology</h2>
+            <button
+              onClick={handleAISuggest}
+              disabled={suggesting}
+              className="px-3 py-1.5 text-xs rounded-lg bg-purple-600/20 text-purple-400 border border-purple-500/30 hover:bg-purple-600/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5"
+              title="Auto-populate empty fields using AI"
+            >
+              {suggesting ? (
+                <span className="flex items-center gap-1.5">
+                  <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z"/></svg>
+                  Thinking...
+                </span>
+              ) : (
+                <span>Populate with AI</span>
+              )}
+            </button>
+          </div>
           <div className="grid grid-cols-3 gap-4">
             <div>
               <label className="block text-xs text-gray-500 mb-1">Name</label>

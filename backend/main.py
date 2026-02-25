@@ -35,6 +35,15 @@ async def lifespan(app: FastAPI):
             logger.info(f"Vector indexes initialized ({svc.dimensions}d)")
         except Exception as e:
             logger.warning(f"Vector index creation skipped: {e}")
+        # Migrate legacy settings.json to Neo4j and seed defaults
+        from services.settings_service import migrate_json_to_db, seed_defaults
+        migrate_json_to_db()
+        seed_defaults()
+
+        # Seed admin user from env vars (first boot only)
+        from services.auth_service import seed_admin_user
+        seed_admin_user()
+
         # Auto-embed any nodes missing embeddings (background thread)
         def _startup_embed():
             try:
@@ -81,7 +90,14 @@ from routers.pbcs import router as pbcs_router
 from routers.admin import router as admin_router
 from routers.discovery import router as discovery_router
 from routers.advisor import router as advisor_router
+from routers.auth import router as auth_router
+from routers.users import router as users_router
+from routers.teams import router as teams_router
+from routers.pattern_health import router as pattern_health_router
 
+app.include_router(auth_router)
+app.include_router(users_router)
+app.include_router(teams_router)
 app.include_router(patterns_router)
 app.include_router(technologies_router)
 app.include_router(graph_router)
@@ -91,6 +107,7 @@ app.include_router(pbcs_router)
 app.include_router(admin_router)
 app.include_router(discovery_router)
 app.include_router(advisor_router)
+app.include_router(pattern_health_router)
 
 # Serve uploaded images
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/app/uploads")

@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 import threading
 
 from models.schemas import PBCCreate, PBCUpdate
+from middleware.dependencies import get_current_user, get_current_user_or_anonymous
 
 router = APIRouter(prefix="/api/pbcs", tags=["PBCs"])
 
@@ -26,14 +27,14 @@ def get_db():
 
 
 @router.get("")
-def list_pbcs():
+def list_pbcs(_user=Depends(get_current_user_or_anonymous)):
     db = get_db()
     pbcs = db.list_pbcs()
     return {"pbcs": pbcs, "total": len(pbcs)}
 
 
 @router.get("/{pbc_id}")
-def get_pbc(pbc_id: str):
+def get_pbc(pbc_id: str, _user=Depends(get_current_user_or_anonymous)):
     db = get_db()
     pbc = db.get_pbc(pbc_id)
     if not pbc:
@@ -42,7 +43,7 @@ def get_pbc(pbc_id: str):
 
 
 @router.get("/{pbc_id}/graph")
-def get_pbc_graph(pbc_id: str):
+def get_pbc_graph(pbc_id: str, _user=Depends(get_current_user_or_anonymous)):
     """Get the subgraph centered on this PBC for visualization."""
     db = get_db()
     pbc = db.get_pbc(pbc_id)
@@ -52,7 +53,9 @@ def get_pbc_graph(pbc_id: str):
 
 
 @router.post("", status_code=201)
-def create_pbc(data: PBCCreate):
+def create_pbc(data: PBCCreate, current_user: dict = Depends(get_current_user)):
+    if current_user.get("role") == "viewer":
+        raise HTTPException(status_code=403, detail="Viewers cannot create PBCs")
     db = get_db()
     # Auto-generate ID if not provided
     pbc_id = data.id or db.generate_pbc_id()
@@ -75,7 +78,9 @@ def create_pbc(data: PBCCreate):
 
 
 @router.put("/{pbc_id}")
-def update_pbc(pbc_id: str, data: PBCUpdate):
+def update_pbc(pbc_id: str, data: PBCUpdate, current_user: dict = Depends(get_current_user)):
+    if current_user.get("role") == "viewer":
+        raise HTTPException(status_code=403, detail="Viewers cannot update PBCs")
     db = get_db()
     update_data = data.model_dump(exclude_none=True)
     abb_ids = update_data.pop("abb_ids", None)
@@ -97,7 +102,9 @@ def update_pbc(pbc_id: str, data: PBCUpdate):
 
 
 @router.delete("/{pbc_id}")
-def delete_pbc(pbc_id: str):
+def delete_pbc(pbc_id: str, current_user: dict = Depends(get_current_user)):
+    if current_user.get("role") == "viewer":
+        raise HTTPException(status_code=403, detail="Viewers cannot delete PBCs")
     db = get_db()
     if not db.delete_pbc(pbc_id):
         raise HTTPException(status_code=404, detail=f"PBC {pbc_id} not found")

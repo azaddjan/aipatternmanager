@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
-import { fetchFullGraph } from '../api/client'
+import { fetchFullGraph, fetchTeams } from '../api/client'
+import { useAuth } from '../contexts/AuthContext'
 import GraphView from '../components/GraphView'
 
 const FILTER_OPTIONS = [
@@ -22,17 +23,30 @@ const CATEGORY_OPTIONS = [
 ]
 
 export default function GraphExplorer() {
+  const { user } = useAuth()
   const [data, setData] = useState(null)
   const [typeFilter, setTypeFilter] = useState('')
   const [catFilter, setCatFilter] = useState('')
   const [loading, setLoading] = useState(true)
 
+  // Team scope
+  const [teams, setTeams] = useState([])
+  const [selectedTeam, setSelectedTeam] = useState('all')
+
+  // Load teams on mount
   useEffect(() => {
-    fetchFullGraph()
+    fetchTeams().then(t => setTeams(Array.isArray(t) ? t : (t?.teams || []))).catch(() => {})
+  }, [])
+
+  // Load graph when team selection changes
+  useEffect(() => {
+    setLoading(true)
+    const teamId = selectedTeam === 'all' ? null : selectedTeam
+    fetchFullGraph(teamId)
       .then(setData)
       .catch(() => setData(null))
       .finally(() => setLoading(false))
-  }, [])
+  }, [selectedTeam])
 
   const filteredData = data ? {
     nodes: data.nodes.filter(n => {
@@ -64,11 +78,34 @@ export default function GraphExplorer() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-white">Graph Explorer</h1>
-        <p className="text-gray-500 text-sm mt-1">Interactive pattern relationship graph. Double-click a node to navigate.</p>
+        <p className="text-gray-500 text-sm mt-1">
+          Interactive pattern relationship graph. Double-click a node to navigate.
+          {selectedTeam !== 'all' && (
+            <span className="ml-2 text-xs bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded border border-blue-500/30">
+              {teams.find(t => t.id === selectedTeam)?.name || 'Team'} scope
+            </span>
+          )}
+        </p>
       </div>
 
       {/* Filters */}
       <div className="flex items-center gap-3">
+        {/* Team Scope Selector */}
+        <select
+          value={selectedTeam}
+          onChange={e => setSelectedTeam(e.target.value)}
+          className="select"
+        >
+          <option value="all">🌐 All Patterns</option>
+          {teams.map(t => (
+            <option key={t.id} value={t.id}>
+              {t.id === user?.team_id ? `⭐ ${t.name} (My Team)` : `🏢 ${t.name}`}
+            </option>
+          ))}
+        </select>
+
+        <div className="w-px h-6 bg-gray-700" />
+
         <select value={typeFilter} onChange={e => { setTypeFilter(e.target.value); setCatFilter('') }} className="select">
           {FILTER_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>

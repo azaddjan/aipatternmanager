@@ -6,6 +6,12 @@ from enum import Enum
 
 # --- Enums ---
 
+class UserRole(str, Enum):
+    ADMIN = "admin"
+    TEAM_MEMBER = "team_member"
+    VIEWER = "viewer"
+
+
 class PatternType(str, Enum):
     AB = "AB"
     ABB = "ABB"
@@ -294,6 +300,19 @@ class AdvisorRequest(BaseModel):
     include_gap_analysis: bool = True
     provider: Optional[LLMProvider] = None
     model: Optional[str] = None
+    clarifications: Optional[dict[str, str]] = Field(
+        None, description="Answers from the clarification pre-flight step: {question_id: answer}"
+    )
+
+
+class AdvisorClarifyRequest(BaseModel):
+    """Pre-flight check: assess if the problem needs clarification before full analysis."""
+    problem: str = Field(..., min_length=10, max_length=5000,
+                         description="Natural language problem description")
+    category_focus: Optional[str] = None
+    technology_preferences: list[str] = []
+    provider: Optional[LLMProvider] = None
+    model: Optional[str] = None
 
 
 # --- Advisor Reports ---
@@ -302,3 +321,42 @@ class AdvisorReportUpdate(BaseModel):
     """Partial update for a saved advisor report."""
     title: Optional[str] = None
     starred: Optional[bool] = None
+
+
+# --- AI Field Assist (per-field editing support) ---
+
+class AIFieldAssistAction(str, Enum):
+    SUGGEST = "suggest"
+    IMPROVE = "improve"
+    CUSTOM = "custom"
+
+
+class AIFieldAssistRequest(BaseModel):
+    """Per-field AI assist during pattern editing."""
+    field_name: str
+    action: AIFieldAssistAction
+    custom_prompt: Optional[str] = None  # required when action == "custom"
+    current_value: str = ""
+    pattern_context: dict  # all current form fields
+    pattern_type: PatternType
+    pattern_id: Optional[str] = None  # set when editing existing pattern
+    provider: Optional[LLMProvider] = None
+    model: Optional[str] = None
+
+
+class AISmartAction(str, Enum):
+    AUTO_TAGS = "auto_tags"
+    GENERATE_DESCRIPTION = "generate_description"
+    SUGGEST_RELATIONSHIPS = "suggest_relationships"
+    QUALITY_CHECK = "quality_check"
+    AUTO_FILL_EMPTY = "auto_fill_empty"
+
+
+class AISmartActionRequest(BaseModel):
+    """Pattern-level smart AI actions."""
+    action: AISmartAction
+    pattern_context: dict
+    pattern_type: PatternType
+    pattern_id: Optional[str] = None
+    provider: Optional[LLMProvider] = None
+    model: Optional[str] = None

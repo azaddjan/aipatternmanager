@@ -1,19 +1,28 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { fetchPatterns, fetchCategories, updatePattern } from '../api/client'
 import PatternCard from '../components/PatternCard'
+import { useAuth } from '../contexts/AuthContext'
 
 const TYPE_OPTIONS = ['', 'AB', 'ABB', 'SBB']
 const STATUS_OPTIONS = ['', 'DRAFT', 'ACTIVE', 'DEPRECATED']
 
 export default function PatternList() {
+  const { canCreatePattern } = useAuth()
   const [patterns, setPatterns] = useState([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
-  const [filters, setFilters] = useState({ type: '', category: '', status: '' })
+  const [filters, setFilters] = useState({ type: '', category: '', status: '', team: '' })
   const [search, setSearch] = useState('')
   const [viewMode, setViewMode] = useState('table') // grid | table
   const [categoryOptions, setCategoryOptions] = useState([])
+
+  // Derive unique team names from loaded patterns
+  const teamOptions = useMemo(() => {
+    const teams = new Set()
+    patterns.forEach(p => { if (p.team_name) teams.add(p.team_name) })
+    return [...teams].sort()
+  }, [patterns])
 
   // Load dynamic categories
   useEffect(() => {
@@ -34,6 +43,8 @@ export default function PatternList() {
   }, [filters])
 
   const filtered = patterns.filter(p => {
+    // Team filter
+    if (filters.team && p.team_name !== filters.team) return false
     if (!search) return true
     const q = search.toLowerCase()
     return (
@@ -42,6 +53,7 @@ export default function PatternList() {
       p.description?.toLowerCase().includes(q) ||
       p.category?.toLowerCase().includes(q) ||
       p.vendor?.toLowerCase().includes(q) ||
+      p.team_name?.toLowerCase().includes(q) ||
       (p.tags || []).some(t => t.toLowerCase().includes(q))
     )
   })
@@ -53,7 +65,9 @@ export default function PatternList() {
           <h1 className="text-2xl font-bold text-white">Patterns</h1>
           <p className="text-gray-500 text-sm mt-1">{total} patterns total</p>
         </div>
-        <Link to="/patterns/new" className="btn-primary">+ New Pattern</Link>
+        {canCreatePattern && (
+          <Link to="/patterns/new" className="btn-primary">+ New Pattern</Link>
+        )}
       </div>
 
       {/* Filters */}
@@ -89,6 +103,16 @@ export default function PatternList() {
           <option value="">All Statuses</option>
           {STATUS_OPTIONS.filter(Boolean).map(s => <option key={s} value={s}>{s}</option>)}
         </select>
+        {teamOptions.length > 0 && (
+          <select
+            value={filters.team}
+            onChange={e => setFilters(f => ({ ...f, team: e.target.value }))}
+            className="select"
+          >
+            <option value="">All Teams</option>
+            {teamOptions.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+        )}
 
         <div className="ml-auto flex gap-1">
           <button
@@ -120,6 +144,7 @@ export default function PatternList() {
                 <th className="pb-2 font-medium">Type</th>
                 <th className="pb-2 font-medium">Category</th>
                 <th className="pb-2 font-medium">Status</th>
+                <th className="pb-2 font-medium">Team</th>
                 <th className="pb-2 font-medium">Version</th>
               </tr>
             </thead>
@@ -159,6 +184,7 @@ export default function PatternList() {
                       <option value="DEPRECATED" className="bg-gray-900 text-red-400">DEPRECATED</option>
                     </select>
                   </td>
+                  <td className="py-2.5 text-gray-400 text-xs">{p.team_name || <span className="text-gray-600">—</span>}</td>
                   <td className="py-2.5 text-gray-500 font-mono text-xs">{p.version}</td>
                 </tr>
               ))}

@@ -47,6 +47,12 @@ export default function PatternCard({ pattern }) {
         </span>
         <span>&middot;</span>
         <span>v{pattern.version}</span>
+        {pattern.team_name && (
+          <>
+            <span>&middot;</span>
+            <span className="text-purple-400">{pattern.team_name}</span>
+          </>
+        )}
       </div>
     </Link>
   )

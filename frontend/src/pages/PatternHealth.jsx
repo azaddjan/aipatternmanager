@@ -3,7 +3,10 @@ import {
   fetchPatternHealth, analyzePatternHealth, fetchProviders,
   fetchLatestHealthAnalysis, fetchHealthAnalyses, deleteHealthAnalysis,
   healthAnalysisExportHtmlUrl, healthAnalysisExportDocxUrl,
+  authenticatedDownload,
+  fetchTeams,
 } from '../api/client'
+import { useAuth } from '../contexts/AuthContext'
 
 const HEALTH_SECTIONS = [
   { key: 'overview', label: 'Overview' },
@@ -39,9 +42,18 @@ const TYPE_BADGE = {
 }
 
 export default function PatternHealth() {
+  const { user, isAdmin } = useAuth()
   const [healthData, setHealthData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [section, setSection] = useState('overview')
+
+  // Team scope state
+  const [teams, setTeams] = useState([])
+  // Default: team_member/viewer → own team, admin → 'all'
+  const [selectedTeam, setSelectedTeam] = useState(() => {
+    if (user?.role === 'admin') return 'all'
+    return user?.team_id || 'all'
+  })
 
   // AI analysis state
   const [aiAnalysis, setAiAnalysis] = useState(null)
@@ -60,15 +72,23 @@ export default function PatternHealth() {
   const [incompletePage, setIncompletePage] = useState(0)
   const INCOMPLETE_PAGE_SIZE = 10
 
+  // Resolve team_id to pass to API (null = all, string = specific team)
+  const effectiveTeamId = selectedTeam === 'all' ? 'all' : selectedTeam || null
+
   const loadHealthData = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await fetchPatternHealth()
+      const data = await fetchPatternHealth(effectiveTeamId)
       setHealthData(data)
     } catch (err) {
       setError(`Failed to load health data: ${err.message}`)
     }
     setLoading(false)
+  }, [effectiveTeamId])
+
+  // Load teams list on mount
+  useEffect(() => {
+    fetchTeams().then(t => setTeams(Array.isArray(t) ? t : (t?.teams || []))).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -97,7 +117,7 @@ export default function PatternHealth() {
     setAnalyzingHealth(true)
     setError('')
     try {
-      const res = await analyzePatternHealth(provider || null, model || null)
+      const res = await analyzePatternHealth(provider || null, model || null, effectiveTeamId)
       if (res?.analysis) {
         setAiAnalysis(res.analysis)
         setSavedAnalysisId(res.saved_analysis_id || null)
@@ -173,9 +193,30 @@ export default function PatternHealth() {
           </h1>
           <p className="text-gray-500 text-sm mt-1">
             Quality, completeness, and coverage of your pattern library
+            {selectedTeam !== 'all' && (
+              <span className="ml-2 text-xs bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded border border-blue-500/30">
+                {teams.find(t => t.id === selectedTeam)?.name || 'Team'} scope
+              </span>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-3">
+          {/* Team Scope Selector */}
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-gray-500">Scope:</label>
+            <select
+              value={selectedTeam}
+              onChange={e => setSelectedTeam(e.target.value)}
+              className="input text-xs py-1.5 px-2 min-w-[160px]"
+            >
+              <option value="all">🌐 All Patterns</option>
+              {teams.map(t => (
+                <option key={t.id} value={t.id}>
+                  {t.id === user?.team_id ? `⭐ ${t.name} (My Team)` : `🏢 ${t.name}`}
+                </option>
+              ))}
+            </select>
+          </div>
           <button onClick={loadHealthData} className="text-xs text-gray-400 hover:text-white transition-colors">
             Refresh
           </button>
@@ -852,19 +893,18 @@ export default function PatternHealth() {
                 )}
               </div>
               <div className="flex items-center gap-3">
-                <a
-                  href={healthAnalysisExportHtmlUrl(savedAnalysisId)}
+                <button
+                  onClick={() => authenticatedDownload(healthAnalysisExportHtmlUrl(savedAnalysisId), `health-analysis-${savedAnalysisId}.html`)}
                   className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
-                  target="_blank" rel="noopener noreferrer"
                 >
                   HTML
-                </a>
-                <a
-                  href={healthAnalysisExportDocxUrl(savedAnalysisId)}
+                </button>
+                <button
+                  onClick={() => authenticatedDownload(healthAnalysisExportDocxUrl(savedAnalysisId), `health-analysis-${savedAnalysisId}.docx`)}
                   className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
                 >
                   DOCX
-                </a>
+                </button>
               </div>
             </div>
           )}
@@ -1187,19 +1227,18 @@ export default function PatternHealth() {
                           >
                             Load
                           </button>
-                          <a
-                            href={healthAnalysisExportHtmlUrl(a.id)}
+                          <button
+                            onClick={() => authenticatedDownload(healthAnalysisExportHtmlUrl(a.id), `health-analysis-${a.id}.html`)}
                             className="text-xs px-2 py-1 rounded bg-gray-800 text-gray-400 hover:text-gray-300 hover:bg-gray-700 transition-colors"
-                            target="_blank" rel="noopener noreferrer"
                           >
                             HTML
-                          </a>
-                          <a
-                            href={healthAnalysisExportDocxUrl(a.id)}
+                          </button>
+                          <button
+                            onClick={() => authenticatedDownload(healthAnalysisExportDocxUrl(a.id), `health-analysis-${a.id}.docx`)}
                             className="text-xs px-2 py-1 rounded bg-gray-800 text-gray-400 hover:text-gray-300 hover:bg-gray-700 transition-colors"
                           >
                             DOCX
-                          </a>
+                          </button>
                           <button
                             onClick={() => handleDeleteAnalysis(a.id)}
                             className="text-xs px-2 py-1 rounded text-red-500/50 hover:text-red-400 hover:bg-red-500/10 transition-colors"

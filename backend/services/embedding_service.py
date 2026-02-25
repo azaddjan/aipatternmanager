@@ -222,26 +222,83 @@ class EmbeddingService:
 
     @staticmethod
     def _build_pattern_text(p: dict) -> str:
-        """Build embedding text from a pattern's fields."""
+        """Build embedding text from a pattern's fields.
+
+        Includes all semantically meaningful fields so vector search can find
+        patterns by quality attributes, interfaces, vendor, deployment model, etc.
+        """
         parts = [p.get("name", "")]
         ptype = p.get("type", "")
+
+        # Description is common across all types
+        if p.get("description"):
+            parts.append(p["description"][:300])
 
         if ptype == "AB":
             for field in ["intent", "problem", "solution"]:
                 if p.get(field):
                     parts.append(p[field][:500])
+            if p.get("structural_elements"):
+                parts.append(f"Structure: {p['structural_elements'][:200]}")
+            if p.get("invariants"):
+                parts.append(f"Invariants: {p['invariants'][:200]}")
+
         elif ptype == "ABB":
             if p.get("functionality"):
                 parts.append(p["functionality"][:500])
             caps = p.get("business_capabilities")
             if caps:
                 parts.append(f"Business capabilities: {', '.join(caps)}")
+            if p.get("quality_attributes"):
+                parts.append(f"Quality attributes: {p['quality_attributes'][:200]}")
+            if p.get("compliance_requirements"):
+                parts.append(f"Compliance: {p['compliance_requirements'][:200]}")
+            if p.get("inbound_interfaces"):
+                parts.append(f"Inbound interfaces: {p['inbound_interfaces'][:200]}")
+            if p.get("outbound_interfaces"):
+                parts.append(f"Outbound interfaces: {p['outbound_interfaces'][:200]}")
+
         elif ptype == "SBB":
             if p.get("specific_functionality"):
                 parts.append(p["specific_functionality"][:500])
+            caps = p.get("business_capabilities")
+            if caps:
+                parts.append(f"Business capabilities: {', '.join(caps)}")
+            if p.get("vendor"):
+                parts.append(f"Vendor: {p['vendor']}")
+            if p.get("deployment_model"):
+                parts.append(f"Deployment: {p['deployment_model']}")
+            if p.get("cost_tier"):
+                parts.append(f"Cost: {p['cost_tier']}")
+            if p.get("licensing"):
+                parts.append(f"Licensing: {p['licensing']}")
+            if p.get("maturity"):
+                parts.append(f"Maturity: {p['maturity']}")
+            if p.get("inbound_interfaces"):
+                parts.append(f"Inbound interfaces: {p['inbound_interfaces'][:200]}")
+            if p.get("outbound_interfaces"):
+                parts.append(f"Outbound interfaces: {p['outbound_interfaces'][:200]}")
+            # sbb_mapping is a list of {key, value} dicts
+            mapping = p.get("sbb_mapping")
+            if mapping:
+                if isinstance(mapping, str):
+                    try:
+                        import json as _json
+                        mapping = _json.loads(mapping)
+                    except Exception:
+                        mapping = []
+                if isinstance(mapping, list):
+                    map_parts = [f"{m.get('key', '')}: {m.get('value', '')}" for m in mapping if isinstance(m, dict)]
+                    if map_parts:
+                        parts.append(f"Stack: {', '.join(map_parts)}")
 
+        # Common fields for all types
         if p.get("restrictions"):
             parts.append(f"Restrictions: {p['restrictions'][:200]}")
+
+        tags = p.get("tags")
+        if tags and isinstance(tags, list):
+            parts.append(f"Tags: {', '.join(tags)}")
 
         return ". ".join(filter(None, parts))
 
@@ -276,11 +333,24 @@ class EmbeddingService:
                 result = session.run("""
                     MATCH (p:Pattern {id: $id})
                     RETURN p.id as id, p.name as name, p.type as type,
+                           p.description as description, p.tags as tags,
                            p.intent as intent, p.problem as problem, p.solution as solution,
+                           p.structural_elements as structural_elements,
+                           p.invariants as invariants,
                            p.functionality as functionality,
                            p.specific_functionality as specific_functionality,
                            p.business_capabilities as business_capabilities,
-                           p.restrictions as restrictions
+                           p.restrictions as restrictions,
+                           p.quality_attributes as quality_attributes,
+                           p.compliance_requirements as compliance_requirements,
+                           p.inbound_interfaces as inbound_interfaces,
+                           p.outbound_interfaces as outbound_interfaces,
+                           p.vendor as vendor,
+                           p.deployment_model as deployment_model,
+                           p.cost_tier as cost_tier,
+                           p.licensing as licensing,
+                           p.maturity as maturity,
+                           p.sbb_mapping as sbb_mapping
                 """, id=pattern_id)
                 record = result.single()
             if not record:
@@ -360,11 +430,24 @@ class EmbeddingService:
                 result = session.run("""
                     MATCH (p:Pattern) WHERE p.embedding IS NULL
                     RETURN p.id as id, p.name as name, p.type as type,
+                           p.description as description, p.tags as tags,
                            p.intent as intent, p.problem as problem, p.solution as solution,
+                           p.structural_elements as structural_elements,
+                           p.invariants as invariants,
                            p.functionality as functionality,
                            p.specific_functionality as specific_functionality,
                            p.business_capabilities as business_capabilities,
-                           p.restrictions as restrictions
+                           p.restrictions as restrictions,
+                           p.quality_attributes as quality_attributes,
+                           p.compliance_requirements as compliance_requirements,
+                           p.inbound_interfaces as inbound_interfaces,
+                           p.outbound_interfaces as outbound_interfaces,
+                           p.vendor as vendor,
+                           p.deployment_model as deployment_model,
+                           p.cost_tier as cost_tier,
+                           p.licensing as licensing,
+                           p.maturity as maturity,
+                           p.sbb_mapping as sbb_mapping
                     ORDER BY p.id
                 """)
                 missing_patterns = [dict(r) for r in result]
@@ -444,11 +527,24 @@ class EmbeddingService:
             patterns = session.run("""
                 MATCH (p:Pattern)
                 RETURN p.id as id, p.name as name, p.type as type,
+                       p.description as description, p.tags as tags,
                        p.intent as intent, p.problem as problem, p.solution as solution,
+                       p.structural_elements as structural_elements,
+                       p.invariants as invariants,
                        p.functionality as functionality,
                        p.specific_functionality as specific_functionality,
                        p.business_capabilities as business_capabilities,
-                       p.restrictions as restrictions
+                       p.restrictions as restrictions,
+                       p.quality_attributes as quality_attributes,
+                       p.compliance_requirements as compliance_requirements,
+                       p.inbound_interfaces as inbound_interfaces,
+                       p.outbound_interfaces as outbound_interfaces,
+                       p.vendor as vendor,
+                       p.deployment_model as deployment_model,
+                       p.cost_tier as cost_tier,
+                       p.licensing as licensing,
+                       p.maturity as maturity,
+                       p.sbb_mapping as sbb_mapping
                 ORDER BY p.id
             """)
             pattern_list = [dict(r) for r in patterns]

@@ -46,6 +46,12 @@ class Neo4jService:
             "CREATE CONSTRAINT pbc_id IF NOT EXISTS FOR (p:PBC) REQUIRE p.id IS UNIQUE",
             "CREATE CONSTRAINT advisor_report_id IF NOT EXISTS FOR (r:AdvisorReport) REQUIRE r.id IS UNIQUE",
             "CREATE CONSTRAINT health_analysis_id IF NOT EXISTS FOR (h:HealthAnalysis) REQUIRE h.id IS UNIQUE",
+            # Auth & config
+            "CREATE CONSTRAINT user_id IF NOT EXISTS FOR (u:User) REQUIRE u.id IS UNIQUE",
+            "CREATE CONSTRAINT user_email IF NOT EXISTS FOR (u:User) REQUIRE u.email IS UNIQUE",
+            "CREATE CONSTRAINT team_id IF NOT EXISTS FOR (t:Team) REQUIRE t.id IS UNIQUE",
+            "CREATE CONSTRAINT team_name IF NOT EXISTS FOR (t:Team) REQUIRE t.name IS UNIQUE",
+            "CREATE CONSTRAINT system_config_key IF NOT EXISTS FOR (c:SystemConfig) REQUIRE c.key IS UNIQUE",
         ]
         with self.session() as session:
             for q in queries:
@@ -58,6 +64,9 @@ class Neo4jService:
             "CREATE INDEX pattern_status IF NOT EXISTS FOR (p:Pattern) ON (p.status)",
             "CREATE INDEX technology_vendor IF NOT EXISTS FOR (t:Technology) ON (t.vendor)",
             "CREATE INDEX technology_status IF NOT EXISTS FOR (t:Technology) ON (t.status)",
+            # Auth indexes
+            "CREATE INDEX user_role IF NOT EXISTS FOR (u:User) ON (u.role)",
+            "CREATE INDEX user_active IF NOT EXISTS FOR (u:User) ON (u.is_active)",
         ]
         with self.session() as session:
             for q in queries:
@@ -164,6 +173,7 @@ class Neo4jService:
         status_filter: Optional[str] = None,
         skip: int = 0,
         limit: int = 100,
+        team_ids: list[str] = None,
     ) -> tuple[list[dict], int]:
         where_clauses = []
         params: dict = {"skip": skip, "limit": limit}
@@ -177,16 +187,27 @@ class Neo4jService:
         if status_filter:
             where_clauses.append("p.status = $status_filter")
             params["status_filter"] = status_filter
+        if team_ids:
+            where_clauses.append("EXISTS { (p)-[:OWNED_BY]->(t:Team) WHERE t.id IN $team_ids }")
+            params["team_ids"] = team_ids
 
         where = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
         count_query = f"MATCH (p:Pattern) {where} RETURN count(p) as total"
-        data_query = f"MATCH (p:Pattern) {where} RETURN p ORDER BY p.id SKIP $skip LIMIT $limit"
+        data_query = f"""MATCH (p:Pattern) {where}
+            OPTIONAL MATCH (p)-[:OWNED_BY]->(team:Team)
+            RETURN p, team.id AS team_id, team.name AS team_name
+            ORDER BY p.id SKIP $skip LIMIT $limit"""
 
         with self.session() as session:
             total = session.run(count_query, **params).single()["total"]
             records = session.run(data_query, **params)
-            patterns = [self._deserialize_pattern(dict(r["p"])) for r in records]
+            patterns = []
+            for r in records:
+                pat = self._deserialize_pattern(dict(r["p"]))
+                pat["team_id"] = r["team_id"]
+                pat["team_name"] = r["team_name"]
+                patterns.append(pat)
         return patterns, total
 
     def create_pattern(self, data: dict) -> dict:
@@ -270,10 +291,12 @@ class Neo4jService:
 
         rels_query = """
         MATCH (p:Pattern {id: $id})-[r]->(target)
+        WHERE NOT type(r) = 'OWNED_BY'
         RETURN type(r) as rel_type, target.id as target_id, target.name as target_name,
                labels(target)[0] as target_label, properties(r) as props
         UNION
         MATCH (source)-[r]->(p:Pattern {id: $id})
+        WHERE NOT type(r) = 'OWNED_BY'
         RETURN type(r) as rel_type, source.id as target_id, source.name as target_name,
                labels(source)[0] as target_label, properties(r) as props
         """
@@ -290,6 +313,17 @@ class Neo4jService:
                 })
 
         pattern["relationships"] = relationships
+
+        # Add team ownership info
+        team_query = """
+        MATCH (p:Pattern {id: $id})-[:OWNED_BY]->(t:Team)
+        RETURN t.id AS team_id, t.name AS team_name
+        """
+        with self.session() as session:
+            team_rec = session.run(team_query, id=pattern_id).single()
+            pattern["team_id"] = team_rec["team_id"] if team_rec else None
+            pattern["team_name"] = team_rec["team_name"] if team_rec else None
+
         return pattern
 
     def add_relationship(self, source_id: str, target_id: str, rel_type: str, props: dict = None) -> bool:
@@ -461,21 +495,56 @@ class Neo4jService:
 
     # --- Graph Queries ---
 
-    def get_full_graph(self) -> dict:
-        query = """
-        MATCH (n)
-        WHERE n:Pattern OR n:Technology OR n:PBC
-        OPTIONAL MATCH (n)-[r]->()
-        WITH collect(DISTINCT n) AS nodes, collect(DISTINCT r) AS rels
-        RETURN
-            [n IN nodes | {id: n.id, name: n.name, type: coalesce(n.type, ''),
-                           category: coalesce(n.category, ''), status: coalesce(n.status, ''),
-                           node_type: labels(n)[0]}] AS nodes,
-            [r IN rels WHERE r IS NOT NULL | {source: startNode(r).id, target: endNode(r).id,
-                          type: type(r)}] AS edges
+    def get_full_graph(self, team_id: str = None) -> dict:
+        """Complete pattern graph for visualization.
+
+        Args:
+            team_id: If provided, scope to patterns owned by this team
+                     (plus their connected Technologies and PBCs).
+                     If None, return the full graph.
         """
+        if team_id:
+            # Team-scoped: start from team's patterns, include connected Tech/PBC nodes
+            query = """
+            MATCH (p:Pattern)-[:OWNED_BY]->(:Team {id: $team_id})
+            WITH collect(p) AS team_patterns
+            UNWIND team_patterns AS tp
+            OPTIONAL MATCH (tp)-[r]->(target)
+            WHERE target:Pattern OR target:Technology OR target:PBC
+            OPTIONAL MATCH (source)-[r2]->(tp)
+            WHERE source:Pattern OR source:Technology OR source:PBC
+            WITH team_patterns,
+                 collect(DISTINCT target) + collect(DISTINCT source) AS connected,
+                 collect(DISTINCT r) + collect(DISTINCT r2) AS all_rels
+            WITH team_patterns + [n IN connected WHERE n IS NOT NULL] AS all_nodes, all_rels
+            UNWIND all_nodes AS n
+            WITH collect(DISTINCT n) AS nodes, all_rels
+            UNWIND all_rels AS r
+            WITH nodes, collect(DISTINCT r) AS rels
+            RETURN
+                [n IN nodes | {id: n.id, name: n.name, type: coalesce(n.type, ''),
+                               category: coalesce(n.category, ''), status: coalesce(n.status, ''),
+                               node_type: labels(n)[0]}] AS nodes,
+                [r IN rels WHERE r IS NOT NULL | {source: startNode(r).id, target: endNode(r).id,
+                              type: type(r)}] AS edges
+            """
+            params = {"team_id": team_id}
+        else:
+            query = """
+            MATCH (n)
+            WHERE n:Pattern OR n:Technology OR n:PBC
+            OPTIONAL MATCH (n)-[r]->()
+            WITH collect(DISTINCT n) AS nodes, collect(DISTINCT r) AS rels
+            RETURN
+                [n IN nodes | {id: n.id, name: n.name, type: coalesce(n.type, ''),
+                               category: coalesce(n.category, ''), status: coalesce(n.status, ''),
+                               node_type: labels(n)[0]}] AS nodes,
+                [r IN rels WHERE r IS NOT NULL | {source: startNode(r).id, target: endNode(r).id,
+                              type: type(r)}] AS edges
+            """
+            params = {}
         with self.session() as session:
-            record = session.run(query).single()
+            record = session.run(query, **params).single()
             return {"nodes": record["nodes"], "edges": record["edges"]}
 
     def get_impact_analysis(self, pattern_id: str) -> list[dict]:
@@ -1120,9 +1189,23 @@ class Neo4jService:
 
     # --- Pattern Health Analysis ---
 
-    def get_pattern_health(self) -> dict:
-        """Comprehensive pattern library health analysis via Cypher queries."""
+    def get_pattern_health(self, team_id: str = None) -> dict:
+        """Comprehensive pattern library health analysis via Cypher queries.
+
+        Args:
+            team_id: If provided, scope analysis to patterns owned by this team.
+                     If None, analyse all patterns (admin / global view).
+        """
         health: dict = {}
+        # Build reusable team filter fragments for Cypher
+        if team_id:
+            _team_match = "MATCH (p)-[:OWNED_BY]->(team:Team {id: $team_id})"
+            _team_where = "AND EXISTS { (p)-[:OWNED_BY]->(:Team {id: $team_id}) }"
+            _team_params = {"team_id": team_id}
+        else:
+            _team_match = ""
+            _team_where = ""
+            _team_params = {}
 
         # Per-type field definitions (actual Neo4j property names)
         TYPE_FIELDS = {
@@ -1167,8 +1250,10 @@ class Neo4jService:
 
         with self.session() as session:
             # ── 1. Overall Counts ──
-            r = session.run("""
-                MATCH (p:Pattern)
+            counts_q = "MATCH (p:Pattern)\n"
+            if team_id:
+                counts_q += "MATCH (p)-[:OWNED_BY]->(:Team {id: $team_id})\n"
+            counts_q += """
                 WITH count(p) as total,
                      count(CASE WHEN p.status = 'ACTIVE' THEN 1 END) as active,
                      count(CASE WHEN p.status = 'DRAFT' THEN 1 END) as draft,
@@ -1177,7 +1262,8 @@ class Neo4jService:
                      count(CASE WHEN p.type = 'ABB' THEN 1 END) as abb,
                      count(CASE WHEN p.type = 'SBB' THEN 1 END) as sbb
                 RETURN total, active, draft, deprecated, ab, abb, sbb
-            """).single()
+            """
+            r = session.run(counts_q, **_team_params).single()
             health["counts"] = {
                 "total": r["total"], "active": r["active"], "draft": r["draft"],
                 "deprecated": r["deprecated"], "ab": r["ab"], "abb": r["abb"], "sbb": r["sbb"],
@@ -1189,13 +1275,15 @@ class Neo4jService:
             if r["draft"]: status_dist["Draft"] = r["draft"]
             if r["deprecated"]: status_dist["Deprecated"] = r["deprecated"]
 
-            cat_query = """
-            MATCH (p:Pattern)
+            cat_query = "MATCH (p:Pattern)\n"
+            if team_id:
+                cat_query += "MATCH (p)-[:OWNED_BY]->(:Team {id: $team_id})\n"
+            cat_query += """
             WITH p.category as category, count(p) as count
             RETURN category, count
             ORDER BY count DESC
             """
-            records = session.run(cat_query)
+            records = session.run(cat_query, **_team_params)
             category_dist = {}
             for rec in records:
                 category_dist[rec["category"] or "Uncategorized"] = rec["count"]
@@ -1207,12 +1295,14 @@ class Neo4jService:
 
             # ── 3. Field Completeness (per-type, using actual field names) ──
             # Fetch all patterns with their properties for completeness analysis
-            completeness_query = """
-            MATCH (p:Pattern)
+            completeness_query = "MATCH (p:Pattern)\n"
+            if team_id:
+                completeness_query += "MATCH (p)-[:OWNED_BY]->(:Team {id: $team_id})\n"
+            completeness_query += """
             RETURN p as node
             ORDER BY p.id
             """
-            records = list(session.run(completeness_query))
+            records = list(session.run(completeness_query, **_team_params))
 
             all_patterns = []
             total_completeness = 0.0
@@ -1297,38 +1387,62 @@ class Neo4jService:
             # ── 4. Orphan Patterns (no relationships at all) ──
             # AB patterns are excluded: they are independent enterprise-level
             # blueprints/topologies and don't require graph relationships.
-            orphan_query = """
-            MATCH (p:Pattern)
-            WHERE NOT (p)-[]-() AND p.type <> 'AB'
-            RETURN p.id as id, p.name as name, p.type as type,
-                   p.status as status, p.category as category
-            ORDER BY p.id
-            """
-            records = session.run(orphan_query)
+            if team_id:
+                # For team scope, orphan = no non-OWNED_BY rels (OWNED_BY is the team link)
+                orphan_query = """
+                MATCH (p:Pattern)-[:OWNED_BY]->(:Team {id: $team_id})
+                WHERE p.type <> 'AB'
+                  AND NOT EXISTS {
+                    MATCH (p)-[r]-() WHERE NOT type(r) = 'OWNED_BY'
+                  }
+                RETURN p.id as id, p.name as name, p.type as type,
+                       p.status as status, p.category as category
+                ORDER BY p.id
+                """
+            else:
+                orphan_query = """
+                MATCH (p:Pattern)
+                WHERE NOT (p)-[]-() AND p.type <> 'AB'
+                RETURN p.id as id, p.name as name, p.type as type,
+                       p.status as status, p.category as category
+                ORDER BY p.id
+                """
+            records = session.run(orphan_query, **_team_params)
             orphan_patterns = [dict(r) for r in records]
 
             # ── 5. Relationship Analysis ──
-            rel_query = """
-            MATCH (p:Pattern)
+            rel_query = "MATCH (p:Pattern)\n"
+            if team_id:
+                rel_query += "MATCH (p)-[:OWNED_BY]->(:Team {id: $team_id})\n"
+            rel_query += """
             OPTIONAL MATCH (p)-[r]-()
             WITH p.id as id, p.name as name, p.type as type, count(r) as rel_count
             RETURN id, name, type, rel_count
             ORDER BY rel_count DESC
             """
-            records = session.run(rel_query)
+            records = session.run(rel_query, **_team_params)
             rel_data = [dict(r) for r in records]
             rel_counts = [d["rel_count"] for d in rel_data]
             # AB patterns are independent; exclude from unconnected count
             unconnected = len([d for d in rel_data if d["rel_count"] == 0 and d["type"] != "AB"])
 
             # ── 6. Relationship Type Distribution ──
-            rel_type_query = """
-            MATCH ()-[r]->()
-            WHERE NOT type(r) IN ['RECOMMENDS']
-            RETURN type(r) as rel_type, count(r) as count
-            ORDER BY count DESC
-            """
-            records = session.run(rel_type_query)
+            if team_id:
+                rel_type_query = """
+                MATCH (p:Pattern)-[r]->()
+                WHERE NOT type(r) IN ['RECOMMENDS']
+                  AND EXISTS { (p)-[:OWNED_BY]->(:Team {id: $team_id}) }
+                RETURN type(r) as rel_type, count(r) as count
+                ORDER BY count DESC
+                """
+            else:
+                rel_type_query = """
+                MATCH ()-[r]->()
+                WHERE NOT type(r) IN ['RECOMMENDS']
+                RETURN type(r) as rel_type, count(r) as count
+                ORDER BY count DESC
+                """
+            records = session.run(rel_type_query, **_team_params)
             rel_type_obj = {}
             total_directed_rels = 0
             for rec in records:
@@ -1348,24 +1462,28 @@ class Neo4jService:
             }
 
             # ── 7. Cross-references (deprecated patterns still used) ──
-            deprecated_refs_query = """
-            MATCH (a:Pattern)-[r]->(b:Pattern)
-            WHERE b.status = 'DEPRECATED' AND a.status = 'ACTIVE'
+            deprecated_refs_query = "MATCH (a:Pattern)-[r]->(b:Pattern)\n"
+            deprecated_refs_query += "WHERE b.status = 'DEPRECATED' AND a.status = 'ACTIVE'\n"
+            if team_id:
+                deprecated_refs_query += "AND EXISTS { (a)-[:OWNED_BY]->(:Team {id: $team_id}) }\n"
+            deprecated_refs_query += """
             RETURN b.id as id, b.name as name, count(DISTINCT a) as referenced_by
             ORDER BY referenced_by DESC
             """
-            records = session.run(deprecated_refs_query)
+            records = session.run(deprecated_refs_query, **_team_params)
             deprecated_referenced = [dict(r) for r in records]
 
             # ── 8. Duplicate Pattern Names ──
-            dup_query = """
-            MATCH (p:Pattern)
+            dup_query = "MATCH (p:Pattern)\n"
+            if team_id:
+                dup_query += "MATCH (p)-[:OWNED_BY]->(:Team {id: $team_id})\n"
+            dup_query += """
             WITH p.name as name, count(p) as cnt
             WHERE cnt > 1
             RETURN name, cnt as count
             ORDER BY cnt DESC
             """
-            records = session.run(dup_query)
+            records = session.run(dup_query, **_team_params)
             duplicate_names = [dict(r) for r in records]
 
             health["problems"] = {
@@ -1375,8 +1493,10 @@ class Neo4jService:
             }
 
             # ── 9. ABB → SBB Implementation Coverage ──
-            abb_sbb_query = """
-            MATCH (abb:Pattern {type: 'ABB'})
+            abb_sbb_query = "MATCH (abb:Pattern {type: 'ABB'})\n"
+            if team_id:
+                abb_sbb_query += "MATCH (abb)-[:OWNED_BY]->(:Team {id: $team_id})\n"
+            abb_sbb_query += """
             OPTIONAL MATCH (sbb:Pattern {type: 'SBB'})-[:IMPLEMENTS]->(abb)
             WITH abb.id as abb_id, abb.name as abb_name, abb.category as category,
                  collect(CASE WHEN sbb IS NOT NULL THEN {id: sbb.id, name: sbb.name} END) as sbbs
@@ -1384,7 +1504,7 @@ class Neo4jService:
                    [s IN sbbs WHERE s IS NOT NULL] as implementing_sbbs
             ORDER BY abb_id
             """
-            records = session.run(abb_sbb_query)
+            records = session.run(abb_sbb_query, **_team_params)
             abb_coverage = []
             abbs_with_sbbs = 0
             abbs_without_sbbs = 0
@@ -1468,10 +1588,16 @@ class Neo4jService:
                 "problems": round(problem_score, 1),
             }
 
+            # Include scope metadata
+            health["scope"] = {"team_id": team_id} if team_id else {"team_id": None}
+
         return health
 
-    def get_pattern_library_summary(self) -> str:
+    def get_pattern_library_summary(self, team_id: str = None) -> str:
         """Get a rich text summary of the pattern library for LLM analysis.
+
+        Args:
+            team_id: If provided, scope summary to patterns owned by this team.
 
         Sends type-specific content so the LLM can perform semantic analysis:
         - AB: intent, problem, solution, structural_elements, invariants, contracts
@@ -1480,6 +1606,7 @@ class Neo4jService:
         Plus relationships, PBCs, technologies, and health metrics.
         """
         lines: list[str] = []
+        _params = {"team_id": team_id} if team_id else {}
 
         def _trunc(val, limit=300) -> str:
             if not val:
@@ -1489,13 +1616,16 @@ class Neo4jService:
 
         with self.session() as session:
             # ── Patterns with full properties ──
-            records = list(session.run("""
-                MATCH (p:Pattern)
+            pat_q = "MATCH (p:Pattern)\n"
+            if team_id:
+                pat_q += "MATCH (p)-[:OWNED_BY]->(:Team {id: $team_id})\n"
+            pat_q += """
                 OPTIONAL MATCH (p)-[r]->(t)
                 WITH p, collect(DISTINCT {type: type(r), target: t.id, target_name: t.name}) as rels
                 RETURN p as node, rels
                 ORDER BY p.type, p.category, p.id
-            """))
+            """
+            records = list(session.run(pat_q, **_params))
 
             current_type = None
             for rec in records:
@@ -1639,7 +1769,7 @@ class Neo4jService:
 
             # ── Health Metrics Summary ──
             try:
-                health = self.get_pattern_health()
+                health = self.get_pattern_health(team_id=team_id)
                 lines.append("\n## Current Health Metrics")
                 lines.append(f"Health Score: {health.get('health_score', 'N/A')}/100")
                 sb = health.get("score_breakdown", {})

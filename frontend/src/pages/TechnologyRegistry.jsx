@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { fetchTechnologies, createTechnology, deleteTechnology } from '../api/client'
+import { fetchTechnologies, createTechnology, deleteTechnology, aiTechnologySuggest } from '../api/client'
 
 const VENDORS = ['', 'AWS', 'Microsoft', 'Open Source', 'Hugging Face', 'LangChain', 'Salesforce', 'Redis']
 
@@ -38,6 +38,27 @@ export default function TechnologyRegistry() {
   const [form, setForm] = useState({
     id: '', name: '', vendor: '', category: 'framework', status: 'APPROVED', description: '', cost_tier: '',
   })
+  const [suggesting, setSuggesting] = useState(false)
+
+  const handleAISuggest = async () => {
+    if (!form.name.trim()) return
+    setSuggesting(true)
+    try {
+      const result = await aiTechnologySuggest({ name: form.name.trim() })
+      const s = result.suggestion || {}
+      setForm(f => ({
+        ...f,
+        id: s.id || f.id,
+        vendor: s.vendor || f.vendor,
+        category: s.category || f.category,
+        description: s.description || f.description,
+        cost_tier: s.cost_tier || f.cost_tier,
+      }))
+    } catch (err) {
+      alert(`AI suggest failed: ${err.message}`)
+    }
+    setSuggesting(false)
+  }
 
   const load = () => {
     setLoading(true)
@@ -137,15 +158,32 @@ export default function TechnologyRegistry() {
       {/* Add Form */}
       {showForm && (
         <div className="card space-y-4">
-          <h2 className="font-semibold text-sm text-gray-400">New Technology</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold text-sm text-gray-400">New Technology</h2>
+            <button
+              onClick={handleAISuggest}
+              disabled={suggesting || !form.name.trim()}
+              className="px-3 py-1.5 text-xs rounded-lg bg-purple-600/20 text-purple-400 border border-purple-500/30 hover:bg-purple-600/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5"
+              title="Type a name first, then click to auto-populate fields with AI"
+            >
+              {suggesting ? (
+                <span className="flex items-center gap-1.5">
+                  <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z"/></svg>
+                  Thinking...
+                </span>
+              ) : (
+                <span>Populate with AI</span>
+              )}
+            </button>
+          </div>
           <div className="grid grid-cols-3 gap-4">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Name</label>
+              <input placeholder="e.g. AWS Bedrock" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} className="input w-full" />
+            </div>
             <div>
               <label className="block text-xs text-gray-500 mb-1">ID</label>
               <input placeholder="e.g. aws-bedrock" value={form.id} onChange={e => setForm(f => ({ ...f, id: e.target.value }))} className="input w-full" />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Name</label>
-              <input placeholder="Display name" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} className="input w-full" />
             </div>
             <div>
               <label className="block text-xs text-gray-500 mb-1">Vendor</label>
@@ -165,6 +203,16 @@ export default function TechnologyRegistry() {
               </select>
             </div>
             <div>
+              <label className="block text-xs text-gray-500 mb-1">Cost Tier</label>
+              <select value={form.cost_tier} onChange={e => setForm(f => ({ ...f, cost_tier: e.target.value }))} className="select w-full">
+                <option value="">--</option>
+                <option value="FREE">FREE</option>
+                <option value="LOW">LOW</option>
+                <option value="MEDIUM">MEDIUM</option>
+                <option value="HIGH">HIGH</option>
+              </select>
+            </div>
+            <div className="col-span-3">
               <label className="block text-xs text-gray-500 mb-1">Description</label>
               <input placeholder="Short description" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} className="input w-full" />
             </div>

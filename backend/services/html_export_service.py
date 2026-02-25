@@ -65,16 +65,17 @@ class HtmlExportService:
         self._pbc_ids: set[str] = set()
         self._name_map: dict[str, str] = {}
 
-    def generate_html(self) -> str:
-        data = self._fetch_all_data()
+    def generate_html(self, team_ids=None, team_names=None) -> str:
+        self._team_names = team_names or []
+        data = self._fetch_all_data(team_ids=team_ids)
         return self._build_html(data)
 
     # ------------------------------------------------------------------
     # Data fetching
     # ------------------------------------------------------------------
 
-    def _fetch_all_data(self) -> dict:
-        patterns, _ = self.db.list_patterns(limit=500)
+    def _fetch_all_data(self, team_ids=None) -> dict:
+        patterns, _ = self.db.list_patterns(limit=500, team_ids=team_ids)
         full_patterns = []
         for p in patterns:
             full = self.db.get_pattern_with_relationships(p["id"])
@@ -115,6 +116,7 @@ class HtmlExportService:
     # ------------------------------------------------------------------
 
     def _build_html(self, data: dict) -> str:
+        self._has_diagrams = False
         parts = [
             self._html_head(),
             self._sidebar(data),
@@ -128,6 +130,8 @@ class HtmlExportService:
         for pbc in data["pbcs"]:
             parts.append(self._pbc_section(pbc))
         parts.append("</main></div>")
+        if self._has_diagrams:
+            parts.append(self._mermaid_cdn_script())
         parts.append(self._javascript())
         parts.append("</body></html>")
         return "\n".join(parts)
@@ -137,13 +141,12 @@ class HtmlExportService:
     # ------------------------------------------------------------------
 
     def _html_head(self) -> str:
-        timestamp = datetime.now().strftime("%d/%m/%Y %H:%M")
         return f'''<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AI Architecture Patterns</title>
+<title>Architecture Patterns</title>
 <style>
 :root {{
     --bg: #0d1117;
@@ -211,6 +214,12 @@ body {{
     display: flex;
     justify-content: space-between;
     align-items: center;
+    margin-top: 4px;
+}}
+.nav-section.nav-section-top {{
+    margin-top: 8px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
 }}
 .nav-section::after {{
     content: '\u25BE';
@@ -218,6 +227,27 @@ body {{
     transition: transform 0.2s;
 }}
 .nav-section.collapsed::after {{
+    transform: rotate(-90deg);
+}}
+.nav-subsection {{
+    padding: 5px 20px 2px 28px;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-muted);
+    letter-spacing: 0.3px;
+    cursor: pointer;
+    user-select: none;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    opacity: 0.8;
+}}
+.nav-subsection::after {{
+    content: '\u25BE';
+    font-size: 9px;
+    transition: transform 0.2s;
+}}
+.nav-subsection.collapsed::after {{
     transform: rotate(-90deg);
 }}
 .nav-group {{
@@ -575,6 +605,56 @@ code {{
     .main {{ margin-left: 0; padding: 20px; }}
     .concept-grid, .stats-grid, .level-grid, .composable-pillars {{ grid-template-columns: 1fr; }}
 }}
+/* Mermaid diagram rendering */
+.mermaid-diagram-container {{
+    margin: 12px 0 16px;
+}}
+.mermaid-rendered {{
+    display: none;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    overflow-x: auto;
+    text-align: center;
+}}
+.mermaid-rendered svg {{
+    max-width: 100%;
+    height: auto;
+}}
+.mermaid-rendered.visible {{
+    display: block;
+}}
+.mermaid-source {{
+    background: #1a1a2e;
+    padding: 12px;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-size: 13px;
+    color: var(--text);
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 0;
+}}
+.mermaid-source.hidden {{
+    display: none;
+}}
+.mermaid-toggle {{
+    font-size: 11px;
+    color: var(--text-muted);
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 8px;
+    cursor: pointer;
+    margin-top: 6px;
+    float: right;
+}}
+.mermaid-toggle:hover {{
+    color: var(--text);
+    border-color: var(--accent);
+}}
 </style>
 </head>
 <body>
@@ -585,54 +665,108 @@ code {{
     # ------------------------------------------------------------------
 
     def _sidebar(self, data: dict) -> str:
-        timestamp = datetime.now().strftime("%d/%m/%Y %H:%M")
+        from zoneinfo import ZoneInfo
+        est_now = datetime.now(ZoneInfo("America/New_York"))
+        timestamp = est_now.strftime("%d/%m/%Y %I:%M %p EST")
         parts = [
             '<nav class="sidebar" id="sidebar">',
             '<div class="sidebar-header">',
-            '<h2>AI Architecture Patterns</h2>',
+            '<h2>Architecture Patterns</h2>',
             f'<div class="export-date">Exported {self._escape(timestamp)}</div>',
+            *([ f'<div class="export-date" style="color:#58a6ff;">Teams: {self._escape(", ".join(self._team_names))}</div>' ] if self._team_names else []),
             '</div>',
             '<a class="nav-link active" href="#" onclick="showIndex();return false;" id="nav-index">Overview</a>',
         ]
 
-        # Group patterns by category
+        # Group patterns by category and type
         cat_map = {c["code"]: c["label"] for c in data["categories"]}
         grouped = defaultdict(list)
         for p in data["patterns"]:
             grouped[p.get("category", "other")].append(p)
 
-        # Order categories: blueprint first, then alphabetical
-        cat_order = ["blueprint", "core", "intg", "agt", "kr", "xcut", "pip"]
-        seen = set()
-        ordered_cats = []
-        for c in cat_order:
-            if c in grouped:
-                ordered_cats.append(c)
-                seen.add(c)
-        for c in sorted(grouped.keys()):
-            if c not in seen:
-                ordered_cats.append(c)
+        # Category ordering (excluding blueprint which goes in its own section)
+        cat_order = ["core", "intg", "agt", "kr", "xcut", "pip"]
 
-        for cat_code in ordered_cats:
-            cat_label = cat_map.get(cat_code, BUILTIN_CATEGORIES.get(cat_code, cat_code))
-            pats = sorted(grouped[cat_code], key=lambda p: p["id"])
-            safe_cat = re.sub(r'[^a-zA-Z0-9]', '', cat_code)
-            parts.append(f'<div class="nav-section" onclick="toggleGroup(\'{safe_cat}\')">{self._escape(cat_label)}</div>')
-            parts.append(f'<div class="nav-group" id="group-{safe_cat}">')
-            for p in pats:
-                pid = self._escape(p["id"])
-                ptype = p.get("type", "").lower()
-                badge_cls = "ab" if ptype == "ab" else "abb" if ptype == "abb" else "sbb"
-                badge_text = ptype.upper()
+        def _nav_pattern_link(p):
+            pid = self._escape(p["id"])
+            ptype = p.get("type", "").lower()
+            badge_cls = "ab" if ptype == "ab" else "abb" if ptype == "abb" else "sbb"
+            badge_text = ptype.upper()
+            return (
+                f'<a class="nav-link" href="#" onclick="showPattern(\'{pid}\');return false;" id="nav-{pid}">'
+                f'{pid}'
+                f'<span class="nav-badge {badge_cls}">{badge_text}</span>'
+                f'</a>'
+            )
+
+        # ── 1. Business Capabilities (PBCs) ──
+        if data["pbcs"]:
+            parts.append('<div class="nav-section" onclick="toggleGroup(\'pbc\')">Business Capabilities</div>')
+            parts.append('<div class="nav-group" id="group-pbc">')
+            for pbc in sorted(data["pbcs"], key=lambda x: x.get("id", "")):
+                pid = self._escape(pbc["id"])
                 parts.append(
                     f'<a class="nav-link" href="#" onclick="showPattern(\'{pid}\');return false;" id="nav-{pid}">'
                     f'{pid}'
-                    f'<span class="nav-badge {badge_cls}">{badge_text}</span>'
+                    f'<span class="nav-badge pbc">PBC</span>'
                     f'</a>'
                 )
             parts.append('</div>')
 
-        # Technologies
+        # ── 2. ABBs by category ──
+        has_abbs = any(
+            any(p.get("type") == "ABB" for p in grouped.get(c, []))
+            for c in cat_order
+        )
+        if has_abbs:
+            parts.append('<div class="nav-section nav-section-top" onclick="toggleGroup(\'abbs\')">Architecture Building Blocks</div>')
+            parts.append('<div class="nav-group" id="group-abbs">')
+            for cat_code in cat_order:
+                cat_pats = grouped.get(cat_code, [])
+                abbs = sorted([p for p in cat_pats if p.get("type") == "ABB"], key=lambda p: p["id"])
+                if not abbs:
+                    continue
+                cat_label = cat_map.get(cat_code, BUILTIN_CATEGORIES.get(cat_code, cat_code))
+                safe_sub = f"abb_{re.sub(r'[^a-zA-Z0-9]', '', cat_code)}"
+                parts.append(f'<div class="nav-subsection" onclick="toggleGroup(\'{safe_sub}\')">{self._escape(cat_label)}</div>')
+                parts.append(f'<div class="nav-group" id="group-{safe_sub}">')
+                for p in abbs:
+                    parts.append(_nav_pattern_link(p))
+                parts.append('</div>')
+            parts.append('</div>')
+
+        # ── 3. SBBs by category ──
+        has_sbbs = any(
+            any(p.get("type") == "SBB" for p in grouped.get(c, []))
+            for c in cat_order
+        )
+        if has_sbbs:
+            parts.append('<div class="nav-section nav-section-top" onclick="toggleGroup(\'sbbs\')">Solution Building Blocks</div>')
+            parts.append('<div class="nav-group" id="group-sbbs">')
+            for cat_code in cat_order:
+                cat_pats = grouped.get(cat_code, [])
+                sbbs = sorted([p for p in cat_pats if p.get("type") == "SBB"], key=lambda p: p["id"])
+                if not sbbs:
+                    continue
+                cat_label = cat_map.get(cat_code, BUILTIN_CATEGORIES.get(cat_code, cat_code))
+                safe_sub = f"sbb_{re.sub(r'[^a-zA-Z0-9]', '', cat_code)}"
+                parts.append(f'<div class="nav-subsection" onclick="toggleGroup(\'{safe_sub}\')">{self._escape(cat_label)}</div>')
+                parts.append(f'<div class="nav-group" id="group-{safe_sub}">')
+                for p in sbbs:
+                    parts.append(_nav_pattern_link(p))
+                parts.append('</div>')
+            parts.append('</div>')
+
+        # ── 4. Architecture Topology (blueprint patterns) ──
+        if "blueprint" in grouped:
+            bp_pats = sorted(grouped["blueprint"], key=lambda p: p["id"])
+            parts.append('<div class="nav-section" onclick="toggleGroup(\'blueprint\')">Architecture Topology</div>')
+            parts.append('<div class="nav-group" id="group-blueprint">')
+            for p in bp_pats:
+                parts.append(_nav_pattern_link(p))
+            parts.append('</div>')
+
+        # ── 5. Technologies ──
         if data["technologies"]:
             parts.append('<div class="nav-section" onclick="toggleGroup(\'tech\')">Technologies</div>')
             parts.append('<div class="nav-group" id="group-tech">')
@@ -643,20 +777,6 @@ code {{
                     f'<a class="nav-link" href="#" onclick="showPattern(\'{safe_id}\');return false;" id="nav-{safe_id}">'
                     f'{name}'
                     f'<span class="nav-badge tech">Tech</span>'
-                    f'</a>'
-                )
-            parts.append('</div>')
-
-        # PBCs
-        if data["pbcs"]:
-            parts.append('<div class="nav-section" onclick="toggleGroup(\'pbc\')">Business Capabilities</div>')
-            parts.append('<div class="nav-group" id="group-pbc">')
-            for pbc in sorted(data["pbcs"], key=lambda x: x.get("id", "")):
-                pid = self._escape(pbc["id"])
-                parts.append(
-                    f'<a class="nav-link" href="#" onclick="showPattern(\'{pid}\');return false;" id="nav-{pid}">'
-                    f'{pid}'
-                    f'<span class="nav-badge pbc">PBC</span>'
                     f'</a>'
                 )
             parts.append('</div>')
@@ -680,7 +800,7 @@ code {{
 
         # Hero
         parts.append('<div class="hero">')
-        parts.append('<h1>AI Architecture Patterns</h1>')
+        parts.append('<h1>Architecture Patterns</h1>')
         parts.append('<p>A unified framework combining TOGAF Architecture Building Blocks, '
                      'Solution Building Blocks, and Packaged Business Capabilities for '
                      'enterprise AI architecture.</p>')
@@ -935,15 +1055,22 @@ code {{
         elif ptype == "SBB":
             parts.append(self._sbb_detail(pattern))
 
-        # Diagrams (shared across all types)
+        # Diagrams (shared across all types) — rendered via Mermaid.js when online
         diagrams = pattern.get("diagrams", [])
         if diagrams:
+            self._has_diagrams = True
+            pid = self._escape(pattern.get("id", "unknown"))
             parts.append('<h2>Diagrams</h2>')
-            for diag in diagrams:
+            for idx, diag in enumerate(diagrams):
                 title = diag.get("title", "Untitled")
                 content = diag.get("content", "")
+                diagram_id = f"mermaid-{pid}-{idx}"
                 parts.append(f'<h3>{self._escape(title)}</h3>')
-                parts.append(f'<pre style="background:#1a1a2e;padding:12px;border-radius:6px;overflow-x:auto;"><code>{self._escape(content)}</code></pre>')
+                parts.append(f'<div class="mermaid-diagram-container" id="{diagram_id}">')
+                parts.append(f'  <div class="mermaid-rendered" data-diagram-id="{diagram_id}"></div>')
+                parts.append(f'  <pre class="mermaid-source" data-diagram-id="{diagram_id}"><code>{self._escape(content)}</code></pre>')
+                parts.append(f'  <button class="mermaid-toggle" data-diagram-id="{diagram_id}" style="display:none;" onclick="toggleMermaidSource(\'{diagram_id}\')">View source</button>')
+                parts.append('</div>')
             parts.append('<hr>')
 
         # Restrictions (shared across all types)
@@ -966,6 +1093,9 @@ code {{
             ("Version", self._escape(pattern.get("version", ""))),
             ("Status", self._escape(pattern.get("status", ""))),
         ]
+        team_name = pattern.get("team_name")
+        if team_name:
+            rows.append(("Team", f'<span style="color:var(--accent);">{self._escape(team_name)}</span>'))
 
         # For SBBs, show the parent ABB
         if ptype == "SBB":
@@ -1311,6 +1441,14 @@ code {{
         return "\n".join(parts)
 
     # ------------------------------------------------------------------
+    # Mermaid CDN
+    # ------------------------------------------------------------------
+
+    def _mermaid_cdn_script(self) -> str:
+        """Return a <script> tag loading Mermaid.js from CDN (v11, matching frontend)."""
+        return '<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js" crossorigin="anonymous"></script>'
+
+    # ------------------------------------------------------------------
     # JavaScript
     # ------------------------------------------------------------------
 
@@ -1323,6 +1461,7 @@ function toggleGroup(cat) {
     group.classList.toggle('collapsed');
     if (header) header.classList.toggle('collapsed');
 }
+/* All nav-groups default open (no .collapsed class needed on init) */
 
 function showPattern(id) {
     document.querySelectorAll('.content-section').forEach(function(s) { s.classList.remove('active'); });
@@ -1355,7 +1494,68 @@ window.addEventListener('popstate', function() {
 window.addEventListener('DOMContentLoaded', function() {
     var hash = location.hash.replace('#', '');
     if (hash) { showPattern(hash); }
+    setTimeout(initMermaidDiagrams, 200);
 });
+
+/* --- Mermaid diagram rendering --- */
+function toggleMermaidSource(diagramId) {
+    var container = document.getElementById(diagramId);
+    if (!container) return;
+    var rendered = container.querySelector('.mermaid-rendered');
+    var source = container.querySelector('.mermaid-source');
+    var btn = container.querySelector('.mermaid-toggle');
+    if (source.classList.contains('hidden')) {
+        source.classList.remove('hidden');
+        rendered.classList.remove('visible');
+        btn.textContent = 'View diagram';
+    } else {
+        source.classList.add('hidden');
+        rendered.classList.add('visible');
+        btn.textContent = 'View source';
+    }
+}
+
+function initMermaidDiagrams() {
+    if (typeof mermaid === 'undefined') return;
+
+    mermaid.initialize({
+        startOnLoad: false,
+        theme: 'dark',
+        securityLevel: 'loose',
+        themeVariables: {
+            darkMode: true,
+            background: '#161b22',
+            primaryColor: '#1e3a5f',
+            primaryTextColor: '#e6edf3',
+            primaryBorderColor: '#30363d',
+            lineColor: '#8b949e',
+            secondaryColor: '#1c2129',
+            tertiaryColor: '#0d1117',
+            fontFamily: '-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif',
+            fontSize: '14px'
+        }
+    });
+
+    var containers = document.querySelectorAll('.mermaid-diagram-container');
+    containers.forEach(function(container) {
+        var sourceEl = container.querySelector('.mermaid-source code');
+        var renderedEl = container.querySelector('.mermaid-rendered');
+        var toggleBtn = container.querySelector('.mermaid-toggle');
+        if (!sourceEl || !renderedEl) return;
+
+        var source = sourceEl.textContent;
+        var id = 'mmd-' + Math.random().toString(36).slice(2);
+
+        mermaid.render(id, source).then(function(result) {
+            renderedEl.innerHTML = result.svg;
+            renderedEl.classList.add('visible');
+            sourceEl.parentElement.classList.add('hidden');
+            if (toggleBtn) toggleBtn.style.display = '';
+        }).catch(function(err) {
+            console.warn('Mermaid render failed for ' + container.id + ':', err);
+        });
+    });
+}
 </script>'''
 
     # ------------------------------------------------------------------

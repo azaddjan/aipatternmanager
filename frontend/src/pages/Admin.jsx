@@ -1,13 +1,16 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import {
   fetchAdminSettings, updateAdminSettings, setApiKey, testProvider,
-  exportHtmlUrl, exportPptxUrl, exportDocxUrl, exportJsonUrl,
+  exportHtmlUrl, exportPptxUrl, exportDocxUrl,
   importPreview, importBackup,
   createBackup, fetchBackups, downloadBackupUrl, deleteBackup, restoreBackup,
   fetchSystemStatus, embedMissingNodes, embedAllNodes,
   fetchAdvisorReports, updateAdvisorReport,
   deleteAdvisorReport, deleteAllAdvisorReports, cleanupAdvisorReports,
   advisorReportExportHtmlUrl, advisorReportExportDocxUrl,
+  authenticatedDownload,
+  fetchPrompts, updatePrompt, resetPrompt, testPrompt,
+  fetchTeams,
 } from '../api/client'
 
 const PROVIDER_LABELS = {
@@ -26,8 +29,9 @@ const CONFIDENCE_COLORS = {
 const TABS = [
   { key: 'config', label: 'Configuration', icon: '⚙️' },
   { key: 'export', label: 'Export', icon: '📤' },
-  { key: 'import', label: 'Import & Backup', icon: '📥' },
+  { key: 'import', label: 'Backup', icon: '💾' },
   { key: 'status', label: 'System Status', icon: '📊' },
+  { key: 'prompts', label: 'AI Prompts', icon: '📝' },
   { key: 'advisor', label: 'Advisor', icon: '🧠' },
 ]
 
@@ -51,7 +55,7 @@ export default function Admin() {
   const [importFile, setImportFile] = useState(null)
   const [previewing, setPreviewing] = useState(false)
   const [previewData, setPreviewData] = useState(null)
-  const [importIncludes, setImportIncludes] = useState({ patterns: true, technologies: true, pbcs: true, categories: true, advisor_reports: true, health_analyses: true })
+  const [importIncludes, setImportIncludes] = useState({ teams: true, users: true, settings: true, patterns: true, technologies: true, pbcs: true, categories: true, advisor_reports: true, health_analyses: true })
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState(null)
   const fileInputRef = useRef(null)
@@ -78,6 +82,25 @@ export default function Admin() {
   const [retentionForm, setRetentionForm] = useState({ max_reports: 20, retention_days: 30, auto_cleanup: true })
   const [retentionDirty, setRetentionDirty] = useState(false)
 
+  // AI Prompts
+  const [promptsData, setPromptsData] = useState(null)
+  const [loadingPrompts, setLoadingPrompts] = useState(false)
+  const [selectedPrompt, setSelectedPrompt] = useState(null)
+  const [editValue, setEditValue] = useState('')
+  const [promptDirty, setPromptDirty] = useState(false)
+  const [savingPrompt, setSavingPrompt] = useState(false)
+  const [testingPrompt, setTestingPrompt] = useState(false)
+  const [testResponse, setTestResponse] = useState(null)
+  const [promptFilter, setPromptFilter] = useState('')
+
+  // Export team filter
+  const [exportTeams, setExportTeams] = useState([])
+  const [selectedExportTeams, setSelectedExportTeams] = useState([])
+
+  const liveTokenEstimate = useMemo(() => {
+    if (!editValue) return 0
+    return Math.round(editValue.split(/\s+/).filter(Boolean).length * 1.3)
+  }, [editValue])
 
   const loadSystemStatus = useCallback(() => {
     setLoadingStatus(true)
@@ -127,6 +150,9 @@ export default function Admin() {
   }, [])
 
   useEffect(() => { load() }, [])
+  useEffect(() => {
+    fetchTeams().then(t => setExportTeams(t)).catch(() => {})
+  }, [])
   useEffect(() => { if (tab === 'import') loadBackups() }, [tab, loadBackups])
   useEffect(() => { if (tab === 'status') loadSystemStatus() }, [tab, loadSystemStatus])
   useEffect(() => {
@@ -142,6 +168,76 @@ export default function Admin() {
       }
     }
   }, [tab, settings])
+
+  // Prompts tab data loading
+  const loadPrompts = useCallback(() => {
+    setLoadingPrompts(true)
+    fetchPrompts()
+      .then(data => { setPromptsData(data); setLoadingPrompts(false) })
+      .catch(() => setLoadingPrompts(false))
+  }, [])
+
+  useEffect(() => { if (tab === 'prompts') loadPrompts() }, [tab, loadPrompts])
+
+  const handleSelectPrompt = (section, sub_prompt) => {
+    const prompt = promptsData?.prompts?.find(p => p.section === section && p.sub_prompt === sub_prompt)
+    if (prompt) {
+      setSelectedPrompt({ section, sub_prompt })
+      setEditValue(prompt.current_value)
+      setPromptDirty(false)
+      setTestResponse(null)
+    }
+  }
+
+  const handleSavePrompt = async () => {
+    if (!selectedPrompt) return
+    setSavingPrompt(true)
+    try {
+      await updatePrompt(selectedPrompt.section, selectedPrompt.sub_prompt, editValue)
+      setMsg('Prompt saved successfully')
+      setPromptDirty(false)
+      loadPrompts()
+    } catch (err) {
+      setMsg(`Failed to save prompt: ${err.message}`)
+    }
+    setSavingPrompt(false)
+  }
+
+  const handleResetPrompt = async () => {
+    if (!selectedPrompt) return
+    if (!confirm('Reset this prompt to the YAML default? Your override will be deleted.')) return
+    setSavingPrompt(true)
+    try {
+      const result = await resetPrompt(selectedPrompt.section, selectedPrompt.sub_prompt)
+      setEditValue(result.current_value)
+      setPromptDirty(false)
+      setMsg('Prompt reset to default')
+      loadPrompts()
+    } catch (err) {
+      setMsg(`Failed to reset: ${err.message}`)
+    }
+    setSavingPrompt(false)
+  }
+
+  const handleTestPrompt = async () => {
+    if (!editValue.trim()) return
+    setTestingPrompt(true)
+    setTestResponse(null)
+    try {
+      const isSystem = selectedPrompt?.sub_prompt === 'system'
+      const systemText = isSystem
+        ? editValue
+        : (promptsData?.prompts?.find(p => p.section === selectedPrompt?.section && p.sub_prompt === 'system')?.current_value || 'You are a helpful assistant.')
+      const userText = isSystem
+        ? 'Hello, please confirm you understand your role. Respond briefly.'
+        : 'This is a test of the prompt template. Please respond briefly confirming you understand the instructions.'
+      const result = await testPrompt(systemText, userText)
+      setTestResponse(result)
+    } catch (err) {
+      setTestResponse({ status: 'error', response: err.message })
+    }
+    setTestingPrompt(false)
+  }
 
   /* ---------- Config handlers ---------- */
 
@@ -254,7 +350,7 @@ export default function Admin() {
     try {
       const data = await importPreview(importFile)
       setPreviewData(data)
-      setImportIncludes({ patterns: true, technologies: true, pbcs: true, categories: true })
+      setImportIncludes({ teams: true, users: true, settings: true, patterns: true, technologies: true, pbcs: true, categories: true, advisor_reports: true, health_analyses: true })
       setImportStep('preview')
     } catch (err) {
       setMsg(`Preview failed: ${err.message}`)
@@ -300,10 +396,14 @@ export default function Admin() {
     setCreatingBackup(true)
     setMsg('')
     try {
-      await createBackup(backupName)
+      const result = await createBackup(backupName)
       setBackupName('')
-      setMsg('Backup created successfully')
+      setMsg('Backup created — downloading...')
       loadBackups()
+      // Auto-download the backup file
+      if (result?.filename) {
+        await authenticatedDownload(downloadBackupUrl(result.filename), result.filename)
+      }
     } catch (err) {
       setMsg(`Backup failed: ${err.message}`)
     }
@@ -327,7 +427,7 @@ export default function Admin() {
     setMsg('')
     try {
       const result = await restoreBackup(filename)
-      setMsg(`Restore completed — ${result.patterns_imported || 0} patterns, ${result.technologies_imported || 0} technologies, ${result.pbcs_imported || 0} PBCs restored`)
+      setMsg(`Restore completed — ${result.teams_imported || 0} teams, ${result.users_imported || 0} users, ${result.settings_imported || 0} settings, ${result.patterns_imported || 0} patterns, ${result.technologies_imported || 0} technologies, ${result.pbcs_imported || 0} PBCs restored`)
       loadBackups()
     } catch (err) {
       setMsg(`Restore failed: ${err.message}`)
@@ -800,6 +900,49 @@ export default function Admin() {
               </div>
             )
           })()}
+
+          {/* --- Authentication Settings --- */}
+          <div className="mt-8">
+            <h2 className="text-lg font-semibold text-white mb-1">Authentication</h2>
+            <p className="text-gray-500 text-xs mb-4">Configure authentication behavior for the application.</p>
+            <div className="card">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-semibold text-white">Allow Anonymous Read Access</h3>
+                  <p className="text-xs text-gray-500 mt-1">
+                    When enabled, unauthenticated users can view patterns, technologies, and the graph without logging in.
+                    Write operations always require authentication.
+                  </p>
+                </div>
+                <button
+                  onClick={async () => {
+                    setSaving(true)
+                    try {
+                      const current = settings?.auth?.allow_anonymous_read ?? false
+                      const updated = await updateAdminSettings({
+                        auth: { allow_anonymous_read: !current },
+                      })
+                      setSettings(updated)
+                      setMsg(!current ? 'Anonymous read access enabled' : 'Anonymous read access disabled')
+                    } catch (err) {
+                      setMsg('Failed to update: ' + err.message)
+                    }
+                    setSaving(false)
+                  }}
+                  disabled={saving}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                    settings?.auth?.allow_anonymous_read ? 'bg-blue-600' : 'bg-gray-700'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                      settings?.auth?.allow_anonymous_read ? 'translate-x-6' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -807,8 +950,50 @@ export default function Admin() {
       {tab === 'export' && (
         <div className="space-y-4">
           <p className="text-gray-500 text-sm">
-            Export all patterns, technologies, and business capabilities in various formats.
+            Export patterns, technologies, and business capabilities in various formats.
           </p>
+
+          {/* Team filter */}
+          {exportTeams.length > 0 && (
+            <div className="card">
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="text-sm font-medium text-gray-400">Export Scope:</span>
+                <button
+                  onClick={() => setSelectedExportTeams([])}
+                  className={`px-3 py-1 text-xs rounded-full border transition-colors ${
+                    selectedExportTeams.length === 0
+                      ? 'bg-blue-600/20 border-blue-500 text-blue-400'
+                      : 'border-gray-600 text-gray-500 hover:border-gray-500'
+                  }`}
+                >
+                  All Teams
+                </button>
+                {exportTeams.map(team => {
+                  const isSelected = selectedExportTeams.includes(team.id)
+                  return (
+                    <button
+                      key={team.id}
+                      onClick={() => setSelectedExportTeams(prev =>
+                        isSelected ? prev.filter(id => id !== team.id) : [...prev, team.id]
+                      )}
+                      className={`px-3 py-1 text-xs rounded-full border transition-colors ${
+                        isSelected
+                          ? 'bg-blue-600/20 border-blue-500 text-blue-400'
+                          : 'border-gray-600 text-gray-500 hover:border-gray-500'
+                      }`}
+                    >
+                      {team.name}
+                    </button>
+                  )
+                })}
+                {selectedExportTeams.length > 0 && (
+                  <span className="text-xs text-gray-600">
+                    ({selectedExportTeams.length} team{selectedExportTeams.length > 1 ? 's' : ''} selected)
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* HTML Export */}
@@ -823,7 +1008,7 @@ export default function Admin() {
                   </p>
                 </div>
                 <button
-                  onClick={() => window.open(exportHtmlUrl(), '_blank')}
+                  onClick={() => authenticatedDownload(exportHtmlUrl(selectedExportTeams), 'patterns-export.html')}
                   className="btn-primary text-sm ml-3 shrink-0"
                 >
                   Export
@@ -843,7 +1028,7 @@ export default function Admin() {
                   </p>
                 </div>
                 <button
-                  onClick={() => window.open(exportPptxUrl(), '_blank')}
+                  onClick={() => authenticatedDownload(exportPptxUrl(selectedExportTeams), 'patterns-export.pptx')}
                   className="btn-primary text-sm ml-3 shrink-0"
                 >
                   Export
@@ -863,7 +1048,7 @@ export default function Admin() {
                   </p>
                 </div>
                 <button
-                  onClick={() => window.open(exportDocxUrl(), '_blank')}
+                  onClick={() => authenticatedDownload(exportDocxUrl(selectedExportTeams), 'patterns-export.docx')}
                   className="btn-primary text-sm ml-3 shrink-0"
                 >
                   Export
@@ -871,25 +1056,6 @@ export default function Admin() {
               </div>
             </div>
 
-            {/* JSON Backup Export */}
-            <div className="card border-l-4 border-green-500">
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <h3 className="font-semibold text-white flex items-center gap-2">
-                    <span className="text-xl">💾</span> JSON Backup
-                  </h3>
-                  <p className="text-gray-500 text-sm mt-1">
-                    Full data backup including all patterns, technologies, PBCs, categories, and relationships.
-                  </p>
-                </div>
-                <button
-                  onClick={() => window.open(exportJsonUrl(), '_blank')}
-                  className="btn-primary text-sm ml-3 shrink-0"
-                >
-                  Export
-                </button>
-              </div>
-            </div>
           </div>
         </div>
       )}
@@ -1318,10 +1484,10 @@ export default function Admin() {
                 {/* Per-type selectors */}
                 <div className="space-y-2">
                   <p className="text-sm text-gray-400 font-medium">Select what to import:</p>
-                  {['categories', 'patterns', 'technologies', 'pbcs', 'advisor_reports', 'health_analyses'].map(type => {
+                  {['teams', 'users', 'settings', 'categories', 'patterns', 'technologies', 'pbcs', 'advisor_reports', 'health_analyses'].map(type => {
                     const counts = countPreviewType(type)
                     const total = counts.new + counts.updated + counts.unchanged
-                    const TYPE_LABELS = { pbcs: 'PBCs', advisor_reports: 'Advisor Reports', health_analyses: 'Health Analyses' }
+                    const TYPE_LABELS = { pbcs: 'PBCs', advisor_reports: 'Advisor Reports', health_analyses: 'Health Analyses', teams: 'Teams', users: 'Users', settings: 'Settings' }
                     const typeLabel = TYPE_LABELS[type] || type.charAt(0).toUpperCase() + type.slice(1)
                     if (total === 0) return null
                     return (
@@ -1353,13 +1519,13 @@ export default function Admin() {
                 </div>
 
                 {/* Expanded details (collapsible) */}
-                {['patterns', 'technologies', 'pbcs', 'categories', 'advisor_reports', 'health_analyses'].map(type => {
+                {['teams', 'users', 'settings', 'patterns', 'technologies', 'pbcs', 'categories', 'advisor_reports', 'health_analyses'].map(type => {
                   const data = previewData[type]
                   if (!data) return null
                   const hasNew = data.new?.length > 0
                   const hasUpdated = data.updated?.length > 0
                   if (!hasNew && !hasUpdated) return null
-                  const DETAIL_LABELS = { pbcs: 'PBCs', advisor_reports: 'Advisor Reports', health_analyses: 'Health Analyses' }
+                  const DETAIL_LABELS = { pbcs: 'PBCs', advisor_reports: 'Advisor Reports', health_analyses: 'Health Analyses', teams: 'Teams', users: 'Users', settings: 'Settings' }
                   const typeLabel = DETAIL_LABELS[type] || type.charAt(0).toUpperCase() + type.slice(1)
                   return (
                     <details key={type} className="card border-gray-800">
@@ -1446,10 +1612,34 @@ export default function Admin() {
                   <div className="card bg-green-500/5 border border-green-500/20">
                     <h3 className="text-sm font-semibold text-green-400 mb-3">Import Completed</h3>
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                      {importResult.teams_imported > 0 && (
+                        <div className="text-center">
+                          <div className="text-xl font-bold text-white">{importResult.teams_imported}</div>
+                          <div className="text-xs text-gray-400">Teams</div>
+                        </div>
+                      )}
+                      {importResult.users_imported > 0 && (
+                        <div className="text-center">
+                          <div className="text-xl font-bold text-white">{importResult.users_imported}</div>
+                          <div className="text-xs text-gray-400">Users</div>
+                        </div>
+                      )}
+                      {importResult.settings_imported > 0 && (
+                        <div className="text-center">
+                          <div className="text-xl font-bold text-white">{importResult.settings_imported}</div>
+                          <div className="text-xs text-gray-400">Settings</div>
+                        </div>
+                      )}
                       {importResult.patterns_imported > 0 && (
                         <div className="text-center">
                           <div className="text-xl font-bold text-white">{importResult.patterns_imported}</div>
                           <div className="text-xs text-gray-400">Patterns</div>
+                        </div>
+                      )}
+                      {importResult.owned_by_restored > 0 && (
+                        <div className="text-center">
+                          <div className="text-xl font-bold text-white">{importResult.owned_by_restored}</div>
+                          <div className="text-xs text-gray-400">Team Ownership</div>
                         </div>
                       )}
                       {importResult.technologies_imported > 0 && (
@@ -1571,20 +1761,20 @@ export default function Admin() {
                             <span>•</span>
                             <span>
                               {b.stats.patterns || 0}P / {b.stats.technologies || 0}T / {b.stats.pbcs || 0}PBC
+                              {(b.stats.teams > 0 || b.stats.users > 0) && ` / ${b.stats.teams || 0}Teams / ${b.stats.users || 0}Users`}
                             </span>
                           </>
                         )}
                       </div>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
-                      <a
-                        href={downloadBackupUrl(b.filename)}
-                        download
+                      <button
+                        onClick={() => authenticatedDownload(downloadBackupUrl(b.filename), b.filename)}
                         className="px-2 py-1 text-xs text-blue-400 hover:bg-blue-500/10 rounded transition-colors"
                         title="Download"
                       >
                         ⬇
-                      </a>
+                      </button>
                       <button
                         onClick={() => handleRestoreBackup(b.filename)}
                         disabled={restoringBackup === b.filename}
@@ -1606,6 +1796,199 @@ export default function Admin() {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* ============ AI Prompts Tab ============ */}
+      {tab === 'prompts' && (
+        <div className="space-y-4">
+          <div>
+            <h2 className="text-lg font-semibold text-white mb-1">AI Prompt Editor</h2>
+            <p className="text-gray-500 text-xs">
+              View, edit, and test all AI prompts. Overrides are stored in the database — reset returns a prompt to its YAML default.
+            </p>
+          </div>
+
+          {loadingPrompts ? (
+            <div className="text-gray-500 text-center py-12">Loading prompts...</div>
+          ) : (
+            <div className="flex gap-4" style={{ minHeight: '600px' }}>
+
+              {/* --- Left Sidebar: Prompt Tree --- */}
+              <div className="w-64 flex-shrink-0 space-y-1">
+                <input
+                  type="text"
+                  placeholder="Filter prompts..."
+                  value={promptFilter}
+                  onChange={e => setPromptFilter(e.target.value)}
+                  className="input w-full text-xs mb-2"
+                />
+                {promptsData && Object.entries(promptsData.sections || {}).map(([section, sectionData]) => {
+                  const prompts = sectionData.prompts || []
+                  const filtered = prompts.filter(p =>
+                    !promptFilter ||
+                    p.section.toLowerCase().includes(promptFilter.toLowerCase()) ||
+                    p.sub_prompt.toLowerCase().includes(promptFilter.toLowerCase())
+                  )
+                  if (!filtered.length) return null
+                  return (
+                    <div key={section} className="mb-3">
+                      <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider px-2 py-1">
+                        {sectionData.label || section}
+                      </div>
+                      {filtered.map(p => {
+                        const isActive = selectedPrompt?.section === p.section && selectedPrompt?.sub_prompt === p.sub_prompt
+                        return (
+                          <button
+                            key={`${p.section}.${p.sub_prompt}`}
+                            onClick={() => handleSelectPrompt(p.section, p.sub_prompt)}
+                            className={`w-full text-left px-3 py-1.5 rounded text-xs flex items-center gap-2 transition-colors ${
+                              isActive
+                                ? 'bg-blue-600/20 text-blue-400 border border-blue-600/30'
+                                : 'text-gray-400 hover:bg-gray-800/50 hover:text-gray-200 border border-transparent'
+                            }`}
+                          >
+                            <span className="truncate flex-1">{p.sub_prompt}</span>
+                            {p.is_overridden && (
+                              <span className="text-[9px] bg-yellow-500/20 text-yellow-400 px-1 py-0.5 rounded whitespace-nowrap">
+                                modified
+                              </span>
+                            )}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )
+                })}
+              </div>
+
+              {/* --- Right Panel: Prompt Editor --- */}
+              <div className="flex-1 min-w-0">
+                {selectedPrompt ? (() => {
+                  const currentPrompt = promptsData?.prompts?.find(
+                    p => p.section === selectedPrompt.section && p.sub_prompt === selectedPrompt.sub_prompt
+                  )
+                  if (!currentPrompt) return null
+                  return (
+                    <div className="space-y-4">
+                      {/* Header */}
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h3 className="text-white font-semibold text-sm">
+                            {selectedPrompt.section} <span className="text-gray-600">/</span> {selectedPrompt.sub_prompt}
+                          </h3>
+                          <div className="flex items-center gap-3 mt-1">
+                            <span className="text-[10px] text-gray-600">
+                              ~{promptDirty ? liveTokenEstimate : currentPrompt.token_estimate} tokens
+                            </span>
+                            {currentPrompt.is_overridden && (
+                              <span className="text-[10px] bg-yellow-500/20 text-yellow-400 px-1.5 py-0.5 rounded border border-yellow-500/30">
+                                Override Active
+                              </span>
+                            )}
+                            {promptDirty && (
+                              <span className="text-[10px] text-orange-400">Unsaved changes</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Variables */}
+                      {currentPrompt.variables.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 items-center">
+                          <span className="text-[10px] text-gray-600">Variables:</span>
+                          {currentPrompt.variables.map(v => (
+                            <span key={v} className="text-[10px] bg-purple-500/15 text-purple-400 px-1.5 py-0.5 rounded border border-purple-500/20 font-mono">
+                              {'{' + v + '}'}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Textarea Editor */}
+                      <textarea
+                        value={editValue}
+                        onChange={e => { setEditValue(e.target.value); setPromptDirty(true) }}
+                        className="input w-full font-mono text-xs leading-relaxed"
+                        rows={22}
+                        spellCheck={false}
+                        style={{ minHeight: '320px', resize: 'vertical' }}
+                      />
+
+                      {/* Action Buttons */}
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={handleSavePrompt}
+                          disabled={savingPrompt || !promptDirty}
+                          className="btn-primary text-xs px-4 py-1.5"
+                        >
+                          {savingPrompt ? 'Saving...' : 'Save Override'}
+                        </button>
+                        {currentPrompt.is_overridden && (
+                          <button
+                            onClick={handleResetPrompt}
+                            disabled={savingPrompt}
+                            className="btn-secondary text-xs px-4 py-1.5"
+                          >
+                            Reset to Default
+                          </button>
+                        )}
+                        <button
+                          onClick={handleTestPrompt}
+                          disabled={testingPrompt}
+                          className="btn-secondary text-xs px-4 py-1.5"
+                        >
+                          {testingPrompt ? 'Testing...' : '▶ Test Prompt'}
+                        </button>
+                        {currentPrompt.is_overridden && (
+                          <button
+                            onClick={() => {
+                              setEditValue(currentPrompt.default_value)
+                              setPromptDirty(true)
+                            }}
+                            className="text-xs text-gray-600 hover:text-gray-400 ml-auto"
+                          >
+                            View Default
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Test Response */}
+                      {testResponse && (
+                        <div className={`card border-l-4 ${
+                          testResponse.status === 'ok' ? 'border-l-green-500' : 'border-l-red-500'
+                        }`}>
+                          <div className="flex items-center gap-2 mb-2">
+                            <span className={`text-xs font-semibold ${testResponse.status === 'ok' ? 'text-green-400' : 'text-red-400'}`}>
+                              {testResponse.status === 'ok' ? '✓ Test Passed' : '✗ Test Failed'}
+                            </span>
+                            {testResponse.provider && (
+                              <span className="text-[10px] text-gray-600">
+                                {testResponse.provider} / {testResponse.model}
+                              </span>
+                            )}
+                            {testResponse.latency_ms != null && (
+                              <span className="text-[10px] text-gray-600">({testResponse.latency_ms}ms)</span>
+                            )}
+                          </div>
+                          <pre className="text-xs text-gray-300 whitespace-pre-wrap overflow-auto max-h-48 font-mono bg-gray-950/50 rounded p-3 border border-gray-800">
+                            {testResponse.response}
+                          </pre>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })() : (
+                  <div className="flex items-center justify-center h-full text-gray-600">
+                    <div className="text-center">
+                      <div className="text-4xl mb-3 opacity-30">📝</div>
+                      <p className="text-sm">Select a prompt from the sidebar to view and edit it</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1869,21 +2252,20 @@ export default function Admin() {
                       </td>
                       <td className="py-2.5 px-3">
                         <div className="flex items-center gap-1">
-                          <a
-                            href={advisorReportExportHtmlUrl(rpt.id)}
+                          <button
+                            onClick={() => authenticatedDownload(advisorReportExportHtmlUrl(rpt.id), `advisor-report-${rpt.id}.html`)}
                             className="text-xs px-2 py-1 rounded bg-gray-800 text-gray-400 hover:text-gray-300 hover:bg-gray-700 transition-colors"
-                            target="_blank" rel="noopener noreferrer"
                             title="Export HTML"
                           >
                             HTML
-                          </a>
-                          <a
-                            href={advisorReportExportDocxUrl(rpt.id)}
+                          </button>
+                          <button
+                            onClick={() => authenticatedDownload(advisorReportExportDocxUrl(rpt.id), `advisor-report-${rpt.id}.docx`)}
                             className="text-xs px-2 py-1 rounded bg-gray-800 text-gray-400 hover:text-gray-300 hover:bg-gray-700 transition-colors"
                             title="Export DOCX"
                           >
                             DOCX
-                          </a>
+                          </button>
                           <button
                             onClick={() => handleAdvisorDeleteReport(rpt.id)}
                             className="text-xs px-2 py-1 rounded text-red-500/50 hover:text-red-400 hover:bg-red-500/10 transition-colors"

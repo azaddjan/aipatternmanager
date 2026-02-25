@@ -1,8 +1,99 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
 import { fetchPatterns, fetchTechnologies, fetchImpactAnalysis, fetchTechnologyImpact, fetchPatternGraph } from '../api/client'
 import GraphView from '../components/GraphView'
 import { TypeBadge } from '../components/PatternCard'
+
+/* ── Searchable Autocomplete Dropdown ── */
+function SearchableSelect({ items, value, onChange, placeholder, renderItem, renderSelected, idKey = 'id' }) {
+  const [query, setQuery] = useState('')
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  const inputRef = useRef(null)
+
+  // Close on outside click
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const filtered = useMemo(() => {
+    if (!query) return items.slice(0, 50)
+    const q = query.toLowerCase()
+    return items.filter(item => {
+      const text = Object.values(item).filter(v => typeof v === 'string').join(' ').toLowerCase()
+      return text.includes(q)
+    }).slice(0, 50)
+  }, [items, query])
+
+  const selected = value ? items.find(i => i[idKey] === value) : null
+
+  function handleSelect(item) {
+    onChange(item[idKey])
+    setQuery('')
+    setOpen(false)
+  }
+
+  function handleClear(e) {
+    e.stopPropagation()
+    onChange('')
+    setQuery('')
+  }
+
+  return (
+    <div ref={ref} className="relative w-full max-w-lg">
+      {/* Selected value or search input */}
+      {selected && !open ? (
+        <div
+          onClick={() => { setOpen(true); setQuery(''); setTimeout(() => inputRef.current?.focus(), 0) }}
+          className="input w-full flex items-center justify-between cursor-pointer"
+        >
+          <span className="text-sm text-gray-200 truncate">{renderSelected(selected)}</span>
+          <button onClick={handleClear} className="text-gray-500 hover:text-gray-300 ml-2 shrink-0" title="Clear">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+      ) : (
+        <input
+          ref={inputRef}
+          type="text"
+          placeholder={placeholder}
+          value={query}
+          onChange={e => { setQuery(e.target.value); setOpen(true) }}
+          onFocus={() => setOpen(true)}
+          className="input w-full"
+        />
+      )}
+
+      {/* Dropdown */}
+      {open && (
+        <div className="absolute z-50 mt-1 w-full bg-gray-900 border border-gray-700 rounded-lg shadow-xl max-h-72 overflow-y-auto">
+          {filtered.length === 0 ? (
+            <div className="px-4 py-3 text-sm text-gray-500">No results found</div>
+          ) : (
+            filtered.map(item => (
+              <div
+                key={item[idKey]}
+                onClick={() => handleSelect(item)}
+                className={`px-4 py-2.5 cursor-pointer hover:bg-gray-800 transition-colors border-b border-gray-800/50 last:border-0 ${
+                  item[idKey] === value ? 'bg-gray-800/70' : ''
+                }`}
+              >
+                {renderItem(item)}
+              </div>
+            ))
+          )}
+          {items.length > 50 && !query && (
+            <div className="px-4 py-2 text-xs text-gray-600 border-t border-gray-800">
+              Type to search all {items.length} items...
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 export default function ImpactAnalysis() {
   const [searchParams] = useSearchParams()
@@ -14,7 +105,6 @@ export default function ImpactAnalysis() {
   const [techImpacts, setTechImpacts] = useState(null)
   const [graphData, setGraphData] = useState(null)
   const [loading, setLoading] = useState(false)
-  const [filterText, setFilterText] = useState('')
 
   useEffect(() => {
     fetchPatterns({ limit: 500 }).then(res => setPatterns(res.patterns || []))
@@ -48,30 +138,7 @@ export default function ImpactAnalysis() {
     setImpacts(null)
     setTechImpacts(null)
     setGraphData(null)
-    setFilterText('')
   }
-
-  const filteredPatterns = useMemo(() => {
-    if (!filterText) return patterns
-    const q = filterText.toLowerCase()
-    return patterns.filter(p =>
-      p.id.toLowerCase().includes(q) ||
-      p.name.toLowerCase().includes(q) ||
-      (p.type || '').toLowerCase().includes(q) ||
-      (p.category || '').toLowerCase().includes(q)
-    )
-  }, [patterns, filterText])
-
-  const filteredTechnologies = useMemo(() => {
-    if (!filterText) return technologies
-    const q = filterText.toLowerCase()
-    return technologies.filter(t =>
-      t.name.toLowerCase().includes(q) ||
-      t.id.toLowerCase().includes(q) ||
-      (t.vendor || '').toLowerCase().includes(q) ||
-      (t.category || '').toLowerCase().includes(q)
-    )
-  }, [technologies, filterText])
 
   return (
     <div className="space-y-6">
@@ -111,34 +178,40 @@ export default function ImpactAnalysis() {
         <label className="block text-xs text-gray-500 mb-2">
           {mode === 'pattern' ? 'Select a pattern to analyze' : 'Select a technology to analyze'}
         </label>
-        <input
-          type="text"
-          placeholder={mode === 'pattern' ? 'Filter patterns by name, ID, type, or category...' : 'Filter technologies by name, ID, or vendor...'}
-          value={filterText}
-          onChange={e => setFilterText(e.target.value)}
-          className="input w-full max-w-md mb-2"
-        />
-        <select
-          value={selectedId}
-          onChange={e => setSelectedId(e.target.value)}
-          className="select w-full max-w-md"
-        >
-          {mode === 'pattern' ? (
-            <>
-              <option value="">Choose a pattern... ({filteredPatterns.length} shown)</option>
-              {filteredPatterns.map(p => (
-                <option key={p.id} value={p.id}>{p.id} — {p.name} ({p.type})</option>
-              ))}
-            </>
-          ) : (
-            <>
-              <option value="">Choose a technology... ({filteredTechnologies.length} shown)</option>
-              {filteredTechnologies.map(t => (
-                <option key={t.id} value={t.id}>{t.name} ({t.vendor}) — {t.category}</option>
-              ))}
-            </>
-          )}
-        </select>
+        {mode === 'pattern' ? (
+          <SearchableSelect
+            items={patterns}
+            value={selectedId}
+            onChange={setSelectedId}
+            placeholder="Type to search patterns by name, ID, type, or category..."
+            renderItem={p => (
+              <div className="flex items-center gap-2">
+                <span className={`text-xs font-mono px-1.5 py-0.5 rounded ${
+                  p.type === 'AB' ? 'badge-ab' : p.type === 'ABB' ? 'badge-abb' : 'badge-sbb'
+                }`}>{p.type}</span>
+                <span className="text-blue-400 font-mono text-xs">{p.id}</span>
+                <span className="text-gray-300 text-sm">{p.name}</span>
+                <span className="text-gray-600 text-xs ml-auto">{p.category}</span>
+              </div>
+            )}
+            renderSelected={p => `${p.id} — ${p.name} (${p.type})`}
+          />
+        ) : (
+          <SearchableSelect
+            items={technologies}
+            value={selectedId}
+            onChange={setSelectedId}
+            placeholder="Type to search technologies by name, vendor, or category..."
+            renderItem={t => (
+              <div className="flex items-center gap-2">
+                <span className="text-cyan-400 text-sm font-medium">{t.name}</span>
+                {t.vendor && <span className="text-gray-500 text-xs">({t.vendor})</span>}
+                <span className="text-gray-600 text-xs ml-auto">{t.category}</span>
+              </div>
+            )}
+            renderSelected={t => `${t.name}${t.vendor ? ` (${t.vendor})` : ''} — ${t.category}`}
+          />
+        )}
       </div>
 
       {loading && <div className="text-gray-500 text-center py-12">Analyzing impact...</div>}

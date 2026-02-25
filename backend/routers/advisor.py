@@ -16,12 +16,13 @@ GET    /api/advisor/reports/{id}/export/docx — Download DOCX report
 import io
 import logging
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from fastapi.responses import StreamingResponse
 
-from models.schemas import AdvisorRequest, AdvisorReportUpdate
+from models.schemas import AdvisorRequest, AdvisorReportUpdate, AdvisorClarifyRequest
 from services import advisor_service
 from services.embedding_service import EmbeddingService
+from middleware.dependencies import get_current_user, require_admin
 
 logger = logging.getLogger(__name__)
 
@@ -43,10 +44,29 @@ def get_db():
     return db_service
 
 
+# --- Clarification Pre-flight ---
+
+@router.post("/clarify")
+async def clarify_problem(request: AdvisorClarifyRequest, _user=Depends(get_current_user)):
+    """Pre-flight check: assess if the problem needs clarification before full analysis."""
+    db = get_db()
+    embedding_svc = _get_embedding_svc()
+    result = await advisor_service.clarify_problem(
+        db=db,
+        embedding_svc=embedding_svc,
+        problem=request.problem,
+        category_focus=request.category_focus,
+        technology_preferences=request.technology_preferences,
+        provider_name=request.provider.value if request.provider else None,
+        model=request.model,
+    )
+    return result
+
+
 # --- Main Advisor Endpoint ---
 
 @router.post("/analyze")
-async def analyze_problem(request: AdvisorRequest):
+async def analyze_problem(request: AdvisorRequest, _user=Depends(get_current_user)):
     """Analyze a problem using the full pattern knowledge graph and AI reasoning."""
     db = get_db()
     embedding_svc = _get_embedding_svc()
@@ -59,6 +79,7 @@ async def analyze_problem(request: AdvisorRequest):
         include_gap_analysis=request.include_gap_analysis,
         provider_name=request.provider.value if request.provider else None,
         model=request.model,
+        clarifications=request.clarifications,
     )
 
     # Auto-save the report to Neo4j (never fail the response)
@@ -97,7 +118,7 @@ async def analyze_problem(request: AdvisorRequest):
 # --- Embedding Endpoints ---
 
 @router.post("/embed")
-def generate_embeddings():
+def generate_embeddings(_user=Depends(require_admin)):
     """Generate or refresh vector embeddings for all Pattern, Technology, and PBC nodes."""
     db = get_db()
     embedding_svc = _get_embedding_svc()
@@ -111,7 +132,7 @@ def generate_embeddings():
 
 
 @router.get("/embed/status")
-def embedding_status():
+def embedding_status(_user=Depends(get_current_user)):
     """Check how many nodes have embeddings."""
     db = get_db()
     embedding_svc = _get_embedding_svc()
@@ -126,7 +147,7 @@ def embedding_status():
 # NOTE: Specific routes (/reports/cleanup) must come BEFORE parameterized routes (/reports/{id})
 
 @router.post("/reports/cleanup")
-def cleanup_reports():
+def cleanup_reports(_user=Depends(require_admin)):
     """Manually run retention cleanup on saved reports."""
     db = get_db()
     try:
@@ -142,7 +163,7 @@ def cleanup_reports():
 
 
 @router.get("/reports")
-def list_reports(limit: int = Query(50, ge=1, le=200)):
+def list_reports(limit: int = Query(50, ge=1, le=200), _user=Depends(get_current_user)):
     """List saved advisor reports (starred first, then newest)."""
     db = get_db()
     reports = db.list_reports(limit=limit)
@@ -150,7 +171,7 @@ def list_reports(limit: int = Query(50, ge=1, le=200)):
 
 
 @router.delete("/reports")
-def delete_all_reports(confirm: bool = Query(False)):
+def delete_all_reports(confirm: bool = Query(False), _user=Depends(require_admin)):
     """Delete all non-starred reports. Requires ?confirm=true."""
     if not confirm:
         raise HTTPException(status_code=400, detail="Pass ?confirm=true to delete all non-starred reports")
@@ -160,7 +181,7 @@ def delete_all_reports(confirm: bool = Query(False)):
 
 
 @router.get("/reports/{report_id}")
-def get_report(report_id: str):
+def get_report(report_id: str, _user=Depends(get_current_user)):
     """Get a single saved advisor report with full result data."""
     db = get_db()
     report = db.get_report(report_id)
@@ -170,7 +191,7 @@ def get_report(report_id: str):
 
 
 @router.patch("/reports/{report_id}")
-def update_report(report_id: str, data: AdvisorReportUpdate):
+def update_report(report_id: str, data: AdvisorReportUpdate, _user=Depends(get_current_user)):
     """Update report title and/or starred status."""
     db = get_db()
     updated = db.update_report(report_id, data.model_dump(exclude_none=True))
@@ -180,7 +201,7 @@ def update_report(report_id: str, data: AdvisorReportUpdate):
 
 
 @router.delete("/reports/{report_id}")
-def delete_report(report_id: str):
+def delete_report(report_id: str, _user=Depends(require_admin)):
     """Delete a single saved advisor report."""
     db = get_db()
     deleted = db.delete_report(report_id)
@@ -192,7 +213,7 @@ def delete_report(report_id: str):
 # --- Report Export Endpoints ---
 
 @router.get("/reports/{report_id}/export/html")
-def export_report_html(report_id: str):
+def export_report_html(report_id: str, _user=Depends(get_current_user)):
     """Export a saved advisor report as a self-contained HTML file."""
     db = get_db()
     report = db.get_report(report_id)
@@ -211,7 +232,7 @@ def export_report_html(report_id: str):
 
 
 @router.get("/reports/{report_id}/export/docx")
-def export_report_docx(report_id: str):
+def export_report_docx(report_id: str, _user=Depends(get_current_user)):
     """Export a saved advisor report as a Word document."""
     db = get_db()
     report = db.get_report(report_id)

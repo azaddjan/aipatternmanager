@@ -33,6 +33,9 @@ class BackupService:
 
         # Count stats
         stats = {
+            "teams": len(data.get("teams", [])),
+            "users": len(data.get("users", [])),
+            "settings": len(data.get("settings", [])),
             "patterns": len(data.get("patterns", [])),
             "technologies": len(data.get("technologies", [])),
             "pbcs": len(data.get("pbcs", [])),
@@ -41,7 +44,7 @@ class BackupService:
             "health_analyses": len(data.get("health_analyses", [])),
         }
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
         safe_name = "".join(c for c in name if c.isalnum() or c in "-_").strip()
         if safe_name:
             filename = f"backup_{timestamp}_{safe_name}.json"
@@ -52,11 +55,14 @@ class BackupService:
         backup_data = {
             "meta": {
                 "export_date": datetime.now(timezone.utc).isoformat(),
-                "version": "1.1",
+                "version": "1.2",
                 "name": name or f"Backup {timestamp}",
                 "filename": filename,
                 "stats": stats,
             },
+            "teams": data.get("teams", []),
+            "users": data.get("users", []),
+            "settings": data.get("settings", []),
             "patterns": data.get("patterns", []),
             "technologies": data.get("technologies", []),
             "pbcs": data.get("pbcs", []),

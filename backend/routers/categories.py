@@ -1,6 +1,7 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 
 from models.schemas import CategoryCreate
+from middleware.dependencies import get_current_user, get_current_user_or_anonymous
 
 router = APIRouter(prefix="/api/categories", tags=["Categories"])
 
@@ -11,14 +12,16 @@ def get_db():
 
 
 @router.get("")
-def list_categories():
+def list_categories(_user=Depends(get_current_user_or_anonymous)):
     db = get_db()
     categories = db.list_categories()
     return {"categories": categories}
 
 
 @router.post("", status_code=201)
-def create_category(data: CategoryCreate):
+def create_category(data: CategoryCreate, current_user: dict = Depends(get_current_user)):
+    if current_user.get("role") == "viewer":
+        raise HTTPException(status_code=403, detail="Viewers cannot create categories")
     db = get_db()
     prefix = data.prefix or data.code.upper()
     cat = db.create_category(data.code, data.label, prefix)
@@ -26,7 +29,7 @@ def create_category(data: CategoryCreate):
 
 
 @router.get("/{code}/overview")
-def get_category_overview(code: str):
+def get_category_overview(code: str, _user=Depends(get_current_user_or_anonymous)):
     """Get an overview of a specific category — patterns grouped by type with counts."""
     db = get_db()
 

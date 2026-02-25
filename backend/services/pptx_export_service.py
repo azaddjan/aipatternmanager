@@ -90,9 +90,10 @@ class PptxExportService:
         self._total_slides = 0
         self._name_map: dict[str, str] = {}
 
-    def generate_pptx(self) -> bytes:
+    def generate_pptx(self, team_ids=None, team_names=None) -> bytes:
         """Generate a PPTX file and return raw bytes."""
-        data = self._fetch_all_data()
+        self._team_names = team_names or []
+        data = self._fetch_all_data(team_ids=team_ids)
 
         # Build name map
         for p in data["patterns"]:
@@ -195,8 +196,8 @@ class PptxExportService:
     # Data fetching
     # ------------------------------------------------------------------
 
-    def _fetch_all_data(self) -> dict:
-        patterns, _ = self.db.list_patterns(limit=500)
+    def _fetch_all_data(self, team_ids=None) -> dict:
+        patterns, _ = self.db.list_patterns(limit=500, team_ids=team_ids)
         full_patterns = []
         for p in patterns:
             full = self.db.get_pattern_with_relationships(p["id"])
@@ -360,16 +361,11 @@ class PptxExportService:
 
         # Title
         self._tb(slide, Inches(0.7), Inches(1.1), Inches(8.5), Inches(0.8),
-                 "AI Architecture Patterns", size=38, bold=True)
-
-        # DRAFT badge
-        self._rect(slide, Inches(8.2), Inches(0.4), Inches(1.2), Inches(0.35), BLUE)
-        self._tb(slide, Inches(8.2), Inches(0.4), Inches(1.2), Inches(0.35),
-                 "DRAFT", size=11, bold=True, align=PP_ALIGN.CENTER)
+                 "Architecture Patterns", size=38, bold=True)
 
         # Subtitle
         self._tb(slide, Inches(0.7), Inches(2.6), Inches(8.0), Inches(0.5),
-                 "A Composable Enterprise AI Framework", size=18, color=LIGHT_BLUE)
+                 "A Composable Enterprise Framework", size=18, color=LIGHT_BLUE)
 
         # Description
         self._tb_multi(slide, Inches(0.7), Inches(3.2), Inches(8.0), Inches(0.6), [
@@ -377,15 +373,22 @@ class PptxExportService:
             "with Gartner Packaged Business Capabilities",
         ], size=13, color=MUTED)
 
-        # Author
-        self._tb(slide, Inches(0.7), Inches(4.3), Inches(5.0), Inches(0.3),
-                 "Azad Djan  |  AI Architect", size=13, color=LIGHT_BLUE)
-
-        # Date note
+        # Stats summary
         patterns = data["patterns"]
-        total = len(patterns)
-        self._tb(slide, Inches(0.7), Inches(4.7), Inches(5.0), Inches(0.3),
-                 "Initial work — additional patterns to follow", size=11, color=MUTED)
+        ab_count = sum(1 for p in patterns if p.get("type") == "AB")
+        abb_count = sum(1 for p in patterns if p.get("type") == "ABB")
+        sbb_count = sum(1 for p in patterns if p.get("type") == "SBB")
+        tech_count = len(data["technologies"])
+        stats_text = f"{ab_count} Blueprints  |  {abb_count} ABBs  |  {sbb_count} SBBs  |  {tech_count} Technologies"
+        self._tb(slide, Inches(0.7), Inches(4.0), Inches(8.0), Inches(0.3),
+                 stats_text, size=11, color=MUTED)
+
+        # Export date with timezone
+        from zoneinfo import ZoneInfo
+        est_now = datetime.now(ZoneInfo("America/New_York"))
+        export_date = est_now.strftime("%B %d, %Y  %I:%M %p EST")
+        self._tb(slide, Inches(0.7), Inches(4.35), Inches(5.0), Inches(0.3),
+                 export_date, size=11, color=MUTED)
 
     # ------------------------------------------------------------------
     # Slide 2: Agenda
@@ -638,53 +641,86 @@ class PptxExportService:
         abbs = sorted([p for p in patterns if p.get("type") == "ABB"], key=lambda p: p["id"])
         sbbs = sorted([p for p in patterns if p.get("type") == "SBB"], key=lambda p: p["id"])
 
+        # Calculate available space: top of cards area (1.6) to bottom safe zone (5.1)
+        CARDS_TOP = 1.6
+        CARDS_BOTTOM = 5.1
+        available_height = CARDS_BOTTOM - CARDS_TOP
+
         # ABB card background (left side)
-        self._rect(slide, Inches(0.5), Inches(1.6), Inches(4.3), Inches(3.5), CARD_BG)
+        self._rect(slide, Inches(0.5), Inches(CARDS_TOP), Inches(4.3), Inches(available_height), CARD_BG)
         # Blue top accent line for ABB section
-        self._rect(slide, Inches(0.5), Inches(1.6), Inches(4.3), Inches(0.05), BLUE)
+        self._rect(slide, Inches(0.5), Inches(CARDS_TOP), Inches(4.3), Inches(0.05), BLUE)
+
+        # Determine max bullets per ABB based on how many ABBs we have
+        max_bullets = 3 if len(abbs) <= 2 else 2 if len(abbs) <= 3 else 1
+        MAX_BULLET_LEN = 55  # Truncate long bullets to avoid wrapping
 
         # Left side: ABBs with functionality bullets
-        y = Inches(1.75)
+        y = Inches(CARDS_TOP + 0.15)
         for abb in abbs:
-            if y > Inches(4.8):
+            if y > Inches(CARDS_BOTTOM - 0.4):
                 break
-            # ABB badge
-            self._tb(slide, Inches(0.7), y, Inches(1.0), Inches(0.3),
-                     "ABB", size=10, bold=True, color=BLUE)
-            y += Inches(0.25)
-            # Name
-            self._tb(slide, Inches(0.7), y, Inches(3.8), Inches(0.3),
-                     f"{abb['id']} — {abb.get('name', '')}", size=13, bold=True)
-            y += Inches(0.35)
-            # Functionality bullets
-            bullets = self._get_functionality_bullets(abb)
+            # ABB badge + name on same line
+            abb_team = abb.get("team_name", "")
+            name_line = f"{abb['id']} — {abb.get('name', '')}"
+            self._tb(slide, Inches(0.7), y, Inches(0.6), Inches(0.22),
+                     "ABB", size=9, bold=True, color=BLUE)
+            self._tb(slide, Inches(1.3), y, Inches(3.4), Inches(0.22),
+                     name_line, size=11, bold=True)
+            y += Inches(0.24)
+            # Team badge inline (subtle, on its own line)
+            if abb_team:
+                self._tb(slide, Inches(1.3), y, Inches(3.0), Inches(0.15),
+                         abb_team, size=7, color=LIGHT_BLUE_2)
+                y += Inches(0.15)
+            # Functionality bullets (limited + truncated)
+            bullets = self._get_functionality_bullets(abb)[:max_bullets]
             if bullets:
-                self._tb_multi(slide, Inches(0.7), y, Inches(3.8), Inches(len(bullets) * 0.18 + 0.1),
-                               bullets, size=10, color=MUTED)
-                y += Inches(len(bullets) * 0.18 + 0.15)
-            y += Inches(0.1)
+                short_bullets = [
+                    f"• {b[:MAX_BULLET_LEN]}…" if len(b) > MAX_BULLET_LEN else f"• {b}"
+                    for b in bullets
+                ]
+                self._tb_multi(slide, Inches(0.9), y, Inches(3.6), Inches(len(short_bullets) * 0.16 + 0.05),
+                               short_bullets, size=8, color=MUTED)
+                y += Inches(len(short_bullets) * 0.16 + 0.08)
+            y += Inches(0.12)
 
-        # Right side: SBBs with individual card backgrounds
-        sbb_y = 1.6
+        # Right side: SBBs — calculate card height based on count
+        sbb_count = len(sbbs)
+        card_gap = 0.08
+        if sbb_count <= 3:
+            card_height = min(1.0, (available_height - card_gap * (sbb_count - 1)) / max(sbb_count, 1))
+        else:
+            card_height = (available_height - card_gap * (sbb_count - 1)) / sbb_count
+        card_height = max(0.55, min(1.0, card_height))  # clamp between 0.55 and 1.0
+
+        sbb_y = CARDS_TOP
         for sbb in sbbs:
-            if sbb_y > 4.6:
+            if sbb_y + card_height > CARDS_BOTTOM + 0.05:
                 break
             # SBB card background
-            self._rect(slide, Inches(5.2), Inches(sbb_y), Inches(4.3), Inches(1.0), CARD_BG)
+            self._rect(slide, Inches(5.2), Inches(sbb_y), Inches(4.3), Inches(card_height), CARD_BG)
             # Green left accent line
-            self._rect(slide, Inches(5.2), Inches(sbb_y), Inches(0.06), Inches(1.0), GREEN)
+            self._rect(slide, Inches(5.2), Inches(sbb_y), Inches(0.06), Inches(card_height), GREEN)
             # SBB ID
-            self._tb(slide, Inches(5.5), Inches(sbb_y + 0.08), Inches(2.0), Inches(0.2),
-                     sbb["id"], size=9, bold=True, color=GREEN)
+            self._tb(slide, Inches(5.5), Inches(sbb_y + 0.06), Inches(2.0), Inches(0.18),
+                     sbb["id"], size=8, bold=True, color=GREEN)
             # Name
-            self._tb(slide, Inches(5.5), Inches(sbb_y + 0.28), Inches(3.7), Inches(0.25),
-                     sbb.get("name", ""), size=11, bold=True)
-            # Short description
-            desc = self._get_short_desc(sbb)
-            if desc:
-                self._tb(slide, Inches(5.5), Inches(sbb_y + 0.55), Inches(3.7), Inches(0.3),
-                         desc, size=10, color=MUTED)
-            sbb_y += 1.2
+            self._tb(slide, Inches(5.5), Inches(sbb_y + 0.24), Inches(3.7), Inches(0.2),
+                     sbb.get("name", ""), size=10, bold=True)
+            # Team name (right-aligned, subtle)
+            sbb_team = sbb.get("team_name")
+            if sbb_team:
+                self._tb(slide, Inches(7.5), Inches(sbb_y + 0.06), Inches(1.8), Inches(0.15),
+                         sbb_team, size=7, color=LIGHT_BLUE_2,
+                         align=PP_ALIGN.RIGHT)
+            # Short description (only if card is tall enough)
+            if card_height >= 0.65:
+                desc = self._get_short_desc(sbb)
+                if desc:
+                    self._tb(slide, Inches(5.5), Inches(sbb_y + 0.42), Inches(3.7), Inches(0.2),
+                             desc[:60] + ("…" if len(desc) > 60 else ""), size=8, color=MUTED)
+            sbb_y += card_height + card_gap
 
     # ------------------------------------------------------------------
     # Integration Deep Dive (Model Gateway)
@@ -1072,11 +1108,13 @@ class PptxExportService:
         self._rect(slide, Inches(0), Inches(2.35), Inches(10), Inches(0.04), BLUE)
 
         self._tb(slide, Inches(0.7), Inches(0.5), Inches(8.0), Inches(0.6),
-                 "AI Architecture Patterns", size=28, bold=True)
-        self._tb(slide, Inches(0.7), Inches(1.2), Inches(8.0), Inches(0.4),
-                 "Initial work — additional patterns and categories to follow", size=13, color=LIGHT_BLUE)
-        self._tb(slide, Inches(0.7), Inches(1.65), Inches(5.0), Inches(0.3),
-                 "Azad Djan  |  AI Architect", size=11, color=MUTED)
+                 "Architecture Patterns", size=28, bold=True)
+        # Export date with timezone
+        from zoneinfo import ZoneInfo
+        est_now = datetime.now(ZoneInfo("America/New_York"))
+        export_date = est_now.strftime("%B %d, %Y  %I:%M %p EST")
+        self._tb(slide, Inches(0.7), Inches(1.2), Inches(5.0), Inches(0.3),
+                 export_date, size=11, color=MUTED)
 
         # Stats
         patterns = data["patterns"]

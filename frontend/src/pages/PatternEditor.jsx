@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   fetchPattern, createPattern, updatePattern,
@@ -6,7 +6,10 @@ import {
   aiGenerate, generatePatternId,
   fetchCategoryOverview, fetchTechnologies,
   uploadPatternImage, deletePatternImage, getUploadUrl,
+  aiSmartAction, fetchTeams,
 } from '../api/client'
+import AIFieldAssist from '../components/AIFieldAssist'
+import { useAuth } from '../contexts/AuthContext'
 
 const TYPES = ['AB', 'ABB', 'SBB']
 
@@ -47,6 +50,7 @@ export default function PatternEditor() {
   const { id } = useParams()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
+  const { canCreatePattern, canEditPattern, isAdmin } = useAuth()
   const isNew = !id
 
   // Check for prefill from Pattern Discovery
@@ -63,6 +67,8 @@ export default function PatternEditor() {
   // Categories loaded from API
   const [categories, setCategories] = useState([])
   const [abbs, setAbbs] = useState([])
+  const [teams, setTeams] = useState([])
+  const [originalTeamId, setOriginalTeamId] = useState(null)
   const [technologies, setTechnologies] = useState([])
   const [selectedTechs, setSelectedTechs] = useState(() => {
     if (prefill.technologies) return prefill.technologies.split(',').filter(Boolean)
@@ -104,6 +110,7 @@ export default function PatternEditor() {
     category: prefill.category || 'core',
     status: 'DRAFT',
     version: '1.0.0',
+    team_id: '',
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -146,6 +153,7 @@ export default function PatternEditor() {
     fetchPatterns({ type: 'ABB', limit: 100 }).then(res => setAbbs(res.patterns || [])).catch(() => {})
     fetchPatterns({ limit: 500 }).then(res => setAllPatterns(res.patterns || [])).catch(() => {})
     fetchTechnologies().then(res => setTechnologies(res.technologies || [])).catch(() => {})
+    if (isAdmin) fetchTeams().then(setTeams).catch(() => {})
     fetchProviders().then(res => {
       setProviders(res.providers || [])
       const def = res.providers?.find(p => p.is_default)
@@ -156,10 +164,22 @@ export default function PatternEditor() {
     }).catch(() => {})
   }, [])
 
+  // Permission check: redirect if user can't create/edit
+  useEffect(() => {
+    if (isNew && !canCreatePattern) {
+      navigate('/patterns', { replace: true })
+    }
+  }, [isNew, canCreatePattern, navigate])
+
   // Load existing pattern for editing — read structured fields directly
   useEffect(() => {
     if (id) {
       fetchPattern(id).then(p => {
+        // Check edit permission once pattern is loaded
+        if (!canEditPattern(p)) {
+          navigate(`/patterns/${id}`, { replace: true })
+          return
+        }
         setForm({
           id: p.id,
           name: p.name,
@@ -167,7 +187,9 @@ export default function PatternEditor() {
           category: p.category,
           status: p.status,
           version: p.version,
+          team_id: p.team_id || '',
         })
+        setOriginalTeamId(p.team_id || '')
 
         // Populate structured content fields directly from API response
         setSections({
@@ -359,15 +381,20 @@ export default function PatternEditor() {
         if (selectedTechs.length > 0) payload.technology_ids = selectedTechs
         if (selectedCompatTechs.length > 0) payload.compatible_tech_ids = selectedCompatTechs
         if (selectedDeps.length > 0) payload.depends_on_ids = selectedDeps
-        const created = await createPattern(payload)
+        // Admin can assign team on create via query param
+        const teamIdForCreate = isAdmin && form.team_id ? form.team_id : null
+        const created = await createPattern(payload, teamIdForCreate)
         navigate(`/patterns/${created.id}`, { state: { _refresh: Date.now() } })
       } else {
-        const { id: _, ...updateData } = payload
+        const { id: _, team_id: _tid, ...updateData } = payload
         updateData.implements_abbs = parentAbbs
         updateData.technology_ids = selectedTechs
         updateData.compatible_tech_ids = selectedCompatTechs
         updateData.depends_on_ids = selectedDeps
-        await updatePattern(id, updateData, 'none')
+        // Pass team_id only if admin changed it
+        const teamChanged = isAdmin && form.team_id !== originalTeamId
+        const teamIdParam = teamChanged ? (form.team_id || '') : null
+        await updatePattern(id, updateData, 'none', teamIdParam)
         navigate(`/patterns/${id}`, { state: { _refresh: Date.now() } })
       }
     } catch (err) {
@@ -380,6 +407,108 @@ export default function PatternEditor() {
   const setSection = (name, value) => setSections(s => ({ ...s, [name]: value }))
 
   const currentProvider = providers.find(p => p.name === provider)
+
+  // Section display name → API field name mapping
+  const SECTION_FIELD_MAP = {
+    'Intent': 'intent',
+    'Problem': 'problem',
+    'Solution': 'solution',
+    'Structural Elements': 'structural_elements',
+    'Invariants': 'invariants',
+    'Inter-Element Contracts': 'inter_element_contracts',
+    'Related Patterns': 'related_patterns_text',
+    'Related ADRs': 'related_adrs',
+    'Note on Building Blocks': 'building_blocks_note',
+    'Functionality': 'functionality',
+    'Specific Functionality': 'specific_functionality',
+    'Restrictions': 'restrictions',
+  }
+
+  // Build full pattern context for AI calls
+  const buildPatternContext = useCallback(() => ({
+    name: form.name,
+    type: form.type,
+    category: form.category,
+    status: form.status,
+    version: form.version,
+    // Map sections back to field names
+    ...Object.fromEntries(
+      Object.entries(sections).map(([name, val]) => [SECTION_FIELD_MAP[name] || name, val])
+    ),
+    inbound_interfaces: interfaces.inbound,
+    outbound_interfaces: interfaces.outbound,
+    description: description,
+    tags: tags,
+    deprecation_note: deprecationNote,
+    quality_attributes: qualityAttributes,
+    compliance_requirements: complianceRequirements,
+    vendor: vendor,
+    deployment_model: deploymentModel,
+    cost_tier: costTier,
+    licensing: licensing,
+    maturity: maturity,
+    business_capabilities: businessCaps,
+    sbb_mapping: sbbMapping,
+    consumed_by_ids: interop.consumedBy,
+    works_with_ids: interop.worksWith,
+  }), [form, sections, interfaces, description, tags, deprecationNote,
+       qualityAttributes, complianceRequirements, vendor, deploymentModel,
+       costTier, licensing, maturity, businessCaps, sbbMapping, interop])
+
+  // --- Smart Actions state ---
+  const [smartLoading, setSmartLoading] = useState(null) // action name or null
+  const [smartResult, setSmartResult] = useState(null) // { action, data }
+  const [smartError, setSmartError] = useState('')
+
+  const handleSmartAction = async (action) => {
+    setSmartLoading(action)
+    setSmartError('')
+    setSmartResult(null)
+    try {
+      const res = await aiSmartAction({
+        action,
+        pattern_context: buildPatternContext(),
+        pattern_type: form.type,
+        pattern_id: id || null,
+        provider: provider || null,
+        model: model || null,
+      })
+      setSmartResult({ action, data: res.result })
+    } catch (err) {
+      setSmartError(err.message)
+    }
+    setSmartLoading(null)
+  }
+
+  // Apply smart action results
+  const applyAutoTags = (newTags) => {
+    const merged = [...new Set([...tags, ...newTags])]
+    setTags(merged)
+    setSmartResult(null)
+  }
+
+  const applyDescription = (desc) => {
+    setDescription(desc)
+    setSmartResult(null)
+  }
+
+  const applyAutoFill = (fieldMap) => {
+    // fieldMap is { field_name: content }
+    const sectionFieldReverse = Object.fromEntries(
+      Object.entries(SECTION_FIELD_MAP).map(([k, v]) => [v, k])
+    )
+    for (const [field, content] of Object.entries(fieldMap)) {
+      if (sectionFieldReverse[field]) {
+        setSection(sectionFieldReverse[field], content)
+      } else if (field === 'description') setDescription(content)
+      else if (field === 'inbound_interfaces') setInterfaces(prev => ({ ...prev, inbound: content }))
+      else if (field === 'outbound_interfaces') setInterfaces(prev => ({ ...prev, outbound: content }))
+      else if (field === 'quality_attributes') setQualityAttributes(content)
+      else if (field === 'compliance_requirements') setComplianceRequirements(content)
+      else if (field === 'deprecation_note') setDeprecationNote(content)
+    }
+    setSmartResult(null)
+  }
 
   // --- Category Overview Panel ---
   const CategoryOverviewPanel = () => {
@@ -676,6 +805,271 @@ export default function PatternEditor() {
         <div className="bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg px-4 py-3 text-sm">{aiError}</div>
       )}
 
+      {/* AI Provider Bar */}
+      <div className="card flex items-center gap-3">
+        <span className="text-xs text-gray-500 font-semibold">AI Provider:</span>
+        <div className="flex gap-1.5 items-center flex-wrap">
+          {providers.map(p => (
+            <button
+              key={p.name}
+              onClick={() => { setProvider(p.name); setModel(p.default_model) }}
+              className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                provider === p.name
+                  ? 'bg-purple-600/20 border border-purple-500/40 text-purple-400'
+                  : p.available
+                    ? 'bg-gray-800 border border-gray-700 text-gray-400 hover:border-gray-600'
+                    : 'bg-gray-800/50 border border-gray-800 text-gray-600 cursor-not-allowed'
+              }`}
+              disabled={!p.available}
+            >
+              {p.name}
+            </button>
+          ))}
+        </div>
+        <input
+          type="text"
+          value={model}
+          onChange={e => setModel(e.target.value)}
+          placeholder="Model"
+          className="input text-xs py-1 px-2 w-44 ml-auto"
+        />
+      </div>
+
+      {/* AI Smart Actions */}
+      <div className="card">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold text-gray-400 flex items-center gap-2">
+            <span>&#10024;</span> AI Assistant
+          </h2>
+          {smartLoading && (
+            <span className="ai-loading">
+              <span className="ai-spinner" /> Running {smartLoading.replace('_', ' ')}...
+            </span>
+          )}
+        </div>
+        <div className="ai-smart-toolbar">
+          <button
+            onClick={() => handleSmartAction('auto_tags')}
+            disabled={!!smartLoading}
+            className="ai-smart-btn ai-smart-btn-tags"
+          >
+            &#127991; Auto-suggest Tags
+          </button>
+          <button
+            onClick={() => handleSmartAction('generate_description')}
+            disabled={!!smartLoading}
+            className="ai-smart-btn ai-smart-btn-desc"
+          >
+            &#128196; Generate Description
+          </button>
+          <button
+            onClick={() => handleSmartAction('suggest_relationships')}
+            disabled={!!smartLoading}
+            className="ai-smart-btn ai-smart-btn-rels"
+          >
+            &#128279; Suggest Relationships
+          </button>
+          <button
+            onClick={() => handleSmartAction('quality_check')}
+            disabled={!!smartLoading}
+            className="ai-smart-btn ai-smart-btn-quality"
+          >
+            &#9989; Quality Check
+          </button>
+          <button
+            onClick={() => handleSmartAction('auto_fill_empty')}
+            disabled={!!smartLoading}
+            className="ai-smart-btn ai-smart-btn-fill"
+          >
+            &#128295; Fill Empty Fields
+          </button>
+        </div>
+
+        {smartError && (
+          <div className="bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg px-3 py-2 text-xs mt-3">
+            {smartError}
+          </div>
+        )}
+
+        {/* Smart Action Results */}
+        {smartResult && smartResult.action === 'auto_tags' && Array.isArray(smartResult.data) && (
+          <div className="mt-3 p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs text-gray-400 font-medium">Suggested Tags</span>
+              <button onClick={() => applyAutoTags(smartResult.data)} className="text-xs text-green-400 hover:text-green-300">
+                Add All
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {smartResult.data.map(tag => (
+                <button
+                  key={tag}
+                  onClick={() => {
+                    if (!tags.includes(tag)) setTags([...tags, tag])
+                  }}
+                  className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${
+                    tags.includes(tag)
+                      ? 'bg-blue-500/15 text-blue-400 border-blue-500/30'
+                      : 'bg-gray-700/50 text-gray-300 border-gray-600 hover:bg-purple-500/15 hover:text-purple-400 hover:border-purple-500/30'
+                  }`}
+                >
+                  {tags.includes(tag) ? '\u2713 ' : '+ '}{tag}
+                </button>
+              ))}
+            </div>
+            <button onClick={() => setSmartResult(null)} className="text-xs text-gray-500 hover:text-gray-400 mt-2">
+              Dismiss
+            </button>
+          </div>
+        )}
+
+        {smartResult && smartResult.action === 'generate_description' && (
+          <div className="mt-3 p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs text-gray-400 font-medium">Generated Description</span>
+            </div>
+            <p className="text-sm text-gray-200 mb-2">{smartResult.data.description}</p>
+            <div className="flex gap-2">
+              <button onClick={() => applyDescription(smartResult.data.description)} className="text-xs text-green-400 hover:text-green-300">
+                &#10003; Apply
+              </button>
+              <button onClick={() => setSmartResult(null)} className="text-xs text-gray-500 hover:text-gray-400">
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
+
+        {smartResult && smartResult.action === 'suggest_relationships' && (
+          <div className="mt-3 p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs text-gray-400 font-medium">Suggested Relationships</span>
+            </div>
+            {smartResult.data.depends_on?.length > 0 && (
+              <div className="mb-2">
+                <span className="text-xs text-cyan-400 font-semibold">DEPENDS_ON:</span>
+                {smartResult.data.depends_on.map(r => (
+                  <div key={r.id} className="flex items-center gap-2 mt-1 ml-2">
+                    <button
+                      onClick={() => {
+                        if (!selectedDeps.includes(r.id)) setSelectedDeps([...selectedDeps, r.id])
+                      }}
+                      className={`text-xs px-2 py-0.5 rounded border transition-colors ${
+                        selectedDeps.includes(r.id)
+                          ? 'bg-green-500/15 text-green-400 border-green-500/30'
+                          : 'bg-gray-700/50 text-gray-300 border-gray-600 hover:bg-cyan-500/15 hover:text-cyan-400'
+                      }`}
+                    >
+                      {selectedDeps.includes(r.id) ? '\u2713 ' : '+ '}{r.id}
+                    </button>
+                    <span className="text-xs text-gray-400">{r.name} — {r.reason}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {smartResult.data.references?.length > 0 && (
+              <div className="mb-2">
+                <span className="text-xs text-cyan-400 font-semibold">REFERENCES:</span>
+                {smartResult.data.references.map(r => (
+                  <div key={r.id} className="flex items-center gap-2 mt-1 ml-2">
+                    <span className="text-xs font-mono text-gray-300">{r.id}</span>
+                    <span className="text-xs text-gray-400">{r.name} — {r.reason}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {smartResult.data.reasoning && (
+              <p className="text-xs text-gray-500 mt-2 italic">{smartResult.data.reasoning}</p>
+            )}
+            <button onClick={() => setSmartResult(null)} className="text-xs text-gray-500 hover:text-gray-400 mt-2">
+              Dismiss
+            </button>
+          </div>
+        )}
+
+        {smartResult && smartResult.action === 'quality_check' && (
+          <div className="mt-3 p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
+            <div className="flex items-center gap-4 mb-3">
+              <div className="text-center">
+                <div className={`quality-score quality-grade-${smartResult.data.grade || 'C'}`}>
+                  {smartResult.data.score || 0}
+                </div>
+                <div className="text-xs text-gray-500">Score</div>
+              </div>
+              <div className={`text-2xl font-bold quality-grade-${smartResult.data.grade || 'C'}`}>
+                {smartResult.data.grade || '?'}
+              </div>
+            </div>
+            {smartResult.data.strengths?.length > 0 && (
+              <div className="mb-2">
+                <span className="text-xs text-green-400 font-semibold">Strengths:</span>
+                {smartResult.data.strengths.map((s, i) => (
+                  <div key={i} className="text-xs text-gray-300 ml-2 mt-0.5">&#10003; {s}</div>
+                ))}
+              </div>
+            )}
+            {smartResult.data.issues?.length > 0 && (
+              <div className="mb-2">
+                <span className="text-xs text-amber-400 font-semibold">Issues:</span>
+                {smartResult.data.issues.map((issue, i) => (
+                  <div key={i} className="flex items-center gap-2 ml-2 mt-0.5">
+                    <span className={`text-xs px-1.5 py-0.5 rounded ${
+                      issue.severity === 'HIGH' ? 'bg-red-500/15 text-red-400'
+                      : issue.severity === 'MEDIUM' ? 'bg-amber-500/15 text-amber-400'
+                      : 'bg-gray-700 text-gray-400'
+                    }`}>{issue.severity}</span>
+                    <span className="text-xs text-gray-300">{issue.field}: {issue.message}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {smartResult.data.suggestions?.length > 0 && (
+              <div className="mb-2">
+                <span className="text-xs text-blue-400 font-semibold">Suggestions:</span>
+                {smartResult.data.suggestions.map((s, i) => (
+                  <div key={i} className="text-xs text-gray-300 ml-2 mt-0.5">&#8226; {s}</div>
+                ))}
+              </div>
+            )}
+            <button onClick={() => setSmartResult(null)} className="text-xs text-gray-500 hover:text-gray-400 mt-2">
+              Dismiss
+            </button>
+          </div>
+        )}
+
+        {smartResult && smartResult.action === 'auto_fill_empty' && typeof smartResult.data === 'object' && (
+          <div className="mt-3 p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs text-gray-400 font-medium">Generated Content for Empty Fields</span>
+              <button onClick={() => applyAutoFill(smartResult.data)} className="text-xs text-green-400 hover:text-green-300">
+                Apply All
+              </button>
+            </div>
+            <div className="space-y-2 max-h-64 overflow-y-auto">
+              {Object.entries(smartResult.data).map(([field, content]) => (
+                <div key={field} className="border border-gray-700/50 rounded p-2">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-mono text-purple-400">{field}</span>
+                    <button
+                      onClick={() => {
+                        applyAutoFill({ [field]: content })
+                      }}
+                      className="text-xs text-green-400 hover:text-green-300"
+                    >
+                      Apply
+                    </button>
+                  </div>
+                  <p className="text-xs text-gray-300 line-clamp-3">{String(content).slice(0, 200)}{String(content).length > 200 ? '...' : ''}</p>
+                </div>
+              ))}
+            </div>
+            <button onClick={() => setSmartResult(null)} className="text-xs text-gray-500 hover:text-gray-400 mt-2">
+              Dismiss
+            </button>
+          </div>
+        )}
+      </div>
+
       {/* Metadata */}
       <div className="card">
         <h2 className="text-sm font-semibold text-gray-400 mb-4">Metadata</h2>
@@ -735,6 +1129,15 @@ export default function PatternEditor() {
               {['DRAFT', 'ACTIVE', 'DEPRECATED'].map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
+          {isAdmin && teams.length > 0 && (
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Team</label>
+              <select value={form.team_id || ''} onChange={e => setField('team_id', e.target.value)} className="select w-full">
+                <option value="">Unassigned</option>
+                {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </div>
+          )}
         </div>
 
         {/* Relationships: Parent ABBs (SBB only — can implement multiple ABBs) */}
@@ -782,12 +1185,17 @@ export default function PatternEditor() {
         <div className="space-y-3">
           <div>
             <label className="block text-xs text-gray-500 mb-1">Description</label>
-            <textarea
+            <AIFieldAssist
+              fieldName="description"
               value={description}
-              onChange={e => setDescription(e.target.value)}
+              onChange={setDescription}
               placeholder="Short summary of this pattern..."
-              className="input w-full text-sm resize-y"
               rows={3}
+              patternContext={buildPatternContext()}
+              patternType={form.type}
+              patternId={id || null}
+              provider={provider}
+              model={model}
             />
           </div>
           <div>
@@ -830,12 +1238,17 @@ export default function PatternEditor() {
           {form.status === 'DEPRECATED' && (
             <div>
               <label className="block text-xs text-gray-500 mb-1">Deprecation Note</label>
-              <textarea
+              <AIFieldAssist
+                fieldName="deprecation_note"
                 value={deprecationNote}
-                onChange={e => setDeprecationNote(e.target.value)}
+                onChange={setDeprecationNote}
                 placeholder="Reason for deprecation, migration guidance..."
-                className="input w-full text-sm resize-y"
                 rows={2}
+                patternContext={buildPatternContext()}
+                patternType={form.type}
+                patternId={id || null}
+                provider={provider}
+                model={model}
               />
             </div>
           )}
@@ -844,7 +1257,7 @@ export default function PatternEditor() {
 
       {/* ===== SECTION-BASED CONTENT EDITING ===== */}
 
-      {/* --- AB Sections (all free-text) --- */}
+      {/* --- AB Sections (all free-text with AI assist) --- */}
       {form.type === 'AB' && (
         <>
           {['Intent', 'Problem', 'Solution', 'Structural Elements', 'Invariants',
@@ -852,12 +1265,17 @@ export default function PatternEditor() {
           ].map(name => (
             <div key={name} className="card">
               <h2 className="text-sm font-semibold text-gray-400 mb-3">{name}</h2>
-              <textarea
+              <AIFieldAssist
+                fieldName={SECTION_FIELD_MAP[name]}
                 value={sections[name] || ''}
-                onChange={e => setSection(name, e.target.value)}
+                onChange={val => setSection(name, val)}
                 placeholder={`Enter ${name.toLowerCase()} content...`}
-                className="input w-full font-mono text-sm resize-y"
                 rows={name === 'Structural Elements' || name === 'Inter-Element Contracts' ? 12 : 6}
+                patternContext={buildPatternContext()}
+                patternType={form.type}
+                patternId={id || null}
+                provider={provider}
+                model={model}
               />
             </div>
           ))}
@@ -867,40 +1285,55 @@ export default function PatternEditor() {
       {/* --- ABB Sections --- */}
       {form.type === 'ABB' && (
         <>
-          {/* Functionality — free text */}
+          {/* Functionality — free text with AI assist */}
           <div className="card">
             <h2 className="text-sm font-semibold text-gray-400 mb-3">Functionality</h2>
-            <textarea
+            <AIFieldAssist
+              fieldName="functionality"
               value={sections['Functionality'] || ''}
-              onChange={e => setSection('Functionality', e.target.value)}
+              onChange={val => setSection('Functionality', val)}
               placeholder="Describe the functionality of this building block..."
-              className="input w-full font-mono text-sm resize-y"
               rows={10}
+              patternContext={buildPatternContext()}
+              patternType={form.type}
+              patternId={id || null}
+              provider={provider}
+              model={model}
             />
           </div>
 
-          {/* Interfaces — structured (inbound/outbound) */}
+          {/* Interfaces — structured (inbound/outbound) with AI assist */}
           <div className="card">
             <h2 className="text-sm font-semibold text-gray-400 mb-3">Interfaces</h2>
             <div className="space-y-3">
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Inbound</label>
-                <textarea
+                <AIFieldAssist
+                  fieldName="inbound_interfaces"
                   value={interfaces.inbound}
-                  onChange={e => setInterfaces(prev => ({ ...prev, inbound: e.target.value }))}
+                  onChange={val => setInterfaces(prev => ({ ...prev, inbound: val }))}
                   placeholder="Describe inbound interfaces..."
-                  className="input w-full text-sm resize-y"
                   rows={2}
+                  patternContext={buildPatternContext()}
+                  patternType={form.type}
+                  patternId={id || null}
+                  provider={provider}
+                  model={model}
                 />
               </div>
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Outbound</label>
-                <textarea
+                <AIFieldAssist
+                  fieldName="outbound_interfaces"
                   value={interfaces.outbound}
-                  onChange={e => setInterfaces(prev => ({ ...prev, outbound: e.target.value }))}
+                  onChange={val => setInterfaces(prev => ({ ...prev, outbound: val }))}
                   placeholder="Describe outbound interfaces..."
-                  className="input w-full text-sm resize-y"
                   rows={2}
+                  patternContext={buildPatternContext()}
+                  patternType={form.type}
+                  patternId={id || null}
+                  provider={provider}
+                  model={model}
                 />
               </div>
             </div>
@@ -1016,48 +1449,63 @@ export default function PatternEditor() {
             )}
           </div>
 
-          {/* Quality Attributes (ABB) */}
+          {/* Quality Attributes (ABB) with AI assist */}
           <div className="card">
             <h2 className="text-sm font-semibold text-gray-400 mb-3">
               Quality Attributes
               <span className="font-normal text-gray-600 ml-2">NFR contract: latency, availability, throughput</span>
             </h2>
-            <textarea
+            <AIFieldAssist
+              fieldName="quality_attributes"
               value={qualityAttributes}
-              onChange={e => setQualityAttributes(e.target.value)}
+              onChange={setQualityAttributes}
               placeholder="Define quality attributes: latency targets, availability SLAs, throughput expectations..."
-              className="input w-full font-mono text-sm resize-y"
               rows={4}
+              patternContext={buildPatternContext()}
+              patternType={form.type}
+              patternId={id || null}
+              provider={provider}
+              model={model}
             />
           </div>
 
-          {/* Compliance Requirements (ABB) */}
+          {/* Compliance Requirements (ABB) with AI assist */}
           <div className="card">
             <h2 className="text-sm font-semibold text-gray-400 mb-3">
               Compliance Requirements
               <span className="font-normal text-gray-600 ml-2">GDPR, SOC2, ISO 27001, etc.</span>
             </h2>
-            <textarea
+            <AIFieldAssist
+              fieldName="compliance_requirements"
               value={complianceRequirements}
-              onChange={e => setComplianceRequirements(e.target.value)}
+              onChange={setComplianceRequirements}
               placeholder="Define compliance requirements: regulatory standards, data protection, audit requirements..."
-              className="input w-full font-mono text-sm resize-y"
               rows={4}
+              patternContext={buildPatternContext()}
+              patternType={form.type}
+              patternId={id || null}
+              provider={provider}
+              model={model}
             />
           </div>
 
-          {/* Restrictions */}
+          {/* Restrictions with AI assist */}
           <div className="card">
             <h2 className="text-sm font-semibold text-gray-400 mb-3">
               Restrictions
               <span className="font-normal text-gray-600 ml-2">Usage allowances, platform constraints, licensing</span>
             </h2>
-            <textarea
+            <AIFieldAssist
+              fieldName="restrictions"
               value={sections['Restrictions'] || ''}
-              onChange={e => setSection('Restrictions', e.target.value)}
+              onChange={val => setSection('Restrictions', val)}
               placeholder="Define restrictions: platform requirements, technology constraints, licensing limits, deployment restrictions..."
-              className="input w-full font-mono text-sm resize-y"
               rows={4}
+              patternContext={buildPatternContext()}
+              patternType={form.type}
+              patternId={id || null}
+              provider={provider}
+              model={model}
             />
           </div>
         </>
@@ -1066,40 +1514,55 @@ export default function PatternEditor() {
       {/* --- SBB Sections --- */}
       {form.type === 'SBB' && (
         <>
-          {/* Specific Functionality — free text */}
+          {/* Specific Functionality — free text with AI assist */}
           <div className="card">
             <h2 className="text-sm font-semibold text-gray-400 mb-3">Specific Functionality</h2>
-            <textarea
+            <AIFieldAssist
+              fieldName="specific_functionality"
               value={sections['Specific Functionality'] || ''}
-              onChange={e => setSection('Specific Functionality', e.target.value)}
+              onChange={val => setSection('Specific Functionality', val)}
               placeholder="Describe the specific functionality of this solution building block..."
-              className="input w-full font-mono text-sm resize-y"
               rows={10}
+              patternContext={buildPatternContext()}
+              patternType={form.type}
+              patternId={id || null}
+              provider={provider}
+              model={model}
             />
           </div>
 
-          {/* Interfaces — structured */}
+          {/* Interfaces — structured with AI assist */}
           <div className="card">
             <h2 className="text-sm font-semibold text-gray-400 mb-3">Interfaces</h2>
             <div className="space-y-3">
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Inbound</label>
-                <textarea
+                <AIFieldAssist
+                  fieldName="inbound_interfaces"
                   value={interfaces.inbound}
-                  onChange={e => setInterfaces(prev => ({ ...prev, inbound: e.target.value }))}
+                  onChange={val => setInterfaces(prev => ({ ...prev, inbound: val }))}
                   placeholder="Describe inbound interfaces..."
-                  className="input w-full text-sm resize-y"
                   rows={2}
+                  patternContext={buildPatternContext()}
+                  patternType={form.type}
+                  patternId={id || null}
+                  provider={provider}
+                  model={model}
                 />
               </div>
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Outbound</label>
-                <textarea
+                <AIFieldAssist
+                  fieldName="outbound_interfaces"
                   value={interfaces.outbound}
-                  onChange={e => setInterfaces(prev => ({ ...prev, outbound: e.target.value }))}
+                  onChange={val => setInterfaces(prev => ({ ...prev, outbound: val }))}
                   placeholder="Describe outbound interfaces..."
-                  className="input w-full text-sm resize-y"
                   rows={2}
+                  patternContext={buildPatternContext()}
+                  patternType={form.type}
+                  patternId={id || null}
+                  provider={provider}
+                  model={model}
                 />
               </div>
             </div>
@@ -1264,18 +1727,23 @@ export default function PatternEditor() {
             </div>
           </div>
 
-          {/* Restrictions */}
+          {/* Restrictions with AI assist */}
           <div className="card">
             <h2 className="text-sm font-semibold text-gray-400 mb-3">
               Restrictions
               <span className="font-normal text-gray-600 ml-2">Usage allowances, platform constraints, licensing</span>
             </h2>
-            <textarea
+            <AIFieldAssist
+              fieldName="restrictions"
               value={sections['Restrictions'] || ''}
-              onChange={e => setSection('Restrictions', e.target.value)}
+              onChange={val => setSection('Restrictions', val)}
               placeholder="Define restrictions: platform requirements, technology constraints, licensing limits, deployment restrictions..."
-              className="input w-full font-mono text-sm resize-y"
               rows={4}
+              patternContext={buildPatternContext()}
+              patternType={form.type}
+              patternId={id || null}
+              provider={provider}
+              model={model}
             />
           </div>
         </>
@@ -1313,7 +1781,7 @@ export default function PatternEditor() {
                 updated[i] = { ...diag, content: e.target.value }
                 setDiagrams(updated)
               }}
-              placeholder={'graph TD\n  A[Start] --> B[End]'}
+              placeholder={'---\nconfig:\n  theme: dark\n---\nflowchart LR\nA[Start] --Some text--> B(Continue)\nB --> C{Evaluate}\nC -- One --> D[Option 1]\nC -- Two --> E[Option 2]\nC -- Three --> F[fa:fa-car Option 3]'}
               className="input w-full font-mono text-sm resize-y mb-2"
               rows={8}
             />
@@ -1321,7 +1789,7 @@ export default function PatternEditor() {
           </div>
         ))}
         <button
-          onClick={() => setDiagrams([...diagrams, { id: crypto.randomUUID(), title: '', content: '' }])}
+          onClick={() => setDiagrams([...diagrams, { id: crypto.randomUUID(), title: '', content: '---\nconfig:\n  theme: dark\n---\nflowchart LR\nA[Start] --Some text--> B(Continue)\nB --> C{Evaluate}\nC -- One --> D[Option 1]\nC -- Two --> E[Option 2]\nC -- Three --> F[fa:fa-car Option 3]' }])}
           className="btn-secondary text-xs"
         >+ Add Diagram</button>
       </div>

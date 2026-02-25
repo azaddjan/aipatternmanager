@@ -79,6 +79,63 @@ Patterns are organized into categories: Core AI/LLM, Integration, Agents, Knowle
 
 The database creates constraints, indexes, and built-in categories on first startup.
 
+## Authentication & Authorization
+
+The platform includes a full role-based access control system with JWT authentication and team-based pattern ownership.
+
+### Default Admin Credentials
+
+On first startup, an admin user is automatically seeded:
+
+| Field | Default Value |
+|-------|---------------|
+| **Email** | `admin@patternmanager.local` |
+| **Password** | `admin123` |
+
+> **Important:** Change the default admin password immediately after first login via the Admin > Users management page.
+
+### Environment Variables
+
+Configure authentication via environment variables in `.env` or `docker-compose.yml`:
+
+```env
+JWT_SECRET=change-me-in-production       # Secret key for signing JWT tokens
+ADMIN_EMAIL=admin@patternmanager.local   # Initial admin user email
+ADMIN_PASSWORD=admin123                  # Initial admin user password
+```
+
+### Roles
+
+| Role | Permissions |
+|------|-------------|
+| **admin** | Full access to all patterns, users, teams, and settings |
+| **team_member** | Create patterns (auto-assigned to their team), edit/delete own team's patterns, read all patterns |
+| **viewer** | Read-only access to all patterns and data |
+
+### Team-Based Ownership
+
+- Each user belongs to one team
+- Patterns created by a team member are automatically assigned to their team via `OWNED_BY` relationship
+- Team members can only edit/delete patterns owned by their team
+- Admins can edit/delete any pattern regardless of team ownership
+- All users (including viewers) can read all patterns across teams
+
+### Anonymous Access
+
+Admins can toggle "Allow Anonymous Read Access" in the Admin > Configuration page. When enabled, unauthenticated users can browse patterns, the graph, and other read-only endpoints without logging in.
+
+### Auth API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/auth/login` | Login with email/password, returns JWT tokens |
+| POST | `/api/auth/refresh` | Refresh an expired access token |
+| GET | `/api/auth/me` | Get current authenticated user |
+| GET/POST | `/api/users` | List / create users (admin only) |
+| GET/PUT/DELETE | `/api/users/{id}` | User CRUD (admin only) |
+| GET/POST | `/api/teams` | List / create teams (admin only) |
+| GET/PUT/DELETE | `/api/teams/{id}` | Team CRUD (admin only) |
+
 ## Project Structure
 
 ```
@@ -90,7 +147,12 @@ The database creates constraints, indexes, and built-in categories on first star
 │   ├── prompts.yaml             # AI authoring prompt templates
 │   ├── models/
 │   │   └── schemas.py           # Pydantic request/response models
+│   ├── middleware/
+│   │   └── dependencies.py      # FastAPI auth dependencies (JWT, roles)
 │   ├── routers/
+│   │   ├── auth.py              # Login, refresh, me endpoints
+│   │   ├── users.py             # User management (admin only)
+│   │   ├── teams.py             # Team management (admin only)
 │   │   ├── patterns.py          # Pattern CRUD endpoints
 │   │   ├── technologies.py      # Technology registry endpoints
 │   │   ├── pbcs.py              # PBC management endpoints
@@ -102,8 +164,9 @@ The database creates constraints, indexes, and built-in categories on first star
 │   │   └── discovery.py         # AI pattern discovery
 │   ├── services/
 │   │   ├── neo4j_service.py     # Neo4j database operations & health scoring
+│   │   ├── auth_service.py      # JWT, passwords, user/team CRUD
 │   │   ├── ai_service.py        # AI orchestration
-│   │   ├── settings_service.py  # Configuration management
+│   │   ├── settings_service.py  # Configuration management (Neo4j-backed)
 │   │   ├── discovery_service.py # Pattern gap analysis
 │   │   ├── advisor_service.py   # Pattern advisor AI service
 │   │   ├── embedding_service.py # Embedding generation for patterns
@@ -128,15 +191,18 @@ The database creates constraints, indexes, and built-in categories on first star
 │   │   └── pptx_assets/             # Icon assets for PPTX slides
 ├── frontend/
 │   ├── src/
-│   │   ├── App.jsx              # Main app with routing
-│   │   ├── api/client.js        # Backend API client
+│   │   ├── App.jsx              # Main app with routing & auth gate
+│   │   ├── api/client.js        # Backend API client (with JWT auth)
+│   │   ├── contexts/
+│   │   │   └── AuthContext.jsx      # React auth state & token management
 │   │   ├── components/
-│   │   │   ├── Sidebar.jsx          # Navigation sidebar
+│   │   │   ├── Sidebar.jsx          # Navigation sidebar (role-based)
 │   │   │   ├── GraphView.jsx        # vis-network graph with persistent detail sidebar
 │   │   │   ├── PatternCard.jsx      # Pattern summary card
 │   │   │   ├── MarkdownContent.jsx  # Markdown renderer for AI content
 │   │   │   └── AutoLinkedText.jsx   # Auto-link pattern references
 │   │   └── pages/
+│   │       ├── Login.jsx            # Full-screen login page
 │   │       ├── Dashboard.jsx        # Overview dashboard
 │   │       ├── PatternList.jsx      # Pattern catalogue
 │   │       ├── PatternEditor.jsx    # Pattern create/edit form
@@ -150,7 +216,9 @@ The database creates constraints, indexes, and built-in categories on first star
 │   │       ├── PBCDetail.jsx
 │   │       ├── GraphExplorer.jsx    # Graph explorer with filters
 │   │       ├── ImpactAnalysis.jsx
-│   │       └── Admin.jsx            # Settings, export, import
+│   │       ├── Admin.jsx            # Settings, export, import
+│   │       ├── UserManagement.jsx   # User admin page
+│   │       └── TeamManagement.jsx   # Team admin page
 │   ├── Dockerfile
 │   ├── package.json
 │   ├── vite.config.js
@@ -165,6 +233,13 @@ The database creates constraints, indexes, and built-in categories on first star
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/health` | Health check with stats |
+| POST | `/api/auth/login` | Login with email/password |
+| POST | `/api/auth/refresh` | Refresh access token |
+| GET | `/api/auth/me` | Get current user |
+| GET/POST | `/api/users` | List / create users (admin) |
+| GET/PUT/DELETE | `/api/users/{id}` | User CRUD (admin) |
+| GET/POST | `/api/teams` | List / create teams (admin) |
+| GET/PUT/DELETE | `/api/teams/{id}` | Team CRUD (admin) |
 | GET/POST | `/api/patterns` | List / create patterns |
 | GET/PUT/DELETE | `/api/patterns/{id}` | Pattern CRUD |
 | GET/POST | `/api/technologies` | List / create technologies |

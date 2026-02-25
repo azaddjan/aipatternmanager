@@ -1,16 +1,23 @@
 """
-Admin settings service — stores API keys, provider config, and model defaults.
-Settings are persisted as a JSON file inside the container volume.
-API keys are stored in env vars at runtime and the file only holds masked references.
+Admin settings service — stores provider config and model defaults in Neo4j.
+API keys are stored in env vars at runtime (never persisted to DB).
+Uses an in-memory cache with TTL to avoid hitting Neo4j on every request.
 """
 import os
 import json
+import time
 import logging
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SETTINGS_FILE = Path("/app/settings.json")
+# ── Cache ──
+_CACHE_TTL_SECONDS = 60
+_cache: dict = {}
+_cache_timestamp: float = 0.0
+
+# Legacy file path (for one-time migration)
+_LEGACY_SETTINGS_FILE = Path("/app/settings.json")
 
 DEFAULT_SETTINGS = {
     "default_provider": "anthropic",
@@ -46,6 +53,9 @@ DEFAULT_SETTINGS = {
         "max_reports": 20,
         "retention_days": 30,
         "auto_cleanup": True,
+    },
+    "auth": {
+        "allow_anonymous_read": False,
     },
     "providers": {
         "anthropic": {
@@ -87,33 +97,93 @@ DEFAULT_SETTINGS = {
 }
 
 
-def _load_settings() -> dict:
-    """Load settings from JSON file, falling back to defaults."""
-    if SETTINGS_FILE.exists():
-        try:
-            data = json.loads(SETTINGS_FILE.read_text())
-            # Merge with defaults so new keys are added on upgrade
-            merged = {**DEFAULT_SETTINGS, **data}
-            merged["providers"] = {**DEFAULT_SETTINGS["providers"], **data.get("providers", {})}
-            merged["embedding"] = {**DEFAULT_SETTINGS["embedding"], **data.get("embedding", {})}
-            merged["report_retention"] = {**DEFAULT_SETTINGS["report_retention"], **data.get("report_retention", {})}
-            return merged
-        except Exception as e:
-            logger.warning(f"Failed to load settings: {e}, using defaults")
-    return DEFAULT_SETTINGS.copy()
+# ── Internal helpers ──
+
+def _get_db():
+    """Lazy import to avoid circular dependency."""
+    from main import db_service
+    return db_service
 
 
-def _save_settings(settings: dict):
-    """Persist settings to JSON file."""
+def _load_from_db() -> dict:
+    """Load all SystemConfig nodes and reconstruct settings dict with cache."""
+    global _cache, _cache_timestamp
+
+    # Check cache freshness
+    if _cache and (time.time() - _cache_timestamp) < _CACHE_TTL_SECONDS:
+        return _cache.copy()
+
+    db = _get_db()
+    if not db or not db.verify_connectivity():
+        logger.warning("DB not available for settings, using defaults")
+        return DEFAULT_SETTINGS.copy()
+
+    settings = {}
     try:
-        SETTINGS_FILE.write_text(json.dumps(settings, indent=2))
+        with db.session() as session:
+            result = session.run(
+                "MATCH (c:SystemConfig) RETURN c.key AS key, c.value_json AS value_json"
+            )
+            for record in result:
+                key = record["key"]
+                try:
+                    settings[key] = json.loads(record["value_json"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
     except Exception as e:
-        logger.error(f"Failed to save settings: {e}")
+        logger.warning(f"Failed to load settings from DB: {e}")
+        return DEFAULT_SETTINGS.copy()
 
+    # Merge with defaults so new keys are added on upgrade
+    merged = {**DEFAULT_SETTINGS, **settings}
+    merged["providers"] = {**DEFAULT_SETTINGS["providers"], **settings.get("providers", {})}
+    merged["embedding"] = {**DEFAULT_SETTINGS["embedding"], **settings.get("embedding", {})}
+    merged["report_retention"] = {**DEFAULT_SETTINGS["report_retention"], **settings.get("report_retention", {})}
+    merged["auth"] = {**DEFAULT_SETTINGS["auth"], **settings.get("auth", {})}
+
+    # Update cache
+    _cache = merged
+    _cache_timestamp = time.time()
+    return merged.copy()
+
+
+def _save_to_db(key: str, value):
+    """Upsert a single SystemConfig node."""
+    global _cache_timestamp
+
+    db = _get_db()
+    if not db:
+        logger.error("Cannot save settings: DB not available")
+        return
+
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    value_json = json.dumps(value)
+
+    with db.session() as session:
+        session.run(
+            """
+            MERGE (c:SystemConfig {key: $key})
+            SET c.value_json = $value_json, c.updated_at = $now
+            """,
+            key=key, value_json=value_json, now=now,
+        )
+
+    # Invalidate cache so next read picks up the change
+    _cache_timestamp = 0.0
+
+
+def invalidate_cache():
+    """Force re-read from DB on next access."""
+    global _cache_timestamp
+    _cache_timestamp = 0.0
+
+
+# ── Public API (same signatures as before) ──
 
 def get_settings() -> dict:
     """Get current admin settings with masked API keys."""
-    settings = _load_settings()
+    settings = _load_from_db()
 
     # Check which keys are actually set in env
     settings["providers"]["anthropic"]["key_set"] = bool(os.getenv("ANTHROPIC_API_KEY", ""))
@@ -128,19 +198,20 @@ def get_settings() -> dict:
 
 def update_settings(updates: dict) -> dict:
     """Update admin settings (provider config, models, etc.)."""
-    settings = _load_settings()
+    settings = _load_from_db()
 
     if "default_provider" in updates:
         settings["default_provider"] = updates["default_provider"]
         os.environ["DEFAULT_LLM_PROVIDER"] = updates["default_provider"]
+        _save_to_db("default_provider", updates["default_provider"])
 
     if "providers" in updates:
         for prov_name, prov_config in updates["providers"].items():
             if prov_name in settings["providers"]:
-                # Update model, enabled, etc. but NOT key info
                 for k, v in prov_config.items():
                     if k not in ("key_set",):  # don't overwrite computed fields
                         settings["providers"][prov_name][k] = v
+        _save_to_db("providers", settings["providers"])
 
     if "embedding" in updates:
         for k, v in updates["embedding"].items():
@@ -155,73 +226,54 @@ def update_settings(updates: dict) -> dict:
             prov_models = emb_providers.get(new_prov, {}).get("models", [])
             if prov_models:
                 settings["embedding"]["model"] = prov_models[0]["id"]
+        _save_to_db("embedding", settings["embedding"])
         # Reinitialize embedding service singleton when config changes
         _reinit_embedding_service()
 
     if "report_retention" in updates:
         for k, v in updates["report_retention"].items():
             settings["report_retention"][k] = v
+        _save_to_db("report_retention", settings["report_retention"])
 
-    _save_settings(settings)
+    if "auth" in updates:
+        for k, v in updates["auth"].items():
+            settings["auth"][k] = v
+        _save_to_db("auth", settings["auth"])
+
     return get_settings()
 
 
 def set_api_key(provider: str, key: str, secret: str = None) -> dict:
     """Set an API key at runtime. Updates the env var so providers pick it up."""
-    settings = _load_settings()
-
     if provider == "anthropic":
         os.environ["ANTHROPIC_API_KEY"] = key
-        settings["providers"]["anthropic"]["key_set"] = True
-        # Reinitialize the Anthropic provider client
         _reinit_provider("anthropic")
 
     elif provider == "openai":
         os.environ["OPENAI_API_KEY"] = key
-        settings["providers"]["openai"]["key_set"] = True
         _reinit_provider("openai")
 
     elif provider == "bedrock":
         os.environ["AWS_ACCESS_KEY_ID"] = key
         if secret:
             os.environ["AWS_SECRET_ACCESS_KEY"] = secret
-        settings["providers"]["bedrock"]["key_set"] = True
         _reinit_provider("bedrock")
 
     else:
         raise ValueError(f"Unknown provider: {provider}")
 
-    _save_settings(settings)
     return get_settings()
-
-
-def _reinit_provider(name: str):
-    """Force re-initialization of a specific provider after key change."""
-    try:
-        from services.llm.provider_factory import _providers, _init_providers
-        _init_providers()
-        if name == "anthropic":
-            from services.llm.anthropic_provider import AnthropicProvider
-            _providers["anthropic"] = AnthropicProvider()
-        elif name == "openai":
-            from services.llm.openai_provider import OpenAIProvider
-            _providers["openai"] = OpenAIProvider()
-        elif name == "bedrock":
-            from services.llm.bedrock_provider import BedrockProvider
-            _providers["bedrock"] = BedrockProvider()
-    except Exception as e:
-        logger.warning(f"Failed to reinit provider {name}: {e}")
 
 
 def get_retention_settings() -> dict:
     """Get report retention configuration."""
-    settings = _load_settings()
+    settings = _load_from_db()
     return settings.get("report_retention", DEFAULT_SETTINGS["report_retention"])
 
 
 def get_embedding_settings() -> dict:
     """Get the current embedding configuration."""
-    settings = _load_settings()
+    settings = _load_from_db()
     emb = settings.get("embedding", DEFAULT_SETTINGS["embedding"])
     provider = emb.get("provider", "openai")
     model = emb.get("model", "text-embedding-3-small")
@@ -257,14 +309,10 @@ def get_embedding_settings() -> dict:
     }
 
 
-def _reinit_embedding_service():
-    """Force re-initialization of the embedding service singleton after config change."""
-    try:
-        from routers.advisor import _get_embedding_svc
-        import routers.advisor as adv_mod
-        adv_mod._embedding_svc = None  # reset so next call rebuilds
-    except Exception as e:
-        logger.warning(f"Failed to reinit embedding service: {e}")
+def get_auth_settings() -> dict:
+    """Get the current authentication configuration."""
+    settings = _load_from_db()
+    return settings.get("auth", DEFAULT_SETTINGS["auth"])
 
 
 def get_masked_key(provider: str) -> str:
@@ -284,3 +332,88 @@ def get_masked_key(provider: str) -> str:
     if not key or len(key) < 8:
         return ""
     return key[:4] + "***" + key[-4:]
+
+
+# ── Seed & Migration ──
+
+def seed_defaults():
+    """On first boot, if no SystemConfig nodes exist, seed from DEFAULT_SETTINGS."""
+    db = _get_db()
+    if not db or not db.verify_connectivity():
+        return
+
+    with db.session() as session:
+        count = session.run("MATCH (c:SystemConfig) RETURN count(c) AS cnt").single()["cnt"]
+
+    if count > 0:
+        logger.info(f"SystemConfig already seeded ({count} keys)")
+        return
+
+    logger.info("Seeding default config into Neo4j...")
+    for key in ("default_provider", "providers", "embedding", "report_retention", "auth"):
+        _save_to_db(key, DEFAULT_SETTINGS.get(key, {}))
+    logger.info("Default config seeded successfully")
+
+
+def migrate_json_to_db():
+    """One-time migration: read existing settings.json, insert into Neo4j, rename file."""
+    if not _LEGACY_SETTINGS_FILE.exists():
+        return
+
+    db = _get_db()
+    if not db or not db.verify_connectivity():
+        return
+
+    # Only migrate if DB has no config yet
+    with db.session() as session:
+        count = session.run("MATCH (c:SystemConfig) RETURN count(c) AS cnt").single()["cnt"]
+    if count > 0:
+        # DB already has config, just rename the file
+        try:
+            _LEGACY_SETTINGS_FILE.rename(_LEGACY_SETTINGS_FILE.with_suffix(".json.migrated"))
+            logger.info("Renamed settings.json to .migrated (DB already has config)")
+        except Exception:
+            pass
+        return
+
+    try:
+        data = json.loads(_LEGACY_SETTINGS_FILE.read_text())
+        for key in ("default_provider", "providers", "embedding", "report_retention"):
+            if key in data:
+                _save_to_db(key, data[key])
+        # Add auth defaults (not in legacy file)
+        _save_to_db("auth", DEFAULT_SETTINGS["auth"])
+        _LEGACY_SETTINGS_FILE.rename(_LEGACY_SETTINGS_FILE.with_suffix(".json.migrated"))
+        logger.info("Migrated settings.json to Neo4j SystemConfig")
+    except Exception as e:
+        logger.warning(f"Failed to migrate settings.json: {e}")
+
+
+# ── Internal helpers for provider reinitialization ──
+
+def _reinit_provider(name: str):
+    """Force re-initialization of a specific provider after key change."""
+    try:
+        from services.llm.provider_factory import _providers, _init_providers
+        _init_providers()
+        if name == "anthropic":
+            from services.llm.anthropic_provider import AnthropicProvider
+            _providers["anthropic"] = AnthropicProvider()
+        elif name == "openai":
+            from services.llm.openai_provider import OpenAIProvider
+            _providers["openai"] = OpenAIProvider()
+        elif name == "bedrock":
+            from services.llm.bedrock_provider import BedrockProvider
+            _providers["bedrock"] = BedrockProvider()
+    except Exception as e:
+        logger.warning(f"Failed to reinit provider {name}: {e}")
+
+
+def _reinit_embedding_service():
+    """Force re-initialization of the embedding service singleton after config change."""
+    try:
+        from routers.advisor import _get_embedding_svc
+        import routers.advisor as adv_mod
+        adv_mod._embedding_svc = None  # reset so next call rebuilds
+    except Exception as e:
+        logger.warning(f"Failed to reinit embedding service: {e}")

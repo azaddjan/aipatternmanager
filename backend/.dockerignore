@@ -1,0 +1,48 @@
+# Environment & secrets
+.env
+.env.*
+*.env
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Docker
+Dockerfile
+.dockerignore
+
+# Local data / uploads (mounted as volumes)
+backups/
+uploads/
+static/uploads/
+
+# Migrated settings
+settings.json
+settings.json.migrated
+
+# Logs
+*.log
+
+# Tests
+tests/
+.pytest_cache/
+.coverage
+htmlcov/

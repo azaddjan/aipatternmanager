@@ -36,9 +36,10 @@ class DocxExportService:
     def __init__(self, db: Neo4jService):
         self.db = db
 
-    def generate_docx(self) -> bytes:
+    def generate_docx(self, team_ids=None, team_names=None) -> bytes:
         """Generate a DOCX file and return raw bytes."""
-        data = self._fetch_all_data()
+        self._team_names = team_names or []
+        data = self._fetch_all_data(team_ids=team_ids)
         doc = Document()
 
         # Set default font
@@ -126,8 +127,8 @@ class DocxExportService:
     # Data fetching
     # ------------------------------------------------------------------
 
-    def _fetch_all_data(self) -> dict:
-        patterns, _ = self.db.list_patterns(limit=500)
+    def _fetch_all_data(self, team_ids=None) -> dict:
+        patterns, _ = self.db.list_patterns(limit=500, team_ids=team_ids)
         full_patterns = []
         for p in patterns:
             full = self.db.get_pattern_with_relationships(p["id"])
@@ -164,7 +165,7 @@ class DocxExportService:
         # Title
         title = doc.add_paragraph()
         title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run = title.add_run("AI Architecture Patterns")
+        run = title.add_run("Architecture Patterns")
         run.bold = True
         run.font.size = Pt(36)
         run.font.color.rgb = RGBColor(0x1a, 0x1a, 0x2e)
@@ -181,9 +182,19 @@ class DocxExportService:
         # Date
         date_para = doc.add_paragraph()
         date_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run = date_para.add_run(datetime.now().strftime("%B %d, %Y"))
+        from zoneinfo import ZoneInfo
+        est_now = datetime.now(ZoneInfo("America/New_York"))
+        run = date_para.add_run(est_now.strftime("%B %d, %Y  %I:%M %p EST"))
         run.font.size = Pt(12)
         run.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
+
+        # Team scope
+        if self._team_names:
+            scope_para = doc.add_paragraph()
+            scope_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = scope_para.add_run("Teams: " + ", ".join(self._team_names))
+            run.font.size = Pt(11)
+            run.font.color.rgb = RGBColor(0x58, 0xa6, 0xff)
 
         doc.add_paragraph("")
 
@@ -278,12 +289,15 @@ class DocxExportService:
         table.style = 'Light Shading Accent 1'
         table.alignment = WD_TABLE_ALIGNMENT.LEFT
 
+        team_name = pattern.get("team_name")
         meta_fields = [
             ("Type", ptype),
             ("Category", pattern.get("category", "")),
             ("Status", pattern.get("status", "")),
             ("Version", pattern.get("version", "")),
         ]
+        if team_name:
+            meta_fields.append(("Team", team_name))
 
         for label, value in meta_fields:
             if value:

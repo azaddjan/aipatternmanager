@@ -1,15 +1,17 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useParams, Link, useNavigate, useLocation } from 'react-router-dom'
-import { fetchPattern, deletePattern, fetchPatternGraph, getArtifactsUrl, getUploadUrl } from '../api/client'
+import { fetchPattern, deletePattern, fetchPatternGraph, getArtifactsUrl, getUploadUrl, authenticatedDownload } from '../api/client'
 import AutoLinkedText from '../components/AutoLinkedText'
 import MarkdownContent from '../components/MarkdownContent'
 import GraphView from '../components/GraphView'
 import { TypeBadge } from '../components/PatternCard'
+import { useAuth } from '../contexts/AuthContext'
 
 export default function PatternDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
   const location = useLocation()
+  const { canEditPattern } = useAuth()
   const [pattern, setPattern] = useState(null)
   const [graphData, setGraphData] = useState(null)
   const [tab, setTab] = useState('content') // content | relationships | graph
@@ -87,6 +89,8 @@ export default function PatternDetail() {
           <h1 className="text-2xl font-bold text-white">{pattern.name}</h1>
           <p className="text-gray-500 text-sm mt-1">
             Category: {pattern.category} &middot; Version: {pattern.version}
+            {pattern.team_name && <> &middot; Team: <span className="text-purple-400">{pattern.team_name}</span></>}
+            {pattern.created_by && <> &middot; Created by: {pattern.created_by}</>}
           </p>
           {pattern.tags?.length > 0 && (
             <div className="flex flex-wrap gap-1.5 mt-2">
@@ -103,11 +107,15 @@ export default function PatternDetail() {
         </div>
         <div className="flex gap-2">
           {(pattern.images?.length > 0 || pattern.diagrams?.length > 0) && (
-            <a href={getArtifactsUrl(id)} download className="btn-secondary">Download Artifacts</a>
+            <button onClick={() => authenticatedDownload(getArtifactsUrl(id), `${id}-artifacts.zip`)} className="btn-secondary">Download Artifacts</button>
           )}
-          <Link to={`/patterns/${id}/edit`} className="btn-secondary">Edit</Link>
+          {canEditPattern(pattern) && (
+            <Link to={`/patterns/${id}/edit`} className="btn-secondary">Edit</Link>
+          )}
           <Link to={`/impact?id=${id}`} className="btn-secondary">Impact Analysis</Link>
-          <button onClick={handleDelete} className="btn-danger">Delete</button>
+          {canEditPattern(pattern) && (
+            <button onClick={handleDelete} className="btn-danger">Delete</button>
+          )}
         </div>
       </div>
 

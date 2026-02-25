@@ -1,19 +1,105 @@
 const BASE_URL = '/api'
 
+function getStoredToken() {
+  return localStorage.getItem('pm_access_token')
+}
+
+function getAuthHeaders() {
+  const token = getStoredToken()
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
+async function attemptRefresh() {
+  const refreshToken = localStorage.getItem('pm_refresh_token')
+  if (!refreshToken) return false
+  try {
+    const res = await fetch(`${BASE_URL}/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    })
+    if (!res.ok) return false
+    const data = await res.json()
+    localStorage.setItem('pm_access_token', data.access_token)
+    localStorage.setItem('pm_refresh_token', data.refresh_token)
+    localStorage.setItem('pm_user', JSON.stringify(data.user))
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Download a file from an authenticated endpoint using fetch + blob.
+ * Handles token refresh automatically. Falls back to window.open on error.
+ */
+export async function authenticatedDownload(url, filename = null) {
+  const headers = { ...getAuthHeaders() }
+
+  let res = await fetch(url, { headers })
+
+  // If 401, attempt token refresh once and retry
+  if (res.status === 401 && getStoredToken()) {
+    const refreshed = await attemptRefresh()
+    if (refreshed) {
+      res = await fetch(url, { headers: { ...getAuthHeaders() } })
+    }
+  }
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(error.detail || `Download failed: ${res.status}`)
+  }
+
+  const blob = await res.blob()
+  const blobUrl = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = blobUrl
+
+  // Derive filename from Content-Disposition header or fallback
+  if (!filename) {
+    const disposition = res.headers.get('Content-Disposition')
+    if (disposition) {
+      const match = disposition.match(/filename[^;=\n]*=["']?([^"';\n]+)/)
+      if (match) filename = match[1]
+    }
+  }
+  if (!filename) filename = 'download'
+
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(blobUrl)
+}
+
 async function request(path, options = {}) {
   const url = `${BASE_URL}${path}`
   const config = {
     headers: {
       'Content-Type': 'application/json',
       'Cache-Control': 'no-cache',
+      ...getAuthHeaders(),
       ...options.headers,
     },
     ...options,
   }
-  const res = await fetch(url, config)
+  let res = await fetch(url, config)
+
+  // If 401, attempt token refresh once and retry
+  if (res.status === 401 && getStoredToken()) {
+    const refreshed = await attemptRefresh()
+    if (refreshed) {
+      config.headers = { ...config.headers, ...getAuthHeaders() }
+      res = await fetch(url, config)
+    }
+  }
+
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: res.statusText }))
-    throw new Error(error.detail || `Request failed: ${res.status}`)
+    const err = new Error(error.detail || `Request failed: ${res.status}`)
+    err.status = res.status
+    throw err
   }
   return res.json()
 }
@@ -35,13 +121,16 @@ export function fetchPattern(id) {
   return request(`/patterns/${id}`)
 }
 
-export function createPattern(data) {
-  return request('/patterns', { method: 'POST', body: JSON.stringify(data) })
+export function createPattern(data, teamId = null) {
+  let url = '/patterns'
+  if (teamId) url += `?team_id=${encodeURIComponent(teamId)}`
+  return request(url, { method: 'POST', body: JSON.stringify(data) })
 }
 
-export function updatePattern(id, data, versionBump = 'patch') {
-  const qs = versionBump ? `?version_bump=${versionBump}` : ''
-  return request(`/patterns/${id}${qs}`, { method: 'PUT', body: JSON.stringify(data) })
+export function updatePattern(id, data, versionBump = 'patch', teamId = null) {
+  let url = `/patterns/${encodeURIComponent(id)}?version_bump=${versionBump || 'patch'}`
+  if (teamId !== null && teamId !== undefined) url += `&team_id=${encodeURIComponent(teamId)}`
+  return request(url, { method: 'PUT', body: JSON.stringify(data) })
 }
 
 export function deletePattern(id) {
@@ -137,8 +226,9 @@ export function fetchPBCGraph(id) {
 
 // --- Graph ---
 
-export function fetchFullGraph() {
-  return request('/graph/full')
+export function fetchFullGraph(teamId = null) {
+  const params = teamId ? `?team_id=${encodeURIComponent(teamId)}` : ''
+  return request(`/graph/full${params}`)
 }
 
 export function fetchImpactAnalysis(id) {
@@ -157,6 +247,18 @@ export function aiGenerate(data) {
 
 export function fetchProviders() {
   return request('/ai/providers')
+}
+
+export function aiFieldAssist(data) {
+  return request('/ai/field-assist', { method: 'POST', body: JSON.stringify(data) })
+}
+
+export function aiSmartAction(data) {
+  return request('/ai/smart-actions', { method: 'POST', body: JSON.stringify(data) })
+}
+
+export function aiTechnologySuggest(data) {
+  return request('/ai/technology-suggest', { method: 'POST', body: JSON.stringify(data) })
 }
 
 // --- Admin ---
@@ -182,16 +284,19 @@ export function testProvider(providerName) {
 
 // --- Export ---
 
-export function exportHtmlUrl() {
-  return `${BASE_URL}/admin/export/html`
+export function exportHtmlUrl(teamIds = null) {
+  const params = teamIds?.length ? `?team_ids=${teamIds.join(',')}` : ''
+  return `${BASE_URL}/admin/export/html${params}`
 }
 
-export function exportPptxUrl() {
-  return `${BASE_URL}/admin/export/pptx`
+export function exportPptxUrl(teamIds = null) {
+  const params = teamIds?.length ? `?team_ids=${teamIds.join(',')}` : ''
+  return `${BASE_URL}/admin/export/pptx${params}`
 }
 
-export function exportDocxUrl() {
-  return `${BASE_URL}/admin/export/docx`
+export function exportDocxUrl(teamIds = null) {
+  const params = teamIds?.length ? `?team_ids=${teamIds.join(',')}` : ''
+  return `${BASE_URL}/admin/export/docx${params}`
 }
 
 export function exportJsonUrl() {
@@ -205,6 +310,7 @@ export async function importPreview(file) {
   formData.append('file', file)
   const res = await fetch(`${BASE_URL}/admin/import/preview`, {
     method: 'POST',
+    headers: { ...getAuthHeaders() },
     body: formData,
   })
   if (!res.ok) {
@@ -223,6 +329,7 @@ export async function importBackup(file, include = null) {
   }
   const res = await fetch(url, {
     method: 'POST',
+    headers: { ...getAuthHeaders() },
     body: formData,
   })
   if (!res.ok) {
@@ -277,6 +384,10 @@ export function analyzePattern(data) {
   return request('/advisor/analyze', { method: 'POST', body: JSON.stringify(data) })
 }
 
+export function clarifyProblem(data) {
+  return request('/advisor/clarify', { method: 'POST', body: JSON.stringify(data) })
+}
+
 export function generateEmbeddings() {
   return request('/advisor/embed', { method: 'POST' })
 }
@@ -324,41 +435,43 @@ export function advisorReportExportDocxUrl(id) {
 
 // --- Pattern Health ---
 
-export function fetchPatternHealth() {
-  return request('/admin/pattern-health')
+export function fetchPatternHealth(teamId = null) {
+  const params = teamId ? `?team_id=${encodeURIComponent(teamId)}` : ''
+  return request(`/pattern-health${params}`)
 }
 
-export function analyzePatternHealth(provider = null, model = null) {
+export function analyzePatternHealth(provider = null, model = null, teamId = null) {
   const body = {}
   if (provider) body.provider = provider
   if (model) body.model = model
-  return request('/admin/pattern-health/analyze', { method: 'POST', body: JSON.stringify(body) })
+  if (teamId) body.team_id = teamId
+  return request('/pattern-health/analyze', { method: 'POST', body: JSON.stringify(body) })
 }
 
 // --- Health Analysis Persistence ---
 
 export function fetchLatestHealthAnalysis() {
-  return request('/admin/pattern-health/analyses/latest')
+  return request('/pattern-health/analyses/latest')
 }
 
 export function fetchHealthAnalyses(limit = 20) {
-  return request(`/admin/pattern-health/analyses?limit=${limit}`)
+  return request(`/pattern-health/analyses?limit=${limit}`)
 }
 
 export function fetchHealthAnalysis(id) {
-  return request(`/admin/pattern-health/analyses/${encodeURIComponent(id)}`)
+  return request(`/pattern-health/analyses/${encodeURIComponent(id)}`)
 }
 
 export function deleteHealthAnalysis(id) {
-  return request(`/admin/pattern-health/analyses/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  return request(`/pattern-health/analyses/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
 export function healthAnalysisExportHtmlUrl(id) {
-  return `${BASE_URL}/admin/pattern-health/analyses/${encodeURIComponent(id)}/export/html`
+  return `${BASE_URL}/pattern-health/analyses/${encodeURIComponent(id)}/export/html`
 }
 
 export function healthAnalysisExportDocxUrl(id) {
-  return `${BASE_URL}/admin/pattern-health/analyses/${encodeURIComponent(id)}/export/docx`
+  return `${BASE_URL}/pattern-health/analyses/${encodeURIComponent(id)}/export/docx`
 }
 
 // --- Discovery ---
@@ -382,7 +495,7 @@ export async function uploadPatternImage(patternId, file, title = '') {
   const formData = new FormData()
   formData.append('file', file)
   const url = `${BASE_URL}/patterns/${patternId}/images?title=${encodeURIComponent(title)}`
-  const res = await fetch(url, { method: 'POST', body: formData })
+  const res = await fetch(url, { method: 'POST', headers: { ...getAuthHeaders() }, body: formData })
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: res.statusText }))
     throw new Error(error.detail || `Upload failed: ${res.status}`)
@@ -400,6 +513,88 @@ export function getArtifactsUrl(patternId) {
 
 export function getUploadUrl(filename) {
   return `${BASE_URL}/uploads/${filename}`
+}
+
+// --- Users (Admin) ---
+
+export async function fetchUsers() {
+  const res = await request('/users')
+  return res.users || res
+}
+
+export function fetchUser(id) {
+  return request(`/users/${encodeURIComponent(id)}`)
+}
+
+export function createUser(data) {
+  return request('/users', { method: 'POST', body: JSON.stringify(data) })
+}
+
+export function updateUser(id, data) {
+  return request(`/users/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(data) })
+}
+
+export function deleteUser(id) {
+  return request(`/users/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+// --- Teams (Admin) ---
+
+export async function fetchTeams() {
+  const res = await request('/teams')
+  return res.teams || res
+}
+
+export function fetchTeam(id) {
+  return request(`/teams/${encodeURIComponent(id)}`)
+}
+
+export function createTeam(data) {
+  return request('/teams', { method: 'POST', body: JSON.stringify(data) })
+}
+
+export function updateTeam(id, data) {
+  return request(`/teams/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(data) })
+}
+
+export function deleteTeam(id) {
+  return request(`/teams/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export function assignPatternsToTeam(teamId, patternIds) {
+  return request('/teams/assign-patterns', {
+    method: 'POST',
+    body: JSON.stringify({ team_id: teamId, pattern_ids: patternIds }),
+  })
+}
+
+// --- AI Prompts (Admin) ---
+
+export function fetchPrompts() {
+  return request('/admin/prompts')
+}
+
+export function updatePrompt(section, subPrompt, value) {
+  return request(`/admin/prompts/${encodeURIComponent(section)}/${encodeURIComponent(subPrompt)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ value }),
+  })
+}
+
+export function resetPrompt(section, subPrompt) {
+  return request(`/admin/prompts/${encodeURIComponent(section)}/${encodeURIComponent(subPrompt)}`, {
+    method: 'DELETE',
+  })
+}
+
+export function testPrompt(systemPrompt, userPrompt, provider = null, model = null) {
+  const body = { system_prompt: systemPrompt, user_prompt: userPrompt }
+  if (provider) body.provider = provider
+  if (model) body.model = model
+  return request('/admin/prompts/test', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
 }
 
 // --- System ---
