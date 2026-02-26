@@ -3,6 +3,7 @@ import threading
 
 from models.schemas import PBCCreate, PBCUpdate
 from middleware.dependencies import get_current_user, get_current_user_or_anonymous
+from services.audit_service import log_action
 
 router = APIRouter(prefix="/api/pbcs", tags=["PBCs"])
 
@@ -74,6 +75,17 @@ def create_pbc(data: PBCCreate, current_user: dict = Depends(get_current_user)):
         db.add_relationship(pbc_id, abb_id, "COMPOSES")
     pbc["abb_ids"] = data.abb_ids
     _auto_embed_pbc(pbc_id)
+    try:
+        log_action(
+            user_id=current_user.get("id", ""),
+            user_name=current_user.get("name") or current_user.get("email", ""),
+            action="CREATE",
+            entity_type="pbc",
+            entity_id=pbc_id,
+            entity_name=data.name,
+        )
+    except Exception:
+        pass
     return pbc
 
 
@@ -98,6 +110,18 @@ def update_pbc(pbc_id: str, data: PBCUpdate, current_user: dict = Depends(get_cu
     if pbc is None:
         pbc = db.get_pbc(pbc_id)
     _auto_embed_pbc(pbc_id)
+    try:
+        log_action(
+            user_id=current_user.get("id", ""),
+            user_name=current_user.get("name") or current_user.get("email", ""),
+            action="UPDATE",
+            entity_type="pbc",
+            entity_id=pbc_id,
+            entity_name=pbc.get("name", "") if pbc else "",
+            changes={"fields": list(update_data.keys()) + (["abb_ids"] if abb_ids is not None else [])},
+        )
+    except Exception:
+        pass
     return pbc
 
 
@@ -106,6 +130,19 @@ def delete_pbc(pbc_id: str, current_user: dict = Depends(get_current_user)):
     if current_user.get("role") == "viewer":
         raise HTTPException(status_code=403, detail="Viewers cannot delete PBCs")
     db = get_db()
+    pbc = db.get_pbc(pbc_id)
+    pbc_name = pbc.get("name", "") if pbc else ""
     if not db.delete_pbc(pbc_id):
         raise HTTPException(status_code=404, detail=f"PBC {pbc_id} not found")
+    try:
+        log_action(
+            user_id=current_user.get("id", ""),
+            user_name=current_user.get("name") or current_user.get("email", ""),
+            action="DELETE",
+            entity_type="pbc",
+            entity_id=pbc_id,
+            entity_name=pbc_name,
+        )
+    except Exception:
+        pass
     return {"deleted": pbc_id}

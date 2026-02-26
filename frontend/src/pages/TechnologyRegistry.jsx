@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { fetchTechnologies, createTechnology, deleteTechnology, aiTechnologySuggest } from '../api/client'
 import Pagination from '../components/Pagination'
+import SortableHeader, { sortItems } from '../components/SortableHeader'
 
 const VENDORS = ['', 'AWS', 'Microsoft', 'Open Source', 'Hugging Face', 'LangChain', 'Salesforce', 'Redis']
 
@@ -40,8 +41,20 @@ export default function TechnologyRegistry() {
     id: '', name: '', vendor: '', category: 'framework', status: 'APPROVED', description: '', cost_tier: '',
   })
   const [suggesting, setSuggesting] = useState(false)
+  const [error, setError] = useState('')
   const [page, setPage] = useState(1)
   const PAGE_SIZE = 25
+  const [sortBy, setSortBy] = useState('name')
+  const [sortDir, setSortDir] = useState('asc')
+
+  const handleSort = (field) => {
+    if (sortBy === field) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortBy(field)
+      setSortDir('asc')
+    }
+  }
 
   const handleAISuggest = async () => {
     if (!form.name.trim()) return
@@ -58,7 +71,7 @@ export default function TechnologyRegistry() {
         cost_tier: s.cost_tier || f.cost_tier,
       }))
     } catch (err) {
-      alert(`AI suggest failed: ${err.message}`)
+      setError(`AI suggest failed: ${err.message}`)
     }
     setSuggesting(false)
   }
@@ -73,13 +86,14 @@ export default function TechnologyRegistry() {
   useEffect(() => { load() }, [filters])
 
   const handleCreate = async () => {
+    setError('')
     try {
       await createTechnology(form)
       setForm({ id: '', name: '', vendor: '', category: 'framework', status: 'APPROVED', description: '', cost_tier: '' })
       setShowForm(false)
       load()
     } catch (err) {
-      alert(err.message)
+      setError(err.message)
     }
   }
 
@@ -92,11 +106,13 @@ export default function TechnologyRegistry() {
     (t.category || '').toLowerCase().includes(search.toLowerCase())
   )
 
-  // Reset page when search/filters change
-  useEffect(() => { setPage(1) }, [search, filters])
+  const sorted = sortItems(filtered, sortBy, sortDir)
 
-  const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
-  const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+  // Reset page when search/filters/sort change
+  useEffect(() => { setPage(1) }, [search, filters, sortBy, sortDir])
+
+  const totalPages = Math.ceil(sorted.length / PAGE_SIZE)
+  const paginated = sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
   // Group by category for grid display (uses paginated for table, full filtered for grid)
   const grouped = {}
@@ -163,6 +179,13 @@ export default function TechnologyRegistry() {
           <option value="DEPRECATED">Deprecated</option>
         </select>
       </div>
+
+      {error && (
+        <div className="bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg px-4 py-3 text-sm flex items-center justify-between">
+          {error}
+          <button onClick={() => setError('')} className="text-red-400/60 hover:text-red-400 ml-4">&times;</button>
+        </div>
+      )}
 
       {/* Add Form */}
       {showForm && (
@@ -240,12 +263,12 @@ export default function TechnologyRegistry() {
         <div className="card overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-gray-800">
-                <th className="text-left text-xs text-gray-500 pb-3 font-medium">ID</th>
-                <th className="text-left text-xs text-gray-500 pb-3 font-medium">Name</th>
-                <th className="text-left text-xs text-gray-500 pb-3 font-medium">Vendor</th>
-                <th className="text-left text-xs text-gray-500 pb-3 font-medium">Category</th>
-                <th className="text-left text-xs text-gray-500 pb-3 font-medium">Status</th>
+              <tr className="text-gray-500 text-left border-b border-gray-800">
+                <SortableHeader label="ID" field="id" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} className="text-xs" />
+                <SortableHeader label="Name" field="name" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} className="text-xs" />
+                <SortableHeader label="Vendor" field="vendor" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} className="text-xs" />
+                <SortableHeader label="Category" field="category" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} className="text-xs" />
+                <SortableHeader label="Status" field="status" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} className="text-xs" />
                 <th className="text-left text-xs text-gray-500 pb-3 font-medium">Description</th>
               </tr>
             </thead>
@@ -322,11 +345,11 @@ export default function TechnologyRegistry() {
           ))
       )}
 
-      {filtered.length > PAGE_SIZE && view === 'table' && (
+      {sorted.length > PAGE_SIZE && view === 'table' && (
         <Pagination
           page={page}
           totalPages={totalPages}
-          total={filtered.length}
+          total={sorted.length}
           pageSize={PAGE_SIZE}
           onPageChange={setPage}
         />

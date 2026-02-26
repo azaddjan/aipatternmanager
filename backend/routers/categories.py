@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends
 
 from models.schemas import CategoryCreate, CategoryUpdate
 from middleware.dependencies import get_current_user, get_current_user_or_anonymous
+from services.audit_service import log_action
 
 router = APIRouter(prefix="/api/categories", tags=["Categories"])
 
@@ -25,6 +26,17 @@ def create_category(data: CategoryCreate, current_user: dict = Depends(get_curre
     db = get_db()
     prefix = data.prefix or data.code.upper()
     cat = db.create_category(data.code, data.label, prefix)
+    try:
+        log_action(
+            user_id=current_user.get("id", ""),
+            user_name=current_user.get("name") or current_user.get("email", ""),
+            action="CREATE",
+            entity_type="category",
+            entity_id=data.code,
+            entity_name=data.label,
+        )
+    except Exception:
+        pass
     return cat
 
 
@@ -39,6 +51,18 @@ def update_category(code: str, data: CategoryUpdate, current_user: dict = Depend
     cat = db.update_category(code, updates)
     if not cat:
         raise HTTPException(status_code=404, detail=f"Category '{code}' not found")
+    try:
+        log_action(
+            user_id=current_user.get("id", ""),
+            user_name=current_user.get("name") or current_user.get("email", ""),
+            action="UPDATE",
+            entity_type="category",
+            entity_id=code,
+            entity_name=cat.get("label", ""),
+            changes={"fields": list(updates.keys())},
+        )
+    except Exception:
+        pass
     return cat
 
 
@@ -56,6 +80,16 @@ def delete_category(code: str, current_user: dict = Depends(get_current_user)):
         )
     if not db.delete_category(code):
         raise HTTPException(status_code=404, detail=f"Category '{code}' not found")
+    try:
+        log_action(
+            user_id=current_user.get("id", ""),
+            user_name=current_user.get("name") or current_user.get("email", ""),
+            action="DELETE",
+            entity_type="category",
+            entity_id=code,
+        )
+    except Exception:
+        pass
     return {"deleted": code}
 
 

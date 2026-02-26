@@ -638,6 +638,24 @@ export function testPrompt(systemPrompt, userPrompt, provider = null, model = nu
   })
 }
 
+// --- Audit Log ---
+
+export function fetchAuditLogs(params = {}) {
+  const qs = new URLSearchParams()
+  if (params.entity_type) qs.set('entity_type', params.entity_type)
+  if (params.entity_id) qs.set('entity_id', params.entity_id)
+  if (params.user_id) qs.set('user_id', params.user_id)
+  if (params.action) qs.set('action', params.action)
+  if (params.skip != null) qs.set('skip', params.skip)
+  if (params.limit != null) qs.set('limit', params.limit)
+  const query = qs.toString()
+  return request(`/audit${query ? `?${query}` : ''}`)
+}
+
+export function fetchEntityHistory(entityType, entityId, limit = 20) {
+  return request(`/audit/entity/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}?limit=${limit}`)
+}
+
 // --- System ---
 
 export function fetchHealth() {

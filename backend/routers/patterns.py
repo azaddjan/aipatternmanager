@@ -18,6 +18,7 @@ from middleware.dependencies import (
     check_pattern_write_access,
 )
 from services import auth_service
+from services.audit_service import log_action
 
 router = APIRouter(prefix="/api/patterns", tags=["Patterns"])
 
@@ -169,6 +170,21 @@ def create_pattern(
         auth_service.assign_pattern_to_team(pattern_id, assign_team)
 
     _auto_embed_pattern(pattern_id)
+
+    # Audit log
+    try:
+        log_action(
+            user_id=current_user.get("id", ""),
+            user_name=current_user.get("name") or current_user.get("email", ""),
+            action="CREATE",
+            entity_type="pattern",
+            entity_id=pattern_id,
+            entity_name=data.name or "",
+            details=f"Type: {data.type.value}, Category: {data.category}",
+        )
+    except Exception:
+        pass
+
     return pattern
 
 
@@ -246,6 +262,30 @@ def update_pattern(
             auth_service.remove_pattern_team(pattern_id)
 
     _auto_embed_pattern(pattern_id)
+
+    # Audit log
+    try:
+        changed_fields = list(update_data.keys()) if update_data else []
+        if implements_abbs is not None:
+            changed_fields.append("implements_abbs")
+        if technology_ids is not None:
+            changed_fields.append("technology_ids")
+        if compatible_tech_ids is not None:
+            changed_fields.append("compatible_tech_ids")
+        if depends_on_ids is not None:
+            changed_fields.append("depends_on_ids")
+        log_action(
+            user_id=current_user.get("id", ""),
+            user_name=current_user.get("name") or current_user.get("email", ""),
+            action="UPDATE",
+            entity_type="pattern",
+            entity_id=pattern_id,
+            entity_name=pattern.get("name", "") if pattern else "",
+            changes={"fields": changed_fields},
+        )
+    except Exception:
+        pass
+
     return pattern
 
 
@@ -339,6 +379,19 @@ def delete_pattern(pattern_id: str, current_user: dict = Depends(require_pattern
                 os.remove(filepath)
             except OSError:
                 pass
+
+    # Audit log
+    try:
+        log_action(
+            user_id=current_user.get("id", ""),
+            user_name=current_user.get("name") or current_user.get("email", ""),
+            action="DELETE",
+            entity_type="pattern",
+            entity_id=pattern_id,
+            entity_name=pattern.get("name", ""),
+        )
+    except Exception:
+        pass
 
     return {"deleted": pattern_id}
 

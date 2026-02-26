@@ -5,6 +5,7 @@ import threading
 
 from models.schemas import TechnologyCreate, TechnologyUpdate
 from middleware.dependencies import get_current_user, get_current_user_or_anonymous
+from services.audit_service import log_action
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,18 @@ def create_technology(data: TechnologyCreate, current_user: dict = Depends(get_c
         raise HTTPException(status_code=409, detail=f"Technology {data.id} already exists")
     tech = db.create_technology(data.model_dump())
     _auto_embed_technology(data.id)
+    try:
+        log_action(
+            user_id=current_user.get("id", ""),
+            user_name=current_user.get("name") or current_user.get("email", ""),
+            action="CREATE",
+            entity_type="technology",
+            entity_id=data.id,
+            entity_name=data.name,
+            details=f"Vendor: {data.vendor}",
+        )
+    except Exception:
+        pass
     return tech
 
 
@@ -90,6 +103,18 @@ def update_technology(tech_id: str, data: TechnologyUpdate, current_user: dict =
             logger.info(f"Cascade-deprecated {len(deprecated_sbbs)} SBBs due to technology {tech_id} deprecation")
 
     _auto_embed_technology(tech_id)
+    try:
+        log_action(
+            user_id=current_user.get("id", ""),
+            user_name=current_user.get("name") or current_user.get("email", ""),
+            action="UPDATE",
+            entity_type="technology",
+            entity_id=tech_id,
+            entity_name=tech.get("name", ""),
+            changes={"fields": list(update_data.keys())},
+        )
+    except Exception:
+        pass
     return {
         "technology": tech,
         "cascade_deprecated": deprecated_sbbs,
@@ -101,8 +126,22 @@ def delete_technology(tech_id: str, current_user: dict = Depends(get_current_use
     if current_user.get("role") == "viewer":
         raise HTTPException(status_code=403, detail="Viewers cannot delete technologies")
     db = get_db()
+    # Get name before deletion
+    tech = db.get_technology(tech_id)
+    tech_name = tech.get("name", "") if tech else ""
     if not db.delete_technology(tech_id):
         raise HTTPException(status_code=404, detail=f"Technology {tech_id} not found")
+    try:
+        log_action(
+            user_id=current_user.get("id", ""),
+            user_name=current_user.get("name") or current_user.get("email", ""),
+            action="DELETE",
+            entity_type="technology",
+            entity_id=tech_id,
+            entity_name=tech_name,
+        )
+    except Exception:
+        pass
     return {"deleted": tech_id}
 
 

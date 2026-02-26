@@ -52,6 +52,7 @@ class Neo4jService:
             "CREATE CONSTRAINT team_id IF NOT EXISTS FOR (t:Team) REQUIRE t.id IS UNIQUE",
             "CREATE CONSTRAINT team_name IF NOT EXISTS FOR (t:Team) REQUIRE t.name IS UNIQUE",
             "CREATE CONSTRAINT system_config_key IF NOT EXISTS FOR (c:SystemConfig) REQUIRE c.key IS UNIQUE",
+            "CREATE CONSTRAINT audit_log_id IF NOT EXISTS FOR (a:AuditLog) REQUIRE a.id IS UNIQUE",
         ]
         with self.session() as session:
             for q in queries:
@@ -67,6 +68,9 @@ class Neo4jService:
             # Auth indexes
             "CREATE INDEX user_role IF NOT EXISTS FOR (u:User) ON (u.role)",
             "CREATE INDEX user_active IF NOT EXISTS FOR (u:User) ON (u.is_active)",
+            # Audit indexes
+            "CREATE INDEX audit_timestamp IF NOT EXISTS FOR (a:AuditLog) ON (a.timestamp)",
+            "CREATE INDEX audit_entity IF NOT EXISTS FOR (a:AuditLog) ON (a.entity_type, a.entity_id)",
         ]
         with self.session() as session:
             for q in queries:

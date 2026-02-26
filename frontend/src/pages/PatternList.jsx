@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { fetchPatterns, fetchCategories, updatePattern } from '../api/client'
 import PatternCard from '../components/PatternCard'
 import Pagination from '../components/Pagination'
+import SortableHeader, { sortItems } from '../components/SortableHeader'
 import { useAuth } from '../contexts/AuthContext'
 
 const TYPE_OPTIONS = ['', 'AB', 'ABB', 'SBB']
@@ -19,6 +20,17 @@ export default function PatternList() {
   const [categoryOptions, setCategoryOptions] = useState([])
   const [page, setPage] = useState(1)
   const PAGE_SIZE = 25
+  const [sortBy, setSortBy] = useState('id')
+  const [sortDir, setSortDir] = useState('asc')
+
+  const handleSort = (field) => {
+    if (sortBy === field) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortBy(field)
+      setSortDir('asc')
+    }
+  }
 
   // Derive unique team names from loaded patterns
   const teamOptions = useMemo(() => {
@@ -61,11 +73,13 @@ export default function PatternList() {
     )
   })
 
-  // Reset page when search/filters change
-  useEffect(() => { setPage(1) }, [search, filters])
+  const sorted = sortItems(filtered, sortBy, sortDir)
 
-  const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
-  const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+  // Reset page when search/filters change
+  useEffect(() => { setPage(1) }, [search, filters, sortBy, sortDir])
+
+  const totalPages = Math.ceil(sorted.length / PAGE_SIZE)
+  const paginated = sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
   return (
     <div className="space-y-6">
@@ -148,13 +162,13 @@ export default function PatternList() {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-gray-500 text-left border-b border-gray-800">
-                <th className="pb-2 font-medium">ID</th>
-                <th className="pb-2 font-medium">Name</th>
-                <th className="pb-2 font-medium">Type</th>
-                <th className="pb-2 font-medium">Category</th>
-                <th className="pb-2 font-medium">Status</th>
-                <th className="pb-2 font-medium">Team</th>
-                <th className="pb-2 font-medium">Version</th>
+                <SortableHeader label="ID" field="id" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+                <SortableHeader label="Name" field="name" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+                <SortableHeader label="Type" field="type" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+                <SortableHeader label="Category" field="category" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+                <SortableHeader label="Status" field="status" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+                <SortableHeader label="Team" field="team_name" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+                <SortableHeader label="Version" field="version" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
               </tr>
             </thead>
             <tbody>
@@ -202,11 +216,11 @@ export default function PatternList() {
         </div>
       )}
 
-      {filtered.length > PAGE_SIZE && (
+      {sorted.length > PAGE_SIZE && (
         <Pagination
           page={page}
           totalPages={totalPages}
-          total={filtered.length}
+          total={sorted.length}
           pageSize={PAGE_SIZE}
           onPageChange={setPage}
         />

@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { fetchPBCs, createPBC, updatePBC, deletePBC, fetchPatterns } from '../api/client'
 import { Link } from 'react-router-dom'
 import Pagination from '../components/Pagination'
+import SortableHeader, { sortItems } from '../components/SortableHeader'
+import ConfirmModal from '../components/ConfirmModal'
 
 export default function PBCManager() {
   const [pbcs, setPbcs] = useState([])
@@ -14,8 +16,21 @@ export default function PBCManager() {
   const [statusFilter, setStatusFilter] = useState('')
   const [page, setPage] = useState(1)
   const PAGE_SIZE = 25
+  const [sortBy, setSortBy] = useState('name')
+  const [sortDir, setSortDir] = useState('asc')
+
+  const handleSort = (field) => {
+    if (sortBy === field) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortBy(field)
+      setSortDir('asc')
+    }
+  }
+
   const [form, setForm] = useState({ name: '', description: '', api_endpoint: '', status: 'ACTIVE', abb_ids: [] })
   const [error, setError] = useState('')
+  const [deleteTarget, setDeleteTarget] = useState(null) // { id, name } for confirm modal
 
   const loadData = () => {
     Promise.all([
@@ -64,14 +79,19 @@ export default function PBCManager() {
     setShowForm(true)
   }
 
-  const handleDelete = async (id) => {
-    if (!confirm(`Delete PBC ${id}?`)) return
+  const handleDelete = (id, name) => {
+    setDeleteTarget({ id, name: name || id })
+  }
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return
     try {
-      await deletePBC(id)
+      await deletePBC(deleteTarget.id)
       loadData()
     } catch (err) {
       setError(err.message)
     }
+    setDeleteTarget(null)
   }
 
   const toggleAbb = (abbId) => {
@@ -97,11 +117,13 @@ export default function PBCManager() {
     )
   })
 
-  // Reset page when search/filter changes
-  useEffect(() => { setPage(1) }, [search, statusFilter])
+  const sorted = sortItems(filtered, sortBy, sortDir)
 
-  const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
-  const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+  // Reset page when search/filter/sort changes
+  useEffect(() => { setPage(1) }, [search, statusFilter, sortBy, sortDir])
+
+  const totalPages = Math.ceil(sorted.length / PAGE_SIZE)
+  const paginated = sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
   if (loading) {
     return <div className="flex items-center justify-center h-64 text-gray-500">Loading...</div>
@@ -251,13 +273,13 @@ export default function PBCManager() {
         <div className="card overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-gray-800">
-                <th className="text-left text-xs text-gray-500 pb-3 font-medium">ID</th>
-                <th className="text-left text-xs text-gray-500 pb-3 font-medium">Name</th>
-                <th className="text-left text-xs text-gray-500 pb-3 font-medium">Status</th>
+              <tr className="text-gray-500 text-left border-b border-gray-800">
+                <SortableHeader label="ID" field="id" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} className="text-xs" />
+                <SortableHeader label="Name" field="name" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} className="text-xs" />
+                <SortableHeader label="Status" field="status" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} className="text-xs" />
                 <th className="text-left text-xs text-gray-500 pb-3 font-medium">Description</th>
                 <th className="text-left text-xs text-gray-500 pb-3 font-medium">ABBs</th>
-                <th className="text-left text-xs text-gray-500 pb-3 font-medium">Endpoint</th>
+                <SortableHeader label="Endpoint" field="api_endpoint" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} className="text-xs" />
                 <th className="text-right text-xs text-gray-500 pb-3 font-medium">Actions</th>
               </tr>
             </thead>
@@ -291,7 +313,7 @@ export default function PBCManager() {
                   <td className="py-2.5 text-right">
                     <div className="flex gap-1 justify-end">
                       <button onClick={() => handleEdit(pbc)} className="btn-secondary text-xs">Edit</button>
-                      <button onClick={() => handleDelete(pbc.id)} className="btn-danger text-xs">Delete</button>
+                      <button onClick={() => handleDelete(pbc.id, pbc.name)} className="btn-danger text-xs">Delete</button>
                     </div>
                   </td>
                 </tr>
@@ -340,7 +362,7 @@ export default function PBCManager() {
                 </div>
                 <div className="flex gap-2 ml-4">
                   <button onClick={() => handleEdit(pbc)} className="btn-secondary text-xs">Edit</button>
-                  <button onClick={() => handleDelete(pbc.id)} className="btn-danger text-xs">Delete</button>
+                  <button onClick={() => handleDelete(pbc.id, pbc.name)} className="btn-danger text-xs">Delete</button>
                 </div>
               </div>
             </div>
@@ -348,15 +370,25 @@ export default function PBCManager() {
         </div>
       )}
 
-      {filtered.length > PAGE_SIZE && (
+      {sorted.length > PAGE_SIZE && (
         <Pagination
           page={page}
           totalPages={totalPages}
-          total={filtered.length}
+          total={sorted.length}
           pageSize={PAGE_SIZE}
           onPageChange={setPage}
         />
       )}
+
+      <ConfirmModal
+        open={!!deleteTarget}
+        title="Delete Business Capability"
+        message={`Are you sure you want to delete "${deleteTarget?.name}"? This action cannot be undone.`}
+        confirmLabel="Delete"
+        variant="danger"
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   )
 }
