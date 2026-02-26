@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { fetchUsers, createUser, updateUser, deleteUser, fetchTeams } from '../api/client'
+import ConfirmModal from '../components/ConfirmModal'
 
 const ROLE_OPTIONS = [
   { value: 'admin', label: 'Admin' },
@@ -22,6 +23,8 @@ export default function UserManagement() {
   const [editingId, setEditingId] = useState(null)
   const [form, setForm] = useState({ email: '', name: '', password: '', role: 'viewer', team_id: '' })
   const [saving, setSaving] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState(null)
+  const [fieldErrors, setFieldErrors] = useState({})
 
   useEffect(() => { load() }, [])
 
@@ -42,6 +45,7 @@ export default function UserManagement() {
     setForm({ email: '', name: '', password: '', role: 'viewer', team_id: '' })
     setEditingId(null)
     setShowCreate(true)
+    setFieldErrors({})
   }
 
   function startEdit(user) {
@@ -56,8 +60,19 @@ export default function UserManagement() {
     setShowCreate(true)
   }
 
+  function validateUserForm() {
+    const errs = {}
+    if (!form.email.trim()) errs.email = 'Email is required'
+    else if (!/\S+@\S+\.\S+/.test(form.email)) errs.email = 'Enter a valid email'
+    if (!editingId && !form.password.trim()) errs.password = 'Password is required'
+    else if (!editingId && form.password.length < 6) errs.password = 'Password must be at least 6 characters'
+    setFieldErrors(errs)
+    return Object.keys(errs).length === 0
+  }
+
   async function handleSubmit(e) {
     e.preventDefault()
+    if (!validateUserForm()) return
     setSaving(true)
     setError('')
     try {
@@ -70,6 +85,7 @@ export default function UserManagement() {
       }
       setShowCreate(false)
       setEditingId(null)
+      setFieldErrors({})
       await load()
     } catch (err) {
       setError(err.message)
@@ -77,15 +93,20 @@ export default function UserManagement() {
     setSaving(false)
   }
 
-  async function handleDelete(user) {
-    if (!confirm(`Delete user "${user.name || user.email}"? This cannot be undone.`)) return
+  function handleDelete(user) {
+    setDeleteTarget(user)
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return
     setError('')
     try {
-      await deleteUser(user.id)
+      await deleteUser(deleteTarget.id)
       await load()
     } catch (err) {
       setError(err.message)
     }
+    setDeleteTarget(null)
   }
 
   async function handleToggleActive(user) {
@@ -133,15 +154,15 @@ export default function UserManagement() {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs text-gray-500 mb-1">Email</label>
+                <label className="block text-xs text-gray-500 mb-1">Email <span className="text-red-400">*</span></label>
                 <input
                   type="email"
                   value={form.email}
-                  onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-                  className="input w-full"
-                  required
+                  onChange={e => { setForm(f => ({ ...f, email: e.target.value })); setFieldErrors(fe => ({ ...fe, email: undefined })) }}
+                  className={`input w-full ${fieldErrors.email ? 'border-red-500/50' : ''}`}
                   disabled={!!editingId}
                 />
+                {fieldErrors.email && <p className="text-red-400 text-xs mt-1">{fieldErrors.email}</p>}
               </div>
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Name</label>
@@ -155,16 +176,16 @@ export default function UserManagement() {
               </div>
               <div>
                 <label className="block text-xs text-gray-500 mb-1">
-                  Password {editingId && <span className="text-gray-600">(leave blank to keep)</span>}
+                  Password {!editingId && <span className="text-red-400">*</span>}
+                  {editingId && <span className="text-gray-600">(leave blank to keep)</span>}
                 </label>
                 <input
                   type="password"
                   value={form.password}
-                  onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
-                  className="input w-full"
-                  required={!editingId}
-                  minLength={6}
+                  onChange={e => { setForm(f => ({ ...f, password: e.target.value })); setFieldErrors(fe => ({ ...fe, password: undefined })) }}
+                  className={`input w-full ${fieldErrors.password ? 'border-red-500/50' : ''}`}
                 />
+                {fieldErrors.password && <p className="text-red-400 text-xs mt-1">{fieldErrors.password}</p>}
               </div>
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Role</label>
@@ -272,6 +293,16 @@ export default function UserManagement() {
           </tbody>
         </table>
       </div>
+
+      <ConfirmModal
+        open={!!deleteTarget}
+        title="Delete User"
+        message={`Are you sure you want to delete user "${deleteTarget?.name || deleteTarget?.email}"? This action cannot be undone.`}
+        confirmLabel="Delete"
+        variant="danger"
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   )
 }

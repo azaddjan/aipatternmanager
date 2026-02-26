@@ -3,6 +3,7 @@ import { useParams, Link, useNavigate, useLocation } from 'react-router-dom'
 import { fetchPBC, deletePBC, fetchPBCGraph, aiPBCAssist } from '../api/client'
 import GraphView from '../components/GraphView'
 import MarkdownContent from '../components/MarkdownContent'
+import ConfirmModal from '../components/ConfirmModal'
 
 export default function PBCDetail() {
   const { id } = useParams()
@@ -12,6 +13,8 @@ export default function PBCDetail() {
   const [graphData, setGraphData] = useState(null)
   const [tab, setTab] = useState('overview') // overview | relationships | graph
   const [loading, setLoading] = useState(true)
+  const [deleteConfirm, setDeleteConfirm] = useState(false)
+  const [error, setError] = useState('')
 
   const loadPBC = useCallback(() => {
     setLoading(true)
@@ -33,13 +36,17 @@ export default function PBCDetail() {
     loadPBC()
   }, [loadPBC, location.key])
 
-  const handleDelete = async () => {
-    if (!confirm(`Delete PBC ${id}? This cannot be undone.`)) return
+  const handleDelete = () => {
+    setDeleteConfirm(true)
+  }
+
+  const confirmDeletePBC = async () => {
+    setDeleteConfirm(false)
     try {
       await deletePBC(id)
       navigate('/pbcs')
     } catch (err) {
-      alert(err.message)
+      setError(err.message)
     }
   }
 
@@ -186,6 +193,23 @@ export default function PBCDetail() {
       {tab === 'graph' && (
         <GraphView data={graphData} height="500px" />
       )}
+
+      {error && (
+        <div className="bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg px-4 py-3 text-sm flex items-center justify-between">
+          <span>{error}</span>
+          <button onClick={() => setError('')} className="text-red-400 hover:text-red-300 ml-3">&times;</button>
+        </div>
+      )}
+
+      <ConfirmModal
+        open={deleteConfirm}
+        title="Delete Business Capability"
+        message={`Are you sure you want to delete PBC "${pbc?.name || id}"? This action cannot be undone.`}
+        confirmLabel="Delete"
+        variant="danger"
+        onConfirm={confirmDeletePBC}
+        onCancel={() => setDeleteConfirm(false)}
+      />
     </div>
   )
 }

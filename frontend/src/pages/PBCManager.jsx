@@ -30,6 +30,7 @@ export default function PBCManager() {
 
   const [form, setForm] = useState({ name: '', description: '', api_endpoint: '', status: 'ACTIVE', abb_ids: [] })
   const [error, setError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState({})
   const [deleteTarget, setDeleteTarget] = useState(null) // { id, name } for confirm modal
 
   const loadData = () => {
@@ -50,10 +51,19 @@ export default function PBCManager() {
     setEditing(null)
     setShowForm(false)
     setError('')
+    setFieldErrors({})
+  }
+
+  const validateForm = () => {
+    const errs = {}
+    if (!form.name.trim()) errs.name = 'Name is required'
+    setFieldErrors(errs)
+    return Object.keys(errs).length === 0
   }
 
   const handleSave = async () => {
     setError('')
+    if (!validateForm()) return
     try {
       if (editing) {
         await updatePBC(editing, form)
@@ -195,14 +205,15 @@ export default function PBCManager() {
           </h2>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs text-gray-500 mb-1">Name</label>
+              <label className="block text-xs text-gray-500 mb-1">Name <span className="text-red-400">*</span></label>
               <input
                 type="text"
                 value={form.name}
-                onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                onChange={e => { setForm(f => ({ ...f, name: e.target.value })); setFieldErrors(fe => ({ ...fe, name: undefined })) }}
                 placeholder="e.g. Intelligent Chat"
-                className="input w-full"
+                className={`input w-full ${fieldErrors.name ? 'border-red-500/50' : ''}`}
               />
+              {fieldErrors.name && <p className="text-red-400 text-xs mt-1">{fieldErrors.name}</p>}
             </div>
             <div>
               <label className="block text-xs text-gray-500 mb-1">Status</label>

@@ -12,6 +12,7 @@ import {
   fetchPrompts, updatePrompt, resetPrompt, testPrompt,
   fetchTeams,
 } from '../api/client'
+import ConfirmModal from '../components/ConfirmModal'
 
 const PROVIDER_LABELS = {
   anthropic: { label: 'Anthropic (Claude)', icon: '🟣' },
@@ -97,6 +98,9 @@ export default function Admin() {
   const [exportTeams, setExportTeams] = useState([])
   const [selectedExportTeams, setSelectedExportTeams] = useState([])
 
+  // Generic confirm modal state: { title, message, confirmLabel, variant, onConfirm }
+  const [confirmAction, setConfirmAction] = useState(null)
+
   const liveTokenEstimate = useMemo(() => {
     if (!editValue) return 0
     return Math.round(editValue.split(/\s+/).filter(Boolean).length * 1.3)
@@ -122,18 +126,26 @@ export default function Admin() {
     setEmbedding('')
   }
 
-  const handleEmbedAll = async () => {
-    if (!confirm('Re-embed ALL nodes? This will call the embedding provider API for every node and may take a moment. Existing embeddings will be cleared and vector indexes recreated.')) return
-    setEmbedding('all')
-    setEmbedResult(null)
-    try {
-      const result = await embedAllNodes()
-      setEmbedResult({ type: 'all', ...result })
-      loadSystemStatus() // refresh stats
-    } catch (err) {
-      setEmbedResult({ type: 'all', status: 'error', message: err.message })
-    }
-    setEmbedding('')
+  const handleEmbedAll = () => {
+    setConfirmAction({
+      title: 'Re-embed All Nodes',
+      message: 'Re-embed ALL nodes? This will call the embedding provider API for every node and may take a moment. Existing embeddings will be cleared and vector indexes recreated.',
+      confirmLabel: 'Re-embed All',
+      variant: 'warning',
+      onConfirm: async () => {
+        setConfirmAction(null)
+        setEmbedding('all')
+        setEmbedResult(null)
+        try {
+          const result = await embedAllNodes()
+          setEmbedResult({ type: 'all', ...result })
+          loadSystemStatus()
+        } catch (err) {
+          setEmbedResult({ type: 'all', status: 'error', message: err.message })
+        }
+        setEmbedding('')
+      },
+    })
   }
 
   const load = () => {
@@ -203,20 +215,28 @@ export default function Admin() {
     setSavingPrompt(false)
   }
 
-  const handleResetPrompt = async () => {
+  const handleResetPrompt = () => {
     if (!selectedPrompt) return
-    if (!confirm('Reset this prompt to the YAML default? Your override will be deleted.')) return
-    setSavingPrompt(true)
-    try {
-      const result = await resetPrompt(selectedPrompt.section, selectedPrompt.sub_prompt)
-      setEditValue(result.current_value)
-      setPromptDirty(false)
-      setMsg('Prompt reset to default')
-      loadPrompts()
-    } catch (err) {
-      setMsg(`Failed to reset: ${err.message}`)
-    }
-    setSavingPrompt(false)
+    setConfirmAction({
+      title: 'Reset Prompt',
+      message: 'Reset this prompt to the YAML default? Your override will be deleted.',
+      confirmLabel: 'Reset',
+      variant: 'warning',
+      onConfirm: async () => {
+        setConfirmAction(null)
+        setSavingPrompt(true)
+        try {
+          const result = await resetPrompt(selectedPrompt.section, selectedPrompt.sub_prompt)
+          setEditValue(result.current_value)
+          setPromptDirty(false)
+          setMsg('Prompt reset to default')
+          loadPrompts()
+        } catch (err) {
+          setMsg(`Failed to reset: ${err.message}`)
+        }
+        setSavingPrompt(false)
+      },
+    })
   }
 
   const handleTestPrompt = async () => {
@@ -410,29 +430,45 @@ export default function Admin() {
     setCreatingBackup(false)
   }
 
-  const handleDeleteBackup = async (filename) => {
-    if (!confirm(`Delete backup "${filename}"?`)) return
-    try {
-      await deleteBackup(filename)
-      setMsg('Backup deleted')
-      loadBackups()
-    } catch (err) {
-      setMsg(`Delete failed: ${err.message}`)
-    }
+  const handleDeleteBackup = (filename) => {
+    setConfirmAction({
+      title: 'Delete Backup',
+      message: `Are you sure you want to delete backup "${filename}"?`,
+      confirmLabel: 'Delete',
+      variant: 'danger',
+      onConfirm: async () => {
+        setConfirmAction(null)
+        try {
+          await deleteBackup(filename)
+          setMsg('Backup deleted')
+          loadBackups()
+        } catch (err) {
+          setMsg(`Delete failed: ${err.message}`)
+        }
+      },
+    })
   }
 
-  const handleRestoreBackup = async (filename) => {
-    if (!confirm(`Restore from "${filename}"? A safety backup of your current data will be created first.`)) return
-    setRestoringBackup(filename)
-    setMsg('')
-    try {
-      const result = await restoreBackup(filename)
-      setMsg(`Restore completed — ${result.teams_imported || 0} teams, ${result.users_imported || 0} users, ${result.settings_imported || 0} settings, ${result.patterns_imported || 0} patterns, ${result.technologies_imported || 0} technologies, ${result.pbcs_imported || 0} PBCs restored`)
-      loadBackups()
-    } catch (err) {
-      setMsg(`Restore failed: ${err.message}`)
-    }
-    setRestoringBackup(null)
+  const handleRestoreBackup = (filename) => {
+    setConfirmAction({
+      title: 'Restore Backup',
+      message: `Restore from "${filename}"? A safety backup of your current data will be created first.`,
+      confirmLabel: 'Restore',
+      variant: 'warning',
+      onConfirm: async () => {
+        setConfirmAction(null)
+        setRestoringBackup(filename)
+        setMsg('')
+        try {
+          const result = await restoreBackup(filename)
+          setMsg(`Restore completed — ${result.teams_imported || 0} teams, ${result.users_imported || 0} users, ${result.settings_imported || 0} settings, ${result.patterns_imported || 0} patterns, ${result.technologies_imported || 0} technologies, ${result.pbcs_imported || 0} PBCs restored`)
+          loadBackups()
+        } catch (err) {
+          setMsg(`Restore failed: ${err.message}`)
+        }
+        setRestoringBackup(null)
+      },
+    })
   }
 
   /* ---------- Helpers ---------- */
@@ -526,25 +562,41 @@ export default function Admin() {
     setEditingReportTitle(null)
   }
 
-  const handleAdvisorDeleteReport = async (id) => {
-    if (!confirm(`Delete report ${id}?`)) return
-    try {
-      await deleteAdvisorReport(id)
-      setAdvisorReports(prev => prev.filter(r => r.id !== id))
-    } catch (err) {
-      setMsg(`Failed to delete: ${err.message}`)
-    }
+  const handleAdvisorDeleteReport = (id) => {
+    setConfirmAction({
+      title: 'Delete Report',
+      message: `Are you sure you want to delete report "${id}"?`,
+      confirmLabel: 'Delete',
+      variant: 'danger',
+      onConfirm: async () => {
+        setConfirmAction(null)
+        try {
+          await deleteAdvisorReport(id)
+          setAdvisorReports(prev => prev.filter(r => r.id !== id))
+        } catch (err) {
+          setMsg(`Failed to delete: ${err.message}`)
+        }
+      },
+    })
   }
 
-  const handleAdvisorDeleteAll = async () => {
-    if (!confirm('Delete all non-starred reports? Starred reports will be kept.')) return
-    try {
-      const result = await deleteAllAdvisorReports()
-      setMsg(`Deleted ${result.deleted || 0} non-starred reports`)
-      loadAdvisorReports()
-    } catch (err) {
-      setMsg(`Failed to delete all: ${err.message}`)
-    }
+  const handleAdvisorDeleteAll = () => {
+    setConfirmAction({
+      title: 'Delete All Reports',
+      message: 'Delete all non-starred reports? Starred reports will be kept.',
+      confirmLabel: 'Delete All',
+      variant: 'danger',
+      onConfirm: async () => {
+        setConfirmAction(null)
+        try {
+          const result = await deleteAllAdvisorReports()
+          setMsg(`Deleted ${result.deleted || 0} non-starred reports`)
+          loadAdvisorReports()
+        } catch (err) {
+          setMsg(`Failed to delete all: ${err.message}`)
+        }
+      },
+    })
   }
 
   const handleAdvisorCleanup = async () => {
@@ -2286,6 +2338,16 @@ export default function Admin() {
       )}
 
       {/* Pattern Health is now a separate top-level page at /health */}
+
+      <ConfirmModal
+        open={!!confirmAction}
+        title={confirmAction?.title || 'Confirm Action'}
+        message={confirmAction?.message || 'Are you sure?'}
+        confirmLabel={confirmAction?.confirmLabel || 'Confirm'}
+        variant={confirmAction?.variant || 'danger'}
+        onConfirm={() => confirmAction?.onConfirm?.()}
+        onCancel={() => setConfirmAction(null)}
+      />
     </div>
   )
 }

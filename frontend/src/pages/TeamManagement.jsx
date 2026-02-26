@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { fetchTeams, createTeam, updateTeam, deleteTeam, fetchTeam } from '../api/client'
+import ConfirmModal from '../components/ConfirmModal'
 
 export default function TeamManagement() {
   const [teams, setTeams] = useState([])
@@ -10,6 +11,7 @@ export default function TeamManagement() {
   const [form, setForm] = useState({ name: '', description: '' })
   const [saving, setSaving] = useState(false)
   const [selectedTeam, setSelectedTeam] = useState(null)
+  const [deleteTarget, setDeleteTarget] = useState(null)
 
   useEffect(() => { load() }, [])
 
@@ -69,16 +71,21 @@ export default function TeamManagement() {
     setSaving(false)
   }
 
-  async function handleDelete(team) {
-    if (!confirm(`Delete team "${team.name}"? Members will be unassigned.`)) return
+  function handleDelete(team) {
+    setDeleteTarget(team)
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return
     setError('')
     try {
-      await deleteTeam(team.id)
-      if (selectedTeam?.id === team.id) setSelectedTeam(null)
+      await deleteTeam(deleteTarget.id)
+      if (selectedTeam?.id === deleteTarget.id) setSelectedTeam(null)
       await load()
     } catch (err) {
       setError(err.message)
     }
+    setDeleteTarget(null)
   }
 
   if (loading) {
@@ -255,6 +262,16 @@ export default function TeamManagement() {
           )}
         </div>
       </div>
+
+      <ConfirmModal
+        open={!!deleteTarget}
+        title="Delete Team"
+        message={`Are you sure you want to delete team "${deleteTarget?.name}"? Members will be unassigned from this team.`}
+        confirmLabel="Delete"
+        variant="danger"
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   )
 }

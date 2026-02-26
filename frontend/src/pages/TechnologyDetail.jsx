@@ -8,6 +8,7 @@ import {
 } from '../api/client'
 import GraphView from '../components/GraphView'
 import MarkdownContent from '../components/MarkdownContent'
+import ConfirmModal from '../components/ConfirmModal'
 
 const TECH_CATEGORIES = [
   'cloud-compute', 'cloud-ai', 'cloud-data', 'cloud-infra',
@@ -77,6 +78,7 @@ export default function TechnologyDetail() {
   const [aiLoading, setAiLoading] = useState('')
   const [aiResult, setAiResult] = useState(null) // {field, text} for last AI result
   const [aiRecommendations, setAiRecommendations] = useState(null)
+  const [deleteConfirm, setDeleteConfirm] = useState(false)
 
   const handleAISuggest = async () => {
     const name = form.name || tech?.name
@@ -210,8 +212,12 @@ export default function TechnologyDetail() {
     setSaving(false)
   }
 
-  const handleDelete = async () => {
-    if (!confirm(`Delete technology ${id}? This cannot be undone.`)) return
+  const handleDelete = () => {
+    setDeleteConfirm(true)
+  }
+
+  const confirmDeleteTech = async () => {
+    setDeleteConfirm(false)
     try {
       await deleteTechnology(id)
       navigate('/technologies')
@@ -458,6 +464,16 @@ export default function TechnologyDetail() {
           )}
         </>
       )}
+
+      <ConfirmModal
+        open={deleteConfirm}
+        title="Delete Technology"
+        message={`Are you sure you want to delete technology "${id}"? This action cannot be undone.`}
+        confirmLabel="Delete"
+        variant="danger"
+        onConfirm={confirmDeleteTech}
+        onCancel={() => setDeleteConfirm(false)}
+      />
     </div>
   )
 }

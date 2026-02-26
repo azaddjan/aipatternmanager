@@ -42,6 +42,7 @@ export default function TechnologyRegistry() {
   })
   const [suggesting, setSuggesting] = useState(false)
   const [error, setError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState({})
   const [page, setPage] = useState(1)
   const PAGE_SIZE = 25
   const [sortBy, setSortBy] = useState('name')
@@ -85,12 +86,22 @@ export default function TechnologyRegistry() {
 
   useEffect(() => { load() }, [filters])
 
+  const validateTechForm = () => {
+    const errs = {}
+    if (!form.name.trim()) errs.name = 'Name is required'
+    if (!form.id.trim()) errs.id = 'ID is required'
+    setFieldErrors(errs)
+    return Object.keys(errs).length === 0
+  }
+
   const handleCreate = async () => {
     setError('')
+    if (!validateTechForm()) return
     try {
       await createTechnology(form)
       setForm({ id: '', name: '', vendor: '', category: 'framework', status: 'APPROVED', description: '', cost_tier: '' })
       setShowForm(false)
+      setFieldErrors({})
       load()
     } catch (err) {
       setError(err.message)
@@ -210,12 +221,14 @@ export default function TechnologyRegistry() {
           </div>
           <div className="grid grid-cols-3 gap-4">
             <div>
-              <label className="block text-xs text-gray-500 mb-1">Name</label>
-              <input placeholder="e.g. AWS Bedrock" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} className="input w-full" />
+              <label className="block text-xs text-gray-500 mb-1">Name <span className="text-red-400">*</span></label>
+              <input placeholder="e.g. AWS Bedrock" value={form.name} onChange={e => { setForm(f => ({ ...f, name: e.target.value })); setFieldErrors(fe => ({ ...fe, name: undefined })) }} className={`input w-full ${fieldErrors.name ? 'border-red-500/50' : ''}`} />
+              {fieldErrors.name && <p className="text-red-400 text-xs mt-1">{fieldErrors.name}</p>}
             </div>
             <div>
-              <label className="block text-xs text-gray-500 mb-1">ID</label>
-              <input placeholder="e.g. aws-bedrock" value={form.id} onChange={e => setForm(f => ({ ...f, id: e.target.value }))} className="input w-full" />
+              <label className="block text-xs text-gray-500 mb-1">ID <span className="text-red-400">*</span></label>
+              <input placeholder="e.g. aws-bedrock" value={form.id} onChange={e => { setForm(f => ({ ...f, id: e.target.value })); setFieldErrors(fe => ({ ...fe, id: undefined })) }} className={`input w-full ${fieldErrors.id ? 'border-red-500/50' : ''}`} />
+              {fieldErrors.id && <p className="text-red-400 text-xs mt-1">{fieldErrors.id}</p>}
             </div>
             <div>
               <label className="block text-xs text-gray-500 mb-1">Vendor</label>

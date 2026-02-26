@@ -7,6 +7,7 @@ import {
   fetchTeams,
 } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
+import ConfirmModal from '../components/ConfirmModal'
 
 const HEALTH_SECTIONS = [
   { key: 'overview', label: 'Overview' },
@@ -67,6 +68,7 @@ export default function PatternHealth() {
   // Analysis history
   const [analyses, setAnalyses] = useState([])
   const [analysesExpanded, setAnalysesExpanded] = useState(false)
+  const [confirmAction, setConfirmAction] = useState(null)
 
   // Incomplete patterns pagination
   const [incompletePage, setIncompletePage] = useState(0)
@@ -145,18 +147,26 @@ export default function PatternHealth() {
     }
   }
 
-  const handleDeleteAnalysis = async (id) => {
-    if (!confirm(`Delete analysis ${id}?`)) return
-    try {
-      await deleteHealthAnalysis(id)
-      setAnalyses(prev => prev.filter(a => a.id !== id))
-      if (savedAnalysisId === id) {
-        setSavedAnalysisId(null)
-        setAiAnalysis(null)
-      }
-    } catch (err) {
-      setError(`Failed to delete: ${err.message}`)
-    }
+  const handleDeleteAnalysis = (id) => {
+    setConfirmAction({
+      title: 'Delete Analysis',
+      message: `Are you sure you want to delete analysis "${id}"?`,
+      confirmLabel: 'Delete',
+      variant: 'danger',
+      onConfirm: async () => {
+        setConfirmAction(null)
+        try {
+          await deleteHealthAnalysis(id)
+          setAnalyses(prev => prev.filter(a => a.id !== id))
+          if (savedAnalysisId === id) {
+            setSavedAnalysisId(null)
+            setAiAnalysis(null)
+          }
+        } catch (err) {
+          setError(`Failed to delete: ${err.message}`)
+        }
+      },
+    })
   }
 
   if (loading) {
@@ -1255,6 +1265,16 @@ export default function PatternHealth() {
           )}
         </div>
       )}
+
+      <ConfirmModal
+        open={!!confirmAction}
+        title={confirmAction?.title || 'Confirm Action'}
+        message={confirmAction?.message || 'Are you sure?'}
+        confirmLabel={confirmAction?.confirmLabel || 'Confirm'}
+        variant={confirmAction?.variant || 'danger'}
+        onConfirm={() => confirmAction?.onConfirm?.()}
+        onCancel={() => setConfirmAction(null)}
+      />
     </div>
   )
 }

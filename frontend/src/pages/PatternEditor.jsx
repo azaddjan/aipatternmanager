@@ -10,6 +10,7 @@ import {
 } from '../api/client'
 import AIFieldAssist from '../components/AIFieldAssist'
 import { useAuth } from '../contexts/AuthContext'
+import ConfirmModal from '../components/ConfirmModal'
 
 const TYPES = ['AB', 'ABB', 'SBB']
 
@@ -94,6 +95,7 @@ export default function PatternEditor() {
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState({})
   const [previewId, setPreviewId] = useState('')
 
   // --- Structured content fields ---
@@ -122,6 +124,8 @@ export default function PatternEditor() {
   const [diagrams, setDiagrams] = useState([])
   const [existingImages, setExistingImages] = useState([])
   const [uploadingImage, setUploadingImage] = useState(false)
+  const [deleteImageTarget, setDeleteImageTarget] = useState(null) // { id, title }
+  const [imageError, setImageError] = useState('')
 
   // Build capabilities list from PBC database + any existing caps on the pattern
   const pbcNames = pbcs.map(p => p.name)
@@ -359,7 +363,17 @@ export default function PatternEditor() {
     setAiLoading(false)
   }
 
+  const validatePatternForm = () => {
+    const errs = {}
+    if (!form.name.trim()) errs.name = 'Name is required'
+    if (!form.type) errs.type = 'Type is required'
+    if (!form.category) errs.category = 'Category is required'
+    setFieldErrors(errs)
+    return Object.keys(errs).length === 0
+  }
+
   const handleSave = async () => {
+    if (!validatePatternForm()) return
     setSaving(true)
     setError('')
     try {
@@ -1238,14 +1252,15 @@ export default function PatternEditor() {
             )}
           </div>
           <div>
-            <label className="block text-xs text-gray-500 mb-1">Name</label>
+            <label className="block text-xs text-gray-500 mb-1">Name <span className="text-red-400">*</span></label>
             <input
               type="text"
               value={form.name}
-              onChange={e => setField('name', e.target.value)}
+              onChange={e => { setField('name', e.target.value); setFieldErrors(fe => ({ ...fe, name: undefined })) }}
               placeholder="Pattern name"
-              className="input w-full"
+              className={`input w-full ${fieldErrors.name ? 'border-red-500/50' : ''}`}
             />
+            {fieldErrors.name && <p className="text-red-400 text-xs mt-1">{fieldErrors.name}</p>}
           </div>
           <div>
             <label className="block text-xs text-gray-500 mb-1">Version</label>
@@ -1258,14 +1273,15 @@ export default function PatternEditor() {
             />
           </div>
           <div>
-            <label className="block text-xs text-gray-500 mb-1">Type</label>
-            <select value={form.type} onChange={e => setField('type', e.target.value)} className="select w-full">
+            <label className="block text-xs text-gray-500 mb-1">Type <span className="text-red-400">*</span></label>
+            <select value={form.type} onChange={e => { setField('type', e.target.value); setFieldErrors(fe => ({ ...fe, type: undefined })) }} className={`select w-full ${fieldErrors.type ? 'border-red-500/50' : ''}`}>
               {TYPES.map(t => <option key={t} value={t}>{t}</option>)}
             </select>
+            {fieldErrors.type && <p className="text-red-400 text-xs mt-1">{fieldErrors.type}</p>}
           </div>
           <div>
-            <label className="block text-xs text-gray-500 mb-1">Category</label>
-            <select value={form.category} onChange={e => setField('category', e.target.value)} className="select w-full">
+            <label className="block text-xs text-gray-500 mb-1">Category <span className="text-red-400">*</span></label>
+            <select value={form.category} onChange={e => { setField('category', e.target.value); setFieldErrors(fe => ({ ...fe, category: undefined })) }} className={`select w-full ${fieldErrors.category ? 'border-red-500/50' : ''}`}>
               {categories.map(c => <option key={c.code} value={c.code}>{c.label}</option>)}
               {form.category && !categories.find(c => c.code === form.category) && (
                 <option value={form.category}>{form.category}</option>
@@ -1927,19 +1943,17 @@ export default function PatternEditor() {
                   />
                   <p className="text-xs text-gray-400 truncate">{img.title}</p>
                   <button
-                    onClick={async () => {
-                      if (!confirm(`Delete image "${img.title}"?`)) return
-                      try {
-                        await deletePatternImage(id, img.id)
-                        setExistingImages(existingImages.filter(x => x.id !== img.id))
-                      } catch (err) {
-                        alert(err.message)
-                      }
-                    }}
+                    onClick={() => setDeleteImageTarget(img)}
                     className="absolute top-1 right-1 bg-red-600/80 text-white text-xs px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity"
                   >{'\u2715'}</button>
                 </div>
               ))}
+            </div>
+          )}
+          {imageError && (
+            <div className="bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg px-3 py-2 text-xs mb-2 flex items-center justify-between">
+              <span>{imageError}</span>
+              <button onClick={() => setImageError('')} className="text-red-400 hover:text-red-300 ml-2">&times;</button>
             </div>
           )}
           <input
@@ -1950,11 +1964,12 @@ export default function PatternEditor() {
               const file = e.target.files?.[0]
               if (!file) return
               setUploadingImage(true)
+              setImageError('')
               try {
                 const meta = await uploadPatternImage(id, file, file.name)
                 setExistingImages(prev => [...prev, meta])
               } catch (err) {
-                alert(err.message)
+                setImageError(err.message)
               }
               setUploadingImage(false)
               e.target.value = ''
@@ -1965,6 +1980,24 @@ export default function PatternEditor() {
         </div>
       )}
 
+      <ConfirmModal
+        open={!!deleteImageTarget}
+        title="Delete Image"
+        message={`Are you sure you want to delete image "${deleteImageTarget?.title}"?`}
+        confirmLabel="Delete"
+        variant="danger"
+        onConfirm={async () => {
+          const img = deleteImageTarget
+          setDeleteImageTarget(null)
+          try {
+            await deletePatternImage(id, img.id)
+            setExistingImages(prev => prev.filter(x => x.id !== img.id))
+          } catch (err) {
+            setImageError(err.message)
+          }
+        }}
+        onCancel={() => setDeleteImageTarget(null)}
+      />
     </div>
   )
 }

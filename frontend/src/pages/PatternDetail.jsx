@@ -6,6 +6,7 @@ import MarkdownContent from '../components/MarkdownContent'
 import GraphView from '../components/GraphView'
 import { TypeBadge } from '../components/PatternCard'
 import { useAuth } from '../contexts/AuthContext'
+import ConfirmModal from '../components/ConfirmModal'
 
 export default function PatternDetail() {
   const { id } = useParams()
@@ -17,6 +18,8 @@ export default function PatternDetail() {
   const [impactData, setImpactData] = useState(null)
   const [tab, setTab] = useState('content') // content | relationships | graph
   const [loading, setLoading] = useState(true)
+  const [deleteConfirm, setDeleteConfirm] = useState(false)
+  const [error, setError] = useState('')
 
   const loadPattern = useCallback(() => {
     setLoading(true)
@@ -44,22 +47,30 @@ export default function PatternDetail() {
     if (!impactData) fetchImpactAnalysis(id).then(setImpactData).catch(() => {})
   }, [pattern])
 
-  const handleDelete = async () => {
-    const imgCount = pattern?.images?.length || 0
-    const diagCount = pattern?.diagrams?.length || 0
-    const hasArtifacts = imgCount > 0 || diagCount > 0
-    let msg = `Delete pattern ${id}? This cannot be undone.`
-    if (hasArtifacts) {
-      msg += `\n\nThis pattern has ${imgCount} image(s) and ${diagCount} diagram(s). They will be deleted.\nDownload artifacts first from the button in the header.`
-    }
-    if (!confirm(msg)) return
+  const handleDelete = () => {
+    setDeleteConfirm(true)
+  }
+
+  const confirmDeletePattern = async () => {
+    setDeleteConfirm(false)
     try {
       await deletePattern(id)
       navigate('/patterns')
     } catch (err) {
-      alert(err.message)
+      setError(err.message)
     }
   }
+
+  const deleteMessage = (() => {
+    const imgCount = pattern?.images?.length || 0
+    const diagCount = pattern?.diagrams?.length || 0
+    const hasArtifacts = imgCount > 0 || diagCount > 0
+    let msg = `Are you sure you want to delete pattern "${id}"? This action cannot be undone.`
+    if (hasArtifacts) {
+      msg += ` This pattern has ${imgCount} image(s) and ${diagCount} diagram(s) that will also be deleted. Download artifacts first from the button in the header.`
+    }
+    return msg
+  })()
 
   if (loading) return <div className="text-gray-500 text-center py-12">Loading pattern...</div>
   if (!pattern) return <div className="text-red-400 text-center py-12">Pattern {id} not found</div>
@@ -80,6 +91,23 @@ export default function PatternDetail() {
         <span className="text-gray-700">/</span>
         <span className="text-gray-400">{pattern.name}</span>
       </div>
+
+      {error && (
+        <div className="bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg px-4 py-3 text-sm flex items-center justify-between">
+          <span>{error}</span>
+          <button onClick={() => setError('')} className="text-red-400 hover:text-red-300 ml-3">&times;</button>
+        </div>
+      )}
+
+      <ConfirmModal
+        open={deleteConfirm}
+        title="Delete Pattern"
+        message={deleteMessage}
+        confirmLabel="Delete"
+        variant="danger"
+        onConfirm={confirmDeletePattern}
+        onCancel={() => setDeleteConfirm(false)}
+      />
 
       {/* Header */}
       <div className="flex items-start justify-between">

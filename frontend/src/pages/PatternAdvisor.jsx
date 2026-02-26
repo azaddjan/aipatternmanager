@@ -8,6 +8,7 @@ import {
   authenticatedDownload,
 } from '../api/client'
 import MarkdownContent from '../components/MarkdownContent'
+import ConfirmModal from '../components/ConfirmModal'
 
 const CONFIDENCE_COLORS = {
   HIGH: 'bg-green-500/20 text-green-400 border-green-500/30',
@@ -56,6 +57,7 @@ export default function PatternAdvisor() {
   const [editingTitle, setEditingTitle] = useState(null)
   const [editTitleValue, setEditTitleValue] = useState('')
   const [reportsLoading, setReportsLoading] = useState(false)
+  const [confirmAction, setConfirmAction] = useState(null)
 
   // --- Clarification state ---
   const [clarifying, setClarifying] = useState(false)
@@ -249,33 +251,50 @@ export default function PatternAdvisor() {
     setEditingTitle(null)
   }
 
-  const handleDeleteReport = async (id) => {
-    if (!confirm(`Delete report ${id}?`)) return
-    try {
-      await deleteAdvisorReport(id)
-      setReports(prev => prev.filter(r => r.id !== id))
-      if (savedReportId === id) setSavedReportId(null)
-    } catch (err) {
-      setError(`Failed to delete: ${err.message}`)
-    }
+  const handleDeleteReport = (id) => {
+    setConfirmAction({
+      title: 'Delete Report',
+      message: `Are you sure you want to delete report "${id}"?`,
+      confirmLabel: 'Delete',
+      variant: 'danger',
+      onConfirm: async () => {
+        setConfirmAction(null)
+        try {
+          await deleteAdvisorReport(id)
+          setReports(prev => prev.filter(r => r.id !== id))
+          if (savedReportId === id) setSavedReportId(null)
+        } catch (err) {
+          setError(`Failed to delete: ${err.message}`)
+        }
+      },
+    })
   }
 
-  const handleDeleteAll = async () => {
-    if (!confirm('Delete all non-starred reports? Starred reports will be kept.')) return
-    try {
-      await deleteAllAdvisorReports()
-      loadReports()
-    } catch (err) {
-      setError(`Failed to delete all: ${err.message}`)
-    }
+  const handleDeleteAll = () => {
+    setConfirmAction({
+      title: 'Delete All Reports',
+      message: 'Delete all non-starred reports? Starred reports will be kept.',
+      confirmLabel: 'Delete All',
+      variant: 'danger',
+      onConfirm: async () => {
+        setConfirmAction(null)
+        try {
+          await deleteAllAdvisorReports()
+          loadReports()
+        } catch (err) {
+          setError(`Failed to delete all: ${err.message}`)
+        }
+      },
+    })
   }
 
   const handleCleanup = async () => {
     try {
       const res = await cleanupAdvisorReports()
       loadReports()
-      const msg = `Cleanup complete: ${(res.deleted_by_count || 0) + (res.deleted_by_age || 0)} reports removed, ${res.total_remaining || 0} remaining`
-      alert(msg)
+      setError('') // clear any previous errors
+      // Show result as a success message using error state (reusing existing banner)
+      setError(`Cleanup complete: ${(res.deleted_by_count || 0) + (res.deleted_by_age || 0)} reports removed, ${res.total_remaining || 0} remaining`)
     } catch (err) {
       setError(`Cleanup failed: ${err.message}`)
     }
@@ -782,6 +801,16 @@ export default function PatternAdvisor() {
           </div>
         </div>
       )}
+
+      <ConfirmModal
+        open={!!confirmAction}
+        title={confirmAction?.title || 'Confirm Action'}
+        message={confirmAction?.message || 'Are you sure?'}
+        confirmLabel={confirmAction?.confirmLabel || 'Confirm'}
+        variant={confirmAction?.variant || 'danger'}
+        onConfirm={() => confirmAction?.onConfirm?.()}
+        onCancel={() => setConfirmAction(null)}
+      />
     </div>
   )
 }
