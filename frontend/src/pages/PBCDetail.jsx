@@ -96,6 +96,9 @@ export default function PBCDetail() {
       {/* Tab Content */}
       {tab === 'overview' && (
         <div className="space-y-4">
+          {/* AI Assistant */}
+          <PBCAIAssistant pbc={pbc} graphData={graphData} />
+
           {/* Info Cards */}
           <div className="grid grid-cols-3 gap-4">
             <div className={`card border-l-4 ${
@@ -151,8 +154,6 @@ export default function PBCDetail() {
             )}
           </div>
 
-          {/* AI Assistant */}
-          <PBCAIAssistant pbc={pbc} graphData={graphData} />
         </div>
       )}
 

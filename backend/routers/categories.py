@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends
 
-from models.schemas import CategoryCreate
+from models.schemas import CategoryCreate, CategoryUpdate
 from middleware.dependencies import get_current_user, get_current_user_or_anonymous
 
 router = APIRouter(prefix="/api/categories", tags=["Categories"])
@@ -26,6 +26,37 @@ def create_category(data: CategoryCreate, current_user: dict = Depends(get_curre
     prefix = data.prefix or data.code.upper()
     cat = db.create_category(data.code, data.label, prefix)
     return cat
+
+
+@router.put("/{code}")
+def update_category(code: str, data: CategoryUpdate, current_user: dict = Depends(get_current_user)):
+    if current_user.get("role") == "viewer":
+        raise HTTPException(status_code=403, detail="Viewers cannot update categories")
+    db = get_db()
+    updates = data.model_dump(exclude_none=True)
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    cat = db.update_category(code, updates)
+    if not cat:
+        raise HTTPException(status_code=404, detail=f"Category '{code}' not found")
+    return cat
+
+
+@router.delete("/{code}")
+def delete_category(code: str, current_user: dict = Depends(get_current_user)):
+    if current_user.get("role") == "viewer":
+        raise HTTPException(status_code=403, detail="Viewers cannot delete categories")
+    db = get_db()
+    # Prevent deleting a category that has patterns
+    count = db.count_patterns_in_category(code)
+    if count > 0:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot delete category '{code}': {count} pattern(s) still use it. Reassign or delete them first.",
+        )
+    if not db.delete_category(code):
+        raise HTTPException(status_code=404, detail=f"Category '{code}' not found")
+    return {"deleted": code}
 
 
 @router.get("/{code}/overview")

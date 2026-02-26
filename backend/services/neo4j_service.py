@@ -875,6 +875,36 @@ class Neo4jService:
             result = session.run(query, code=code, label=label, prefix=prefix)
             return dict(result.single()["c"])
 
+    def update_category(self, code: str, updates: dict) -> Optional[dict]:
+        """Update category label/prefix."""
+        allowed = {k: v for k, v in updates.items() if k in ("label", "prefix") and v is not None}
+        if not allowed:
+            return None
+        set_clauses = ", ".join(f"c.{k} = ${k}" for k in allowed)
+        query = f"MATCH (c:Category {{code: $code}}) SET {set_clauses} RETURN c"
+        with self.session() as session:
+            result = session.run(query, code=code, **allowed)
+            record = result.single()
+            return dict(record["c"]) if record else None
+
+    def delete_category(self, code: str) -> bool:
+        """Delete a category node. Returns False if it doesn't exist."""
+        with self.session() as session:
+            result = session.run(
+                "MATCH (c:Category {code: $code}) DELETE c RETURN count(c) AS deleted",
+                code=code,
+            )
+            return result.single()["deleted"] > 0
+
+    def count_patterns_in_category(self, code: str) -> int:
+        """Count patterns that use this category code."""
+        with self.session() as session:
+            result = session.run(
+                "MATCH (p:Pattern {category: $code}) RETURN count(p) AS cnt",
+                code=code,
+            )
+            return result.single()["cnt"]
+
     # --- PBC (Business Capabilities) CRUD ---
 
     def get_pbc(self, pbc_id: str) -> Optional[dict]:

@@ -102,11 +102,43 @@ export function AuthProvider({ children }) {
 
   const canCreatePattern = isAdmin || isTeamMember
 
+  const updateProfile = async (updates) => {
+    const token = localStorage.getItem(TOKEN_KEY)
+    const res = await fetch('/api/auth/me', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(updates),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail || 'Update failed')
+    }
+    const updatedUser = await res.json()
+    setUser(updatedUser)
+    localStorage.setItem(USER_KEY, JSON.stringify(updatedUser))
+    return updatedUser
+  }
+
+  const changePassword = async (currentPassword, newPassword) => {
+    const token = localStorage.getItem(TOKEN_KEY)
+    const res = await fetch('/api/auth/change-password', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail || 'Password change failed')
+    }
+    return await res.json()
+  }
+
   return (
     <AuthContext.Provider value={{
       user, loading, login, logout, getToken,
       isAdmin, isTeamMember, isViewer, isAuthenticated,
       canEditPattern, canCreatePattern,
+      updateProfile, changePassword,
     }}>
       {children}
     </AuthContext.Provider>

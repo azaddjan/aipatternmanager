@@ -211,6 +211,11 @@ class CategoryCreate(BaseModel):
     prefix: Optional[str] = None  # auto-derived from code.upper() if omitted
 
 
+class CategoryUpdate(BaseModel):
+    label: Optional[str] = None
+    prefix: Optional[str] = None
+
+
 # --- PBC (Packaged Business Capabilities) ---
 
 class PBCCreate(BaseModel):

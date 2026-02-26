@@ -685,6 +685,17 @@ function OverviewTab({ tech, patterns, catLabel, onAI, aiLoading, impactData, al
 
   return (
     <div className="space-y-6">
+      {/* AI Assistant */}
+      <AIPromptBox
+        title="AI Assistant"
+        placeholder="Ask anything — AI knows impact, alternatives & adoption data... (e.g., 'Compare with alternatives', 'Migration risk?', 'Adoption strategy')"
+        onRun={handleCustomAI}
+        loading={customLoading}
+        result={customResult}
+        onClear={() => setCustomResult(null)}
+        defaultExpanded
+      />
+
       {/* Info Cards */}
       <div className="grid grid-cols-5 gap-4">
         <StatCard label="Vendor" value={tech.vendor} />
@@ -735,17 +746,6 @@ function OverviewTab({ tech, patterns, catLabel, onAI, aiLoading, impactData, al
           </div>
         </div>
       )}
-
-      {/* AI Assistant */}
-      <AIPromptBox
-        title="AI Assistant"
-        placeholder="Ask anything — AI knows impact, alternatives & adoption data... (e.g., 'Compare with alternatives', 'Migration risk?', 'Adoption strategy')"
-        onRun={handleCustomAI}
-        loading={customLoading}
-        result={customResult}
-        onClear={() => setCustomResult(null)}
-        defaultExpanded
-      />
 
       {/* Used by Patterns */}
       <div className="card">

@@ -18,6 +18,13 @@ JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 REFRESH_TOKEN_EXPIRE_DAYS = 7
 
+# Account lockout configuration
+MAX_FAILED_ATTEMPTS = 5
+LOCKOUT_DURATION_MINUTES = 15
+
+# In-memory login attempt tracker: { email: { "attempts": int, "locked_until": datetime | None } }
+_login_attempts: dict[str, dict] = {}
+
 # Admin seed credentials
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
@@ -236,17 +243,63 @@ def _sanitize_user(user: dict) -> dict:
     return user
 
 
+# ── Account Lockout ──
+
+def _check_lockout(email: str) -> Optional[str]:
+    """Check if account is locked. Returns lockout message or None."""
+    email = email.lower()
+    info = _login_attempts.get(email)
+    if not info:
+        return None
+    locked_until = info.get("locked_until")
+    if locked_until:
+        now = datetime.now(timezone.utc)
+        if now < locked_until:
+            remaining = int((locked_until - now).total_seconds() / 60) + 1
+            return f"Account locked due to too many failed attempts. Try again in {remaining} minute(s)."
+        else:
+            # Lockout expired — reset
+            _login_attempts.pop(email, None)
+            return None
+    return None
+
+
+def _record_failed_attempt(email: str):
+    """Record a failed login attempt. Locks account after MAX_FAILED_ATTEMPTS."""
+    email = email.lower()
+    info = _login_attempts.setdefault(email, {"attempts": 0, "locked_until": None})
+    info["attempts"] += 1
+    if info["attempts"] >= MAX_FAILED_ATTEMPTS:
+        info["locked_until"] = datetime.now(timezone.utc) + timedelta(minutes=LOCKOUT_DURATION_MINUTES)
+        logger.warning(f"Account locked for {email} after {info['attempts']} failed attempts")
+
+
+def _clear_failed_attempts(email: str):
+    """Clear failed attempts on successful login."""
+    _login_attempts.pop(email.lower(), None)
+
+
 # ── Authentication Flow ──
 
 def authenticate(email: str, password: str) -> Optional[dict]:
-    """Authenticate user. Returns user dict (without password_hash) or None."""
+    """Authenticate user. Returns user dict (without password_hash) or None.
+    Raises ValueError if account is locked."""
+    # Check lockout
+    lockout_msg = _check_lockout(email)
+    if lockout_msg:
+        raise ValueError(lockout_msg)
+
     user = get_user_by_email(email)
     if not user:
+        _record_failed_attempt(email)
         return None
     if not user.get("is_active", True):
         return None
     if not verify_password(password, user.get("password_hash", "")):
+        _record_failed_attempt(email)
         return None
+    # Success — clear failed attempts
+    _clear_failed_attempts(email)
     return _sanitize_user(user)
 
 

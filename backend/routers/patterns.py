@@ -116,6 +116,15 @@ def create_pattern(
     if db.pattern_exists(pattern_id):
         raise HTTPException(status_code=409, detail=f"Pattern {pattern_id} already exists")
 
+    # TOGAF enforcement: ABBs are vendor-neutral and NEVER have tech/dep relationships
+    if data.type.value == "ABB":
+        if data.technology_ids:
+            raise HTTPException(status_code=400, detail="ABBs cannot have technology dependencies (USES). ABBs are vendor-neutral abstract capabilities.")
+        if data.compatible_tech_ids:
+            raise HTTPException(status_code=400, detail="ABBs cannot have compatible technologies (COMPATIBLE_WITH). ABBs are vendor-neutral.")
+        if data.depends_on_ids:
+            raise HTTPException(status_code=400, detail="ABBs cannot have DEPENDS_ON relationships. Use REFERENCES or CONSTRAINED_BY instead.")
+
     # Extract relationship fields before creating the node
     implements_abbs = data.implements_abbs or []
     technology_ids = data.technology_ids or []
@@ -179,6 +188,16 @@ def update_pattern(
     technology_ids = data.technology_ids
     compatible_tech_ids = data.compatible_tech_ids
     depends_on_ids = data.depends_on_ids
+
+    # TOGAF enforcement: check if this pattern is an ABB — reject tech/dep relationships
+    existing = db.get_pattern(pattern_id)
+    if existing and existing.get("type") == "ABB":
+        if technology_ids and len(technology_ids) > 0:
+            raise HTTPException(status_code=400, detail="ABBs cannot have technology dependencies (USES). ABBs are vendor-neutral abstract capabilities.")
+        if compatible_tech_ids and len(compatible_tech_ids) > 0:
+            raise HTTPException(status_code=400, detail="ABBs cannot have compatible technologies (COMPATIBLE_WITH). ABBs are vendor-neutral.")
+        if depends_on_ids and len(depends_on_ids) > 0:
+            raise HTTPException(status_code=400, detail="ABBs cannot have DEPENDS_ON relationships. Use REFERENCES or CONSTRAINED_BY instead.")
 
     update_data = data.model_dump(exclude_none=True, exclude={"implements_abbs", "technology_ids", "compatible_tech_ids", "depends_on_ids"})
     if not update_data and implements_abbs is None and technology_ids is None and compatible_tech_ids is None and depends_on_ids is None:

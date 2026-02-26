@@ -185,9 +185,9 @@ function StructuredContent({ pattern, impactData, graphData }) {
 
   return (
     <div className="space-y-4">
+      <PatternAIAssistant pattern={pattern} impactData={impactData} graphData={graphData} />
       <ContentSection title="Description" content={pattern.description} />
       {typeContent}
-      <PatternAIAssistant pattern={pattern} impactData={impactData} graphData={graphData} />
       <DiagramsSection diagrams={pattern.diagrams} />
       <ImagesSection images={pattern.images} />
     </div>
