@@ -104,6 +104,15 @@ async function request(path, options = {}) {
   return res.json()
 }
 
+// --- Global Search ---
+
+export function globalSearch(q, types = null, limit = 30) {
+  const qs = new URLSearchParams({ q })
+  if (types) qs.set('types', types)
+  if (limit) qs.set('limit', limit)
+  return request(`/search?${qs}`)
+}
+
 // --- Patterns ---
 
 export function fetchPatterns(params = {}) {

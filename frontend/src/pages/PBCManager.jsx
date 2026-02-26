@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { fetchPBCs, createPBC, updatePBC, deletePBC, fetchPatterns } from '../api/client'
 import { Link } from 'react-router-dom'
+import Pagination from '../components/Pagination'
 
 export default function PBCManager() {
   const [pbcs, setPbcs] = useState([])
@@ -9,6 +10,10 @@ export default function PBCManager() {
   const [showForm, setShowForm] = useState(false)
   const [editing, setEditing] = useState(null)
   const [view, setView] = useState('table') // 'table' or 'grid'
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState('')
+  const [page, setPage] = useState(1)
+  const PAGE_SIZE = 25
   const [form, setForm] = useState({ name: '', description: '', api_endpoint: '', status: 'ACTIVE', abb_ids: [] })
   const [error, setError] = useState('')
 
@@ -78,6 +83,26 @@ export default function PBCManager() {
     }))
   }
 
+  // Filter PBCs by search and status
+  const filtered = pbcs.filter(pbc => {
+    if (statusFilter && pbc.status !== statusFilter) return false
+    if (!search) return true
+    const q = search.toLowerCase()
+    return (
+      pbc.name?.toLowerCase().includes(q) ||
+      pbc.id?.toLowerCase().includes(q) ||
+      pbc.description?.toLowerCase().includes(q) ||
+      pbc.api_endpoint?.toLowerCase().includes(q) ||
+      (pbc.abb_ids || []).some(id => id.toLowerCase().includes(q))
+    )
+  })
+
+  // Reset page when search/filter changes
+  useEffect(() => { setPage(1) }, [search, statusFilter])
+
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
+  const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+
   if (loading) {
     return <div className="flex items-center justify-center h-64 text-gray-500">Loading...</div>
   }
@@ -87,7 +112,7 @@ export default function PBCManager() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white">Business Capabilities (PBCs)</h1>
-          <p className="text-gray-500 text-sm mt-1">Packaged Business Capabilities that compose ABBs into deployable units</p>
+          <p className="text-gray-500 text-sm mt-1">{filtered.length}{filtered.length !== pbcs.length ? ` of ${pbcs.length}` : ''} business capabilities</p>
         </div>
         <div className="flex gap-2">
           {/* View Toggle */}
@@ -113,6 +138,27 @@ export default function PBCManager() {
             + New PBC
           </button>
         </div>
+      </div>
+
+      {/* Search & Filter */}
+      <div className="flex gap-3 flex-wrap">
+        <input
+          type="text"
+          placeholder="Search by name, ID, description, or ABB..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          className="input w-64"
+        />
+        <select
+          value={statusFilter}
+          onChange={e => setStatusFilter(e.target.value)}
+          className="select"
+        >
+          <option value="">All Statuses</option>
+          <option value="ACTIVE">Active</option>
+          <option value="DRAFT">Draft</option>
+          <option value="DEPRECATED">Deprecated</option>
+        </select>
       </div>
 
       {error && (
@@ -196,9 +242,9 @@ export default function PBCManager() {
       )}
 
       {/* Content */}
-      {pbcs.length === 0 ? (
+      {filtered.length === 0 ? (
         <div className="text-center text-gray-500 py-12">
-          No PBCs yet. Click "+ New PBC" to create one.
+          {pbcs.length === 0 ? 'No PBCs yet. Click "+ New PBC" to create one.' : 'No PBCs match your search.'}
         </div>
       ) : view === 'table' ? (
         /* Table View (Default) */
@@ -216,7 +262,7 @@ export default function PBCManager() {
               </tr>
             </thead>
             <tbody>
-              {pbcs.map(pbc => (
+              {paginated.map(pbc => (
                 <tr key={pbc.id} className="border-b border-gray-800/50 hover:bg-gray-800/30">
                   <td className="py-2.5">
                     <Link to={`/pbcs/${pbc.id}`} className="badge-pbc font-mono text-xs hover:underline">{pbc.id}</Link>
@@ -256,7 +302,7 @@ export default function PBCManager() {
       ) : (
         /* Card View */
         <div className="grid grid-cols-1 gap-4">
-          {pbcs.map(pbc => (
+          {paginated.map(pbc => (
             <div key={pbc.id} className="card border-l-4 border-purple-500/30">
               <div className="flex items-start justify-between">
                 <div className="flex-1">
@@ -300,6 +346,16 @@ export default function PBCManager() {
             </div>
           ))}
         </div>
+      )}
+
+      {filtered.length > PAGE_SIZE && (
+        <Pagination
+          page={page}
+          totalPages={totalPages}
+          total={filtered.length}
+          pageSize={PAGE_SIZE}
+          onPageChange={setPage}
+        />
       )}
     </div>
   )

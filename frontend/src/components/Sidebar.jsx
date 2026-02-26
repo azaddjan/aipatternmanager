@@ -1,6 +1,7 @@
-import { useState } from 'react'
-import { NavLink } from 'react-router-dom'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
+import { globalSearch } from '../api/client'
 
 const NAV_ITEMS = [
   { to: '/',             icon: '📊', label: 'Dashboard' },
@@ -153,10 +154,134 @@ function ProfileModal({ onClose }) {
   )
 }
 
+/* ── Global Search Modal (Cmd+K) ── */
+const TYPE_ICONS = { pattern: '🧩', technology: '⚙️', pbc: '📦' }
+const TYPE_PATHS = { pattern: '/patterns', technology: '/technologies', pbc: '/pbcs' }
+
+function SearchModal({ onClose }) {
+  const navigate = useNavigate()
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [selected, setSelected] = useState(0)
+  const inputRef = useRef(null)
+  const timerRef = useRef(null)
+
+  useEffect(() => { inputRef.current?.focus() }, [])
+
+  // Debounced search
+  useEffect(() => {
+    if (!query.trim()) { setResults([]); return }
+    clearTimeout(timerRef.current)
+    timerRef.current = setTimeout(async () => {
+      setLoading(true)
+      try {
+        const res = await globalSearch(query.trim())
+        setResults(res.results || [])
+        setSelected(0)
+      } catch { setResults([]) }
+      setLoading(false)
+    }, 250)
+    return () => clearTimeout(timerRef.current)
+  }, [query])
+
+  const goTo = useCallback((item) => {
+    const path = item.result_type === 'pattern' ? `/patterns/${item.id}`
+      : item.result_type === 'technology' ? `/technologies/${item.id}`
+      : `/pbcs/${item.id}`
+    navigate(path)
+    onClose()
+  }, [navigate, onClose])
+
+  const handleKey = (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setSelected(s => Math.min(s + 1, results.length - 1)) }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setSelected(s => Math.max(s - 1, 0)) }
+    else if (e.key === 'Enter' && results[selected]) { goTo(results[selected]) }
+    else if (e.key === 'Escape') { onClose() }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-start justify-center pt-[15vh]" onClick={onClose}>
+      <div className="bg-gray-900 border border-gray-700 rounded-xl w-[520px] max-h-[60vh] overflow-hidden shadow-2xl" onClick={e => e.stopPropagation()}>
+        {/* Search Input */}
+        <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-800">
+          <svg className="w-4 h-4 text-gray-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <input
+            ref={inputRef}
+            type="text"
+            placeholder="Search patterns, technologies, PBCs..."
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            onKeyDown={handleKey}
+            className="flex-1 bg-transparent text-white text-sm outline-none placeholder-gray-500"
+          />
+          <kbd className="text-[10px] text-gray-600 bg-gray-800 px-1.5 py-0.5 rounded border border-gray-700">ESC</kbd>
+        </div>
+
+        {/* Results */}
+        <div className="overflow-y-auto max-h-[45vh]">
+          {loading && <p className="text-gray-500 text-sm text-center py-6">Searching...</p>}
+          {!loading && query && results.length === 0 && (
+            <p className="text-gray-500 text-sm text-center py-6">No results for "{query}"</p>
+          )}
+          {!loading && !query && (
+            <p className="text-gray-600 text-xs text-center py-6">Type to search across all patterns, technologies, and PBCs</p>
+          )}
+          {results.map((item, i) => (
+            <button
+              key={`${item.result_type}-${item.id}`}
+              className={`w-full text-left px-4 py-2.5 flex items-center gap-3 transition-colors ${
+                i === selected ? 'bg-blue-600/20' : 'hover:bg-gray-800'
+              }`}
+              onClick={() => goTo(item)}
+              onMouseEnter={() => setSelected(i)}
+            >
+              <span className="text-lg">{TYPE_ICONS[item.result_type] || '📄'}</span>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-white truncate">{item.name || item.id}</span>
+                  <span className="text-[10px] font-mono text-gray-500">{item.id}</span>
+                </div>
+                {item.description && (
+                  <p className="text-xs text-gray-500 truncate">{item.description}</p>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5 flex-shrink-0">
+                {item.type && <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
+                  item.type === 'AB' ? 'badge-ab' : item.type === 'ABB' ? 'badge-abb' : item.type === 'SBB' ? 'badge-sbb' : 'bg-gray-800 text-gray-400'
+                }`}>{item.type}</span>}
+                {item.status && <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                  item.status === 'ACTIVE' || item.status === 'APPROVED' ? 'bg-green-500/10 text-green-400' :
+                  item.status === 'DEPRECATED' ? 'bg-red-500/10 text-red-400' : 'bg-yellow-500/10 text-yellow-400'
+                }`}>{item.status}</span>}
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 /* ── Sidebar ── */
 export default function Sidebar() {
   const { user, isAdmin, logout } = useAuth()
   const [showProfile, setShowProfile] = useState(false)
+  const [showSearch, setShowSearch] = useState(false)
+
+  // Cmd+K / Ctrl+K global shortcut
+  useEffect(() => {
+    const handler = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault()
+        setShowSearch(s => !s)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
 
   return (
     <aside className="w-64 bg-gray-900 border-r border-gray-800 flex flex-col h-screen shrink-0">
@@ -167,6 +292,20 @@ export default function Sidebar() {
           <span>AI Pattern<br/><span className="text-blue-400">Manager</span></span>
         </h1>
         <p className="text-xs text-gray-500 mt-1">Architecture Patterns</p>
+      </div>
+
+      {/* Search Bar */}
+      <div className="px-3 pt-3">
+        <button
+          onClick={() => setShowSearch(true)}
+          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-500 text-sm hover:border-gray-600 hover:text-gray-400 transition-colors"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <span className="flex-1 text-left">Search...</span>
+          <kbd className="text-[10px] bg-gray-700/50 px-1.5 py-0.5 rounded border border-gray-600">⌘K</kbd>
+        </button>
       </div>
 
       {/* Navigation */}
@@ -244,8 +383,9 @@ export default function Sidebar() {
         </div>
       </div>
 
-      {/* Profile Modal */}
+      {/* Modals */}
       {showProfile && <ProfileModal onClose={() => setShowProfile(false)} />}
+      {showSearch && <SearchModal onClose={() => setShowSearch(false)} />}
     </aside>
   )
 }

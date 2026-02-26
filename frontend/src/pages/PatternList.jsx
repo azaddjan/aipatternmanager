@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { fetchPatterns, fetchCategories, updatePattern } from '../api/client'
 import PatternCard from '../components/PatternCard'
+import Pagination from '../components/Pagination'
 import { useAuth } from '../contexts/AuthContext'
 
 const TYPE_OPTIONS = ['', 'AB', 'ABB', 'SBB']
@@ -16,6 +17,8 @@ export default function PatternList() {
   const [search, setSearch] = useState('')
   const [viewMode, setViewMode] = useState('table') // grid | table
   const [categoryOptions, setCategoryOptions] = useState([])
+  const [page, setPage] = useState(1)
+  const PAGE_SIZE = 25
 
   // Derive unique team names from loaded patterns
   const teamOptions = useMemo(() => {
@@ -58,12 +61,18 @@ export default function PatternList() {
     )
   })
 
+  // Reset page when search/filters change
+  useEffect(() => { setPage(1) }, [search, filters])
+
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
+  const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white">Patterns</h1>
-          <p className="text-gray-500 text-sm mt-1">{total} patterns total</p>
+          <p className="text-gray-500 text-sm mt-1">{filtered.length}{filtered.length !== total ? ` of ${total}` : ''} patterns</p>
         </div>
         {canCreatePattern && (
           <Link to="/patterns/new" className="btn-primary">+ New Pattern</Link>
@@ -132,7 +141,7 @@ export default function PatternList() {
         <div className="text-gray-500 text-center py-12">No patterns found</div>
       ) : viewMode === 'grid' ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filtered.map(p => <PatternCard key={p.id} pattern={p} />)}
+          {paginated.map(p => <PatternCard key={p.id} pattern={p} />)}
         </div>
       ) : (
         <div className="card overflow-x-auto">
@@ -149,7 +158,7 @@ export default function PatternList() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map(p => (
+              {paginated.map(p => (
                 <tr key={p.id} className="border-b border-gray-800/50 hover:bg-gray-800/30">
                   <td className="py-2.5">
                     <Link to={`/patterns/${p.id}`} className="text-blue-400 font-mono text-xs hover:underline">{p.id}</Link>
@@ -191,6 +200,16 @@ export default function PatternList() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {filtered.length > PAGE_SIZE && (
+        <Pagination
+          page={page}
+          totalPages={totalPages}
+          total={filtered.length}
+          pageSize={PAGE_SIZE}
+          onPageChange={setPage}
+        />
       )}
     </div>
   )

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { fetchTechnologies, createTechnology, deleteTechnology, aiTechnologySuggest } from '../api/client'
+import Pagination from '../components/Pagination'
 
 const VENDORS = ['', 'AWS', 'Microsoft', 'Open Source', 'Hugging Face', 'LangChain', 'Salesforce', 'Redis']
 
@@ -39,6 +40,8 @@ export default function TechnologyRegistry() {
     id: '', name: '', vendor: '', category: 'framework', status: 'APPROVED', description: '', cost_tier: '',
   })
   const [suggesting, setSuggesting] = useState(false)
+  const [page, setPage] = useState(1)
+  const PAGE_SIZE = 25
 
   const handleAISuggest = async () => {
     if (!form.name.trim()) return
@@ -89,7 +92,13 @@ export default function TechnologyRegistry() {
     (t.category || '').toLowerCase().includes(search.toLowerCase())
   )
 
-  // Group by category for grid display
+  // Reset page when search/filters change
+  useEffect(() => { setPage(1) }, [search, filters])
+
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
+  const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+
+  // Group by category for grid display (uses paginated for table, full filtered for grid)
   const grouped = {}
   filtered.forEach(t => {
     const cat = t.category || 'other'
@@ -102,7 +111,7 @@ export default function TechnologyRegistry() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white">Technology Registry</h1>
-          <p className="text-gray-500 text-sm mt-1">{technologies.length} technologies linked to SBB patterns</p>
+          <p className="text-gray-500 text-sm mt-1">{filtered.length}{filtered.length !== technologies.length ? ` of ${technologies.length}` : ''} technologies</p>
         </div>
         <div className="flex gap-2">
           {/* View Toggle */}
@@ -241,7 +250,7 @@ export default function TechnologyRegistry() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map(t => (
+              {paginated.map(t => (
                 <tr key={t.id} className="border-b border-gray-800/50 hover:bg-gray-800/30 cursor-pointer group">
                   <td className="py-2.5">
                     <Link to={`/technologies/${t.id}`} className="text-blue-400 font-mono text-xs hover:underline">
@@ -311,6 +320,16 @@ export default function TechnologyRegistry() {
               </div>
             </div>
           ))
+      )}
+
+      {filtered.length > PAGE_SIZE && view === 'table' && (
+        <Pagination
+          page={page}
+          totalPages={totalPages}
+          total={filtered.length}
+          pageSize={PAGE_SIZE}
+          onPageChange={setPage}
+        />
       )}
     </div>
   )
