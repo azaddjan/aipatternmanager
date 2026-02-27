@@ -61,6 +61,7 @@ export default function PatternHealth() {
   const [aiAnalysis, setAiAnalysis] = useState(null)
   const [analyzingHealth, setAnalyzingHealth] = useState(false)
   const [savedAnalysisId, setSavedAnalysisId] = useState(null)
+  const [savedAnalysisTime, setSavedAnalysisTime] = useState(null)
   const [providers, setProviders] = useState([])
   const [provider, setProvider] = useState('')
   const [model, setModel] = useState('')
@@ -111,6 +112,7 @@ export default function PatternHealth() {
       if (latestAnalysis && latestAnalysis.analysis_json) {
         setAiAnalysis(latestAnalysis.analysis_json)
         setSavedAnalysisId(latestAnalysis.id)
+        setSavedAnalysisTime(latestAnalysis.created_at || null)
       }
       setAnalyses(historyData?.analyses || [])
     })
@@ -124,6 +126,7 @@ export default function PatternHealth() {
       if (res?.analysis) {
         setAiAnalysis(res.analysis)
         setSavedAnalysisId(res.saved_analysis_id || null)
+        setSavedAnalysisTime(new Date().toISOString())
         setSection('ai')
         fetchHealthAnalyses(20).then(r => setAnalyses(r?.analyses || [])).catch(() => {})
       }
@@ -140,6 +143,7 @@ export default function PatternHealth() {
       if (full?.analysis_json) {
         setAiAnalysis(full.analysis_json)
         setSavedAnalysisId(full.id)
+        setSavedAnalysisTime(full.created_at || analysis.created_at || null)
         setSection('ai')
         window.scrollTo({ top: 0, behavior: 'smooth' })
       }
@@ -161,6 +165,7 @@ export default function PatternHealth() {
           setAnalyses(prev => prev.filter(a => a.id !== id))
           if (savedAnalysisId === id) {
             setSavedAnalysisId(null)
+            setSavedAnalysisTime(null)
             setAiAnalysis(null)
           }
         } catch (err) {
@@ -904,6 +909,11 @@ export default function PatternHealth() {
               <div className="flex items-center gap-2">
                 <span className="text-green-400 text-sm">Analysis saved as</span>
                 <span className="text-green-300 font-mono text-sm font-medium">{savedAnalysisId}</span>
+                {savedAnalysisTime && (
+                  <span className="text-gray-500 text-xs ml-1">
+                    saved at {new Date(savedAnalysisTime).toLocaleDateString('en-CA')} {new Date(savedAnalysisTime).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                )}
                 {staleWarning && (
                   <span className="text-yellow-400 text-xs ml-2">Pattern count changed since analysis</span>
                 )}
