@@ -273,16 +273,18 @@ def export_docx(team_ids: Optional[str] = Query(None)):
 
 @router.get("/export/json")
 def export_json():
-    """Export all data as a JSON backup file."""
+    """Export all data as a gzip-compressed JSON backup file."""
+    import gzip as _gzip
     from main import db_service
     importer = ImportService(db_service)
     backup = importer.export_backup()
     json_bytes = json.dumps(backup, indent=2, default=str).encode("utf-8")
+    compressed = _gzip.compress(json_bytes)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    filename = f"Architecture_Patterns_Backup_{timestamp}.json"
+    filename = f"Architecture_Patterns_Backup_{timestamp}.json.gz"
     return StreamingResponse(
-        io.BytesIO(json_bytes),
-        media_type="application/json",
+        io.BytesIO(compressed),
+        media_type="application/gzip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
@@ -292,13 +294,16 @@ def export_json():
 @router.post("/import/preview")
 async def import_preview(file: UploadFile = File(...)):
     """Preview what an import would do (dry run). No data is modified."""
+    import gzip as _gzip
     from main import db_service
 
-    if not file.filename.endswith(".json"):
-        raise HTTPException(status_code=400, detail="Only JSON files are supported")
+    if not (file.filename.endswith(".json") or file.filename.endswith(".json.gz")):
+        raise HTTPException(status_code=400, detail="Only .json and .json.gz files are supported")
 
     try:
         contents = await file.read()
+        if file.filename.endswith(".json.gz"):
+            contents = _gzip.decompress(contents)
         json_data = contents.decode("utf-8")
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Could not read file: {e}")
@@ -318,15 +323,18 @@ async def import_backup(
     file: UploadFile = File(...),
     include: Optional[str] = Query(None, description="Comma-separated list of types to import: patterns,technologies,pbcs,categories"),
 ):
-    """Import patterns, technologies, and PBCs from a JSON backup file.
+    """Import patterns, technologies, and PBCs from a JSON backup file (.json or .json.gz).
     Automatically creates a server-side backup before importing."""
+    import gzip as _gzip
     from main import db_service
 
-    if not file.filename.endswith(".json"):
-        raise HTTPException(status_code=400, detail="Only JSON files are supported")
+    if not (file.filename.endswith(".json") or file.filename.endswith(".json.gz")):
+        raise HTTPException(status_code=400, detail="Only .json and .json.gz files are supported")
 
     try:
         contents = await file.read()
+        if file.filename.endswith(".json.gz"):
+            contents = _gzip.decompress(contents)
         json_data = contents.decode("utf-8")
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Could not read file: {e}")
@@ -385,14 +393,15 @@ def list_backups():
 
 @router.get("/backups/{filename}")
 def download_backup(filename: str):
-    """Download a specific backup file."""
+    """Download a specific backup file (.json or .json.gz)."""
     from main import db_service
     backup_svc = BackupService(db_service)
     try:
         data = backup_svc.get_backup(filename)
+        media_type = "application/gzip" if filename.endswith('.gz') else "application/json"
         return StreamingResponse(
             io.BytesIO(data),
-            media_type="application/json",
+            media_type=media_type,
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
     except FileNotFoundError as e:

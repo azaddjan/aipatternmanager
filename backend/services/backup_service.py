@@ -1,8 +1,9 @@
 """
 Backup Service.
 Manages server-side backup history — create, list, download, delete, restore.
-Backups are stored as JSON files in the backups/ directory.
+Backups are stored as gzip-compressed JSON files in the backups/ directory.
 """
+import gzip
 import json
 import os
 import logging
@@ -47,15 +48,15 @@ class BackupService:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M")
         safe_name = "".join(c for c in name if c.isalnum() or c in "-_").strip()
         if safe_name:
-            filename = f"backup_{timestamp}_{safe_name}.json"
+            filename = f"backup_{timestamp}_{safe_name}.json.gz"
         else:
-            filename = f"backup_{timestamp}.json"
+            filename = f"backup_{timestamp}.json.gz"
 
         # Embed metadata
         backup_data = {
             "meta": {
                 "export_date": datetime.now(timezone.utc).isoformat(),
-                "version": "1.2",
+                "version": "1.3",
                 "name": name or f"Backup {timestamp}",
                 "filename": filename,
                 "stats": stats,
@@ -72,11 +73,12 @@ class BackupService:
         }
 
         filepath = os.path.join(BACKUPS_DIR, filename)
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(backup_data, f, indent=2, default=str)
+        json_bytes = json.dumps(backup_data, indent=2, default=str).encode("utf-8")
+        with gzip.open(filepath, 'wb') as f:
+            f.write(json_bytes)
 
         size_bytes = os.path.getsize(filepath)
-        logger.info(f"Backup created: {filename} ({size_bytes} bytes)")
+        logger.info(f"Backup created: {filename} ({size_bytes} bytes, gzip)")
 
         return {
             "filename": filename,
@@ -95,15 +97,19 @@ class BackupService:
         backups = []
 
         for filename in os.listdir(BACKUPS_DIR):
-            if not filename.endswith('.json'):
+            if not (filename.endswith('.json') or filename.endswith('.json.gz')):
                 continue
 
             filepath = os.path.join(BACKUPS_DIR, filename)
             try:
                 size_bytes = os.path.getsize(filepath)
                 # Try to read metadata from file
-                with open(filepath, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
+                if filename.endswith('.json.gz'):
+                    with gzip.open(filepath, 'rt', encoding='utf-8') as f:
+                        data = json.load(f)
+                else:
+                    with open(filepath, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
 
                 meta = data.get("meta", {})
                 backups.append({
@@ -111,6 +117,7 @@ class BackupService:
                     "name": meta.get("name", filename),
                     "date": meta.get("export_date", ""),
                     "size_bytes": size_bytes,
+                    "compressed": filename.endswith('.json.gz'),
                     "stats": meta.get("stats", {}),
                     "is_auto": "auto_" in filename,
                 })
@@ -121,6 +128,7 @@ class BackupService:
                     "name": filename,
                     "date": "",
                     "size_bytes": os.path.getsize(filepath) if os.path.exists(filepath) else 0,
+                    "compressed": filename.endswith('.json.gz'),
                     "stats": {},
                     "is_auto": "auto_" in filename,
                     "error": str(e),
@@ -156,7 +164,7 @@ class BackupService:
 
     def restore_backup(self, filename: str) -> dict:
         """
-        Restore from a backup file.
+        Restore from a backup file (.json or .json.gz).
         Creates an auto-backup of current state first, then imports the backup.
         Returns import stats.
         """
@@ -169,9 +177,13 @@ class BackupService:
         # Auto-backup current state before restoring
         self.create_auto_backup(reason="pre_restore")
 
-        # Read and import the backup
-        with open(filepath, 'r', encoding='utf-8') as f:
-            json_data = f.read()
+        # Read and import the backup (handle both .json and .json.gz)
+        if safe.endswith('.json.gz'):
+            with gzip.open(filepath, 'rt', encoding='utf-8') as f:
+                json_data = f.read()
+        else:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                json_data = f.read()
 
         importer = ImportService(self.db)
         result = importer.import_from_json(json_data)

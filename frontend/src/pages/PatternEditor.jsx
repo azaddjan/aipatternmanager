@@ -1003,68 +1003,75 @@ export default function PatternEditor() {
         <div className="bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg px-4 py-3 text-sm">{aiError}</div>
       )}
 
-      {/* AI Smart Actions */}
-      <div className="card">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold text-gray-400 flex items-center gap-2">
-            <span>&#10024;</span> AI Assistant
+      {/* AI Assistance */}
+      <div className="card border border-purple-500/20">
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-sm font-semibold text-purple-400 flex items-center gap-1.5">
+            <span>&#10024;</span> AI Assistance
           </h2>
-          {smartLoading && (
-            <span className="ai-loading">
-              <span className="ai-spinner" /> Running {smartLoading.replace('_', ' ')}...
-            </span>
-          )}
+          <div className="flex items-center gap-2">
+            {smartResult && (
+              <button onClick={() => setSmartResult(null)} className="text-xs text-gray-500 hover:text-red-400 transition-colors">Clear</button>
+            )}
+            {smartLoading && (
+              <span className="text-xs text-purple-300 flex items-center gap-1.5">
+                <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z" /></svg>
+                Running {smartLoading.replace('_', ' ')}...
+              </span>
+            )}
+          </div>
         </div>
-        <div className="ai-smart-toolbar">
+
+        <div className="flex flex-wrap gap-2 mb-3">
           <button
             onClick={() => handleSmartAction('auto_tags')}
             disabled={!!smartLoading}
-            className="ai-smart-btn ai-smart-btn-tags"
+            className="px-3 py-1.5 text-xs rounded-lg bg-purple-600/20 text-purple-300 hover:bg-purple-600/40 disabled:opacity-40 transition-colors border border-purple-500/20"
           >
-            &#127991; Auto-suggest Tags
+            &#127991; Auto Tags
           </button>
           <button
             onClick={() => handleSmartAction('generate_description')}
             disabled={!!smartLoading}
-            className="ai-smart-btn ai-smart-btn-desc"
+            className="px-3 py-1.5 text-xs rounded-lg bg-purple-600/20 text-purple-300 hover:bg-purple-600/40 disabled:opacity-40 transition-colors border border-purple-500/20"
           >
-            &#128196; Generate Description
+            &#128196; Description
           </button>
           <button
             onClick={() => handleSmartAction('suggest_relationships')}
             disabled={!!smartLoading}
-            className="ai-smart-btn ai-smart-btn-rels"
+            className="px-3 py-1.5 text-xs rounded-lg bg-purple-600/20 text-purple-300 hover:bg-purple-600/40 disabled:opacity-40 transition-colors border border-purple-500/20"
           >
-            &#128279; Suggest Relationships
+            &#128279; Relationships
           </button>
           <button
             onClick={() => handleSmartAction('quality_check')}
             disabled={!!smartLoading}
-            className="ai-smart-btn ai-smart-btn-quality"
+            className="px-3 py-1.5 text-xs rounded-lg bg-purple-600/20 text-purple-300 hover:bg-purple-600/40 disabled:opacity-40 transition-colors border border-purple-500/20"
           >
             &#9989; Quality Check
           </button>
           <button
             onClick={() => handleSmartAction('auto_fill_empty')}
             disabled={!!smartLoading}
-            className="ai-smart-btn ai-smart-btn-fill"
+            className="px-3 py-1.5 text-xs rounded-lg bg-purple-600/20 text-purple-300 hover:bg-purple-600/40 disabled:opacity-40 transition-colors border border-purple-500/20"
           >
-            &#128295; Fill Empty Fields
+            &#128295; Fill Empty
           </button>
         </div>
 
         {smartError && (
-          <div className="bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg px-3 py-2 text-xs mt-3">
+          <div className="bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg px-3 py-2 text-xs">
             {smartError}
           </div>
         )}
 
         {/* Smart Action Results */}
         {smartResult && smartResult.action === 'auto_tags' && Array.isArray(smartResult.data) && (
-          <div className="mt-3 p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
+          <div className="mt-3 p-3 bg-gray-900/50 rounded-lg">
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs text-gray-400 font-medium">Suggested Tags</span>
-              <button onClick={() => applyAutoTags(smartResult.data)} className="text-xs text-green-400 hover:text-green-300">
+              <button onClick={() => applyAutoTags(smartResult.data)} className="px-3 py-1 text-xs rounded bg-purple-600/30 text-purple-300 hover:bg-purple-600/50 transition-colors">
                 Add All
               </button>
             </div>
@@ -1085,31 +1092,31 @@ export default function PatternEditor() {
                 </button>
               ))}
             </div>
-            <button onClick={() => setSmartResult(null)} className="text-xs text-gray-500 hover:text-gray-400 mt-2">
-              Dismiss
+            <button onClick={() => setSmartResult(null)} className="px-3 py-1 text-xs rounded bg-gray-700 text-gray-400 hover:bg-gray-600 transition-colors mt-2">
+              Clear
             </button>
           </div>
         )}
 
         {smartResult && smartResult.action === 'generate_description' && (
-          <div className="mt-3 p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
+          <div className="mt-3 p-3 bg-gray-900/50 rounded-lg">
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs text-gray-400 font-medium">Generated Description</span>
             </div>
             <p className="text-sm text-gray-200 mb-2">{smartResult.data.description}</p>
             <div className="flex gap-2">
-              <button onClick={() => applyDescription(smartResult.data.description)} className="text-xs text-green-400 hover:text-green-300">
-                &#10003; Apply
+              <button onClick={() => applyDescription(smartResult.data.description)} className="px-3 py-1 text-xs rounded bg-purple-600/30 text-purple-300 hover:bg-purple-600/50 transition-colors">
+                Apply
               </button>
-              <button onClick={() => setSmartResult(null)} className="text-xs text-gray-500 hover:text-gray-400">
-                Dismiss
+              <button onClick={() => setSmartResult(null)} className="px-3 py-1 text-xs rounded bg-gray-700 text-gray-400 hover:bg-gray-600 transition-colors">
+                Clear
               </button>
             </div>
           </div>
         )}
 
         {smartResult && smartResult.action === 'suggest_relationships' && (
-          <div className="mt-3 p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
+          <div className="mt-3 p-3 bg-gray-900/50 rounded-lg">
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs text-gray-400 font-medium">Suggested Relationships</span>
             </div>
@@ -1149,14 +1156,14 @@ export default function PatternEditor() {
             {smartResult.data.reasoning && (
               <p className="text-xs text-gray-500 mt-2 italic">{smartResult.data.reasoning}</p>
             )}
-            <button onClick={() => setSmartResult(null)} className="text-xs text-gray-500 hover:text-gray-400 mt-2">
-              Dismiss
+            <button onClick={() => setSmartResult(null)} className="px-3 py-1 text-xs rounded bg-gray-700 text-gray-400 hover:bg-gray-600 transition-colors mt-2">
+              Clear
             </button>
           </div>
         )}
 
         {smartResult && smartResult.action === 'quality_check' && (
-          <div className="mt-3 p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
+          <div className="mt-3 p-3 bg-gray-900/50 rounded-lg">
             <div className="flex items-center gap-4 mb-3">
               <div className="text-center">
                 <div className={`quality-score quality-grade-${smartResult.data.grade || 'C'}`}>
@@ -1199,17 +1206,17 @@ export default function PatternEditor() {
                 ))}
               </div>
             )}
-            <button onClick={() => setSmartResult(null)} className="text-xs text-gray-500 hover:text-gray-400 mt-2">
-              Dismiss
+            <button onClick={() => setSmartResult(null)} className="px-3 py-1 text-xs rounded bg-gray-700 text-gray-400 hover:bg-gray-600 transition-colors mt-2">
+              Clear
             </button>
           </div>
         )}
 
         {smartResult && smartResult.action === 'auto_fill_empty' && typeof smartResult.data === 'object' && (
-          <div className="mt-3 p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
+          <div className="mt-3 p-3 bg-gray-900/50 rounded-lg">
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs text-gray-400 font-medium">Generated Content for Empty Fields</span>
-              <button onClick={() => applyAutoFill(smartResult.data)} className="text-xs text-green-400 hover:text-green-300">
+              <button onClick={() => applyAutoFill(smartResult.data)} className="px-3 py-1 text-xs rounded bg-purple-600/30 text-purple-300 hover:bg-purple-600/50 transition-colors">
                 Apply All
               </button>
             </div>
@@ -1222,7 +1229,7 @@ export default function PatternEditor() {
                       onClick={() => {
                         applyAutoFill({ [field]: content })
                       }}
-                      className="text-xs text-green-400 hover:text-green-300"
+                      className="text-xs text-purple-400 hover:text-purple-300"
                     >
                       Apply
                     </button>
@@ -1231,8 +1238,8 @@ export default function PatternEditor() {
                 </div>
               ))}
             </div>
-            <button onClick={() => setSmartResult(null)} className="text-xs text-gray-500 hover:text-gray-400 mt-2">
-              Dismiss
+            <button onClick={() => setSmartResult(null)} className="px-3 py-1 text-xs rounded bg-gray-700 text-gray-400 hover:bg-gray-600 transition-colors mt-2">
+              Clear
             </button>
           </div>
         )}

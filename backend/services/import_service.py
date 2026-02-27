@@ -8,6 +8,123 @@ from datetime import datetime, timezone
 
 from services.neo4j_service import Neo4jService
 
+# ── Schema validation ────────────────────────────────────────────────
+VALID_TOP_LEVEL_KEYS = {
+    "meta", "export_date", "version",
+    "patterns", "technologies", "pbcs", "categories",
+    "teams", "users", "settings",
+    "advisor_reports", "health_analyses",
+}
+
+REQUIRED_PATTERN_FIELDS = {"id"}
+REQUIRED_TECHNOLOGY_FIELDS = {"id"}
+REQUIRED_PBC_FIELDS = {"id"}
+REQUIRED_CATEGORY_FIELDS = {"code"}
+REQUIRED_TEAM_FIELDS = {"id"}
+REQUIRED_USER_FIELDS = {"id", "email"}
+
+VALID_PATTERN_TYPES = {"AB", "ABB", "SBB"}
+VALID_STATUSES = {"DRAFT", "REVIEW", "ACTIVE", "DEPRECATED", "Draft", "Review", "Active", "Deprecated"}
+VALID_TECH_STATUSES = {"Candidate", "APPROVED", "DEPRECATED", "EXPERIMENTAL", "Approved", "Deprecated", "Experimental"}
+VALID_ROLES = {"admin", "editor", "viewer"}
+
+
+def validate_backup_schema(data: dict) -> list:
+    """
+    Validate a parsed backup dict against the expected schema.
+    Returns a list of validation error strings. Empty list = valid.
+    """
+    errors = []
+
+    if not isinstance(data, (dict, list)):
+        return ["Root element must be a JSON object or array."]
+
+    # Legacy list format — just validate pattern entries
+    if isinstance(data, list):
+        for i, p in enumerate(data):
+            if not isinstance(p, dict):
+                errors.append(f"patterns[{i}]: must be a JSON object, got {type(p).__name__}")
+            elif "id" not in p:
+                errors.append(f"patterns[{i}]: missing required field 'id'")
+        return errors
+
+    # Full backup format
+    unknown_keys = set(data.keys()) - VALID_TOP_LEVEL_KEYS
+    if unknown_keys:
+        errors.append(f"Unknown top-level keys: {', '.join(sorted(unknown_keys))}")
+
+    # Validate each collection
+    def _validate_items(collection_name, items, required_fields, extra_checks=None):
+        if not isinstance(items, list):
+            errors.append(f"'{collection_name}' must be an array, got {type(items).__name__}")
+            return
+        for i, item in enumerate(items):
+            if not isinstance(item, dict):
+                errors.append(f"{collection_name}[{i}]: must be a JSON object, got {type(item).__name__}")
+                continue
+            for field in required_fields:
+                val = item.get(field)
+                if val is None or (isinstance(val, str) and not val.strip()):
+                    errors.append(f"{collection_name}[{i}]: missing required field '{field}'")
+            if extra_checks:
+                extra_checks(i, item)
+
+    # Patterns
+    if "patterns" in data:
+        def check_pattern(i, p):
+            ptype = p.get("type", "")
+            if ptype and ptype not in VALID_PATTERN_TYPES:
+                errors.append(f"patterns[{i}] (id={p.get('id','?')}): invalid type '{ptype}', expected one of {VALID_PATTERN_TYPES}")
+            rels = p.get("relationships")
+            if rels is not None and not isinstance(rels, list):
+                errors.append(f"patterns[{i}] (id={p.get('id','?')}): 'relationships' must be an array")
+        _validate_items("patterns", data["patterns"], REQUIRED_PATTERN_FIELDS, check_pattern)
+
+    # Technologies
+    if "technologies" in data:
+        _validate_items("technologies", data["technologies"], REQUIRED_TECHNOLOGY_FIELDS)
+
+    # PBCs
+    if "pbcs" in data:
+        _validate_items("pbcs", data["pbcs"], REQUIRED_PBC_FIELDS)
+
+    # Categories
+    if "categories" in data:
+        _validate_items("categories", data["categories"], REQUIRED_CATEGORY_FIELDS)
+
+    # Teams
+    if "teams" in data:
+        _validate_items("teams", data["teams"], REQUIRED_TEAM_FIELDS)
+
+    # Users
+    if "users" in data:
+        def check_user(i, u):
+            role = u.get("role", "")
+            if role and role not in VALID_ROLES:
+                errors.append(f"users[{i}] (email={u.get('email','?')}): invalid role '{role}', expected one of {VALID_ROLES}")
+        _validate_items("users", data["users"], REQUIRED_USER_FIELDS, check_user)
+
+    # Settings
+    if "settings" in data:
+        if not isinstance(data["settings"], list):
+            errors.append(f"'settings' must be an array, got {type(data['settings']).__name__}")
+        else:
+            for i, s in enumerate(data["settings"]):
+                if not isinstance(s, dict):
+                    errors.append(f"settings[{i}]: must be a JSON object")
+                elif "key" not in s:
+                    errors.append(f"settings[{i}]: missing required field 'key'")
+
+    # Advisor reports
+    if "advisor_reports" in data:
+        _validate_items("advisor_reports", data["advisor_reports"], {"id"})
+
+    # Health analyses
+    if "health_analyses" in data:
+        _validate_items("health_analyses", data["health_analyses"], {"id"})
+
+    return errors
+
 
 class ImportService:
     """Handles importing/restoring data from JSON backup files."""
@@ -25,6 +142,15 @@ class ImportService:
             data = json.loads(json_data)
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid JSON: {e}")
+
+        # Schema validation
+        schema_errors = validate_backup_schema(data)
+        if schema_errors:
+            raise ValueError(
+                f"Backup file has {len(schema_errors)} schema error(s):\n"
+                + "\n".join(f"  • {e}" for e in schema_errors[:20])
+                + (f"\n  ... and {len(schema_errors) - 20} more" if len(schema_errors) > 20 else "")
+            )
 
         result = {
             "teams": {"new": [], "updated": [], "unchanged": []},
@@ -266,6 +392,15 @@ class ImportService:
             data = json.loads(json_data)
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid JSON: {e}")
+
+        # Schema validation
+        schema_errors = validate_backup_schema(data)
+        if schema_errors:
+            raise ValueError(
+                f"Backup file has {len(schema_errors)} schema error(s):\n"
+                + "\n".join(f"  • {e}" for e in schema_errors[:20])
+                + (f"\n  ... and {len(schema_errors) - 20} more" if len(schema_errors) > 20 else "")
+            )
 
         stats = {
             "teams_imported": 0,

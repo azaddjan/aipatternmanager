@@ -348,7 +348,7 @@ export default function Admin() {
   const handleDrop = (e) => {
     e.preventDefault()
     const file = e.dataTransfer?.files?.[0]
-    if (file && file.name.endsWith('.json')) {
+    if (file && (file.name.endsWith('.json') || file.name.endsWith('.json.gz'))) {
       setImportFile(file)
       setPreviewData(null)
       setImportResult(null)
@@ -462,7 +462,8 @@ export default function Admin() {
         setMsg('')
         try {
           const result = await restoreBackup(filename)
-          setMsg(`Restore completed — ${result.teams_imported || 0} teams, ${result.users_imported || 0} users, ${result.settings_imported || 0} settings, ${result.patterns_imported || 0} patterns, ${result.technologies_imported || 0} technologies, ${result.pbcs_imported || 0} PBCs restored`)
+          const d = result.details || result
+          setMsg(`Restore completed — ${d.patterns_imported || 0} patterns, ${d.technologies_imported || 0} technologies, ${d.pbcs_imported || 0} PBCs, ${d.categories_imported || 0} categories, ${d.relationships_imported || 0} relationships, ${d.teams_imported || 0} teams, ${d.users_imported || 0} users restored`)
           loadBackups()
         } catch (err) {
           setMsg(`Restore failed: ${err.message}`)
@@ -1458,12 +1459,12 @@ export default function Admin() {
                 >
                   <div className="text-4xl mb-3">📁</div>
                   <p className="text-gray-400 text-sm mb-2">
-                    Drag & drop a JSON backup file here, or click to browse
+                    Drag & drop a backup file here, or click to browse (.json or .json.gz)
                   </p>
                   <input
                     ref={fileInputRef}
                     type="file"
-                    accept=".json"
+                    accept=".json,.json.gz,.gz"
                     onChange={handleFileSelect}
                     className="hidden"
                     id="import-file"
