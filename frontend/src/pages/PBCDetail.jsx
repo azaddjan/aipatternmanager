@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, Link, useNavigate, useLocation } from 'react-router-dom'
-import { fetchPBC, deletePBC, fetchPBCGraph, aiPBCAssist } from '../api/client'
+import { fetchPBC, updatePBC, deletePBC, fetchPBCGraph, fetchPatterns, aiPBCAssist } from '../api/client'
 import GraphView from '../components/GraphView'
 import MarkdownContent from '../components/MarkdownContent'
 import ConfirmModal from '../components/ConfirmModal'
@@ -14,7 +14,11 @@ export default function PBCDetail() {
   const [tab, setTab] = useState('overview') // overview | relationships | graph
   const [loading, setLoading] = useState(true)
   const [deleteConfirm, setDeleteConfirm] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [form, setForm] = useState({ name: '', description: '', status: 'ACTIVE', abb_ids: [] })
+  const [abbs, setAbbs] = useState([])
   const [error, setError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState({})
 
   const loadPBC = useCallback(() => {
     setLoading(true)
@@ -50,6 +54,46 @@ export default function PBCDetail() {
     }
   }
 
+  const startEdit = () => {
+    setForm({
+      name: pbc.name || '',
+      description: pbc.description || '',
+      status: pbc.status || 'ACTIVE',
+      abb_ids: pbc.abb_ids || [],
+    })
+    fetchPatterns({ type: 'ABB', limit: 100 }).then(res => setAbbs(res.patterns || [])).catch(() => {})
+    setEditing(true)
+    setFieldErrors({})
+  }
+
+  const cancelEdit = () => {
+    setEditing(false)
+    setFieldErrors({})
+  }
+
+  const handleSave = async () => {
+    const errs = {}
+    if (!form.name.trim()) errs.name = 'Name is required'
+    setFieldErrors(errs)
+    if (Object.keys(errs).length > 0) return
+    try {
+      await updatePBC(id, form)
+      setEditing(false)
+      loadPBC()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  const toggleAbb = (abbId) => {
+    setForm(f => ({
+      ...f,
+      abb_ids: f.abb_ids.includes(abbId)
+        ? f.abb_ids.filter(i => i !== abbId)
+        : [...f.abb_ids, abbId]
+    }))
+  }
+
   if (loading) return <div className="text-gray-500 text-center py-12">Loading PBC...</div>
   if (!pbc) return <div className="text-red-400 text-center py-12">PBC {id} not found</div>
 
@@ -76,11 +120,9 @@ export default function PBCDetail() {
             }`}>{pbc.status}</span>
           </div>
           <h1 className="text-2xl font-bold text-white">{pbc.name}</h1>
-          {pbc.api_endpoint && (
-            <p className="text-gray-500 text-sm mt-1 font-mono">{pbc.api_endpoint}</p>
-          )}
         </div>
         <div className="flex gap-2">
+          <button onClick={startEdit} className="btn-secondary">Edit</button>
           <button onClick={handleDelete} className="btn-danger">Delete</button>
         </div>
       </div>
@@ -100,6 +142,67 @@ export default function PBCDetail() {
         ))}
       </div>
 
+      {/* Edit Form */}
+      {editing && (
+        <div className="card space-y-4 border border-blue-500/30">
+          <h2 className="text-sm font-semibold text-gray-400">Edit Business Capability</h2>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Name <span className="text-red-400">*</span></label>
+              <input
+                type="text"
+                value={form.name}
+                onChange={e => { setForm(f => ({ ...f, name: e.target.value })); setFieldErrors(fe => ({ ...fe, name: undefined })) }}
+                className={`input w-full ${fieldErrors.name ? 'border-red-500/50' : ''}`}
+              />
+              {fieldErrors.name && <p className="text-red-400 text-xs mt-1">{fieldErrors.name}</p>}
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Status</label>
+              <select
+                value={form.status}
+                onChange={e => setForm(f => ({ ...f, status: e.target.value }))}
+                className="select w-full"
+              >
+                <option value="ACTIVE">ACTIVE</option>
+                <option value="DRAFT">DRAFT</option>
+                <option value="DEPRECATED">DEPRECATED</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Description</label>
+            <textarea
+              value={form.description}
+              onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+              className="input w-full h-20 resize-none"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-2">Composed ABBs</label>
+            <div className="flex flex-wrap gap-2">
+              {abbs.map(abb => (
+                <button
+                  key={abb.id}
+                  onClick={() => toggleAbb(abb.id)}
+                  className={`px-3 py-1.5 rounded-lg text-xs border transition-colors ${
+                    form.abb_ids.includes(abb.id)
+                      ? 'bg-blue-600/20 border-blue-500/50 text-blue-400'
+                      : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600'
+                  }`}
+                >
+                  {abb.id} - {abb.name}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={handleSave} className="btn-primary">Save Changes</button>
+            <button onClick={cancelEdit} className="btn-secondary">Cancel</button>
+          </div>
+        </div>
+      )}
+
       {/* Tab Content */}
       {tab === 'overview' && (
         <div className="space-y-4">
@@ -107,7 +210,7 @@ export default function PBCDetail() {
           <PBCAIAssistant pbc={pbc} graphData={graphData} />
 
           {/* Info Cards */}
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 gap-4">
             <div className={`card border-l-4 ${
               pbc.status === 'ACTIVE' ? 'border-green-500' :
               pbc.status === 'DEPRECATED' ? 'border-red-500' : 'border-yellow-500'
@@ -121,12 +224,6 @@ export default function PBCDetail() {
             <div className="card border-l-4 border-blue-500">
               <p className="text-xs text-gray-500">Composed ABBs</p>
               <p className="text-lg font-semibold text-blue-400">{abbIds.length}</p>
-            </div>
-            <div className="card border-l-4 border-gray-600">
-              <p className="text-xs text-gray-500">API Endpoint</p>
-              <p className="text-lg font-semibold text-white font-mono">
-                {pbc.api_endpoint || 'Not set'}
-              </p>
             </div>
           </div>
 

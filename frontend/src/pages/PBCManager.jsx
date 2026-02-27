@@ -1,16 +1,14 @@
 import { useState, useEffect } from 'react'
-import { fetchPBCs, createPBC, updatePBC, deletePBC, fetchPatterns } from '../api/client'
+import { fetchPBCs, createPBC, fetchPatterns } from '../api/client'
 import { Link } from 'react-router-dom'
 import Pagination from '../components/Pagination'
 import SortableHeader, { sortItems } from '../components/SortableHeader'
-import ConfirmModal from '../components/ConfirmModal'
 
 export default function PBCManager() {
   const [pbcs, setPbcs] = useState([])
   const [abbs, setAbbs] = useState([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
-  const [editing, setEditing] = useState(null)
   const [view, setView] = useState('table') // 'table' or 'grid'
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
@@ -28,10 +26,9 @@ export default function PBCManager() {
     }
   }
 
-  const [form, setForm] = useState({ name: '', description: '', api_endpoint: '', status: 'ACTIVE', abb_ids: [] })
+  const [form, setForm] = useState({ name: '', description: '', status: 'ACTIVE', abb_ids: [] })
   const [error, setError] = useState('')
   const [fieldErrors, setFieldErrors] = useState({})
-  const [deleteTarget, setDeleteTarget] = useState(null) // { id, name } for confirm modal
 
   const loadData = () => {
     Promise.all([
@@ -47,8 +44,7 @@ export default function PBCManager() {
   useEffect(() => { loadData() }, [])
 
   const resetForm = () => {
-    setForm({ name: '', description: '', api_endpoint: '', status: 'ACTIVE', abb_ids: [] })
-    setEditing(null)
+    setForm({ name: '', description: '', status: 'ACTIVE', abb_ids: [] })
     setShowForm(false)
     setError('')
     setFieldErrors({})
@@ -65,43 +61,12 @@ export default function PBCManager() {
     setError('')
     if (!validateForm()) return
     try {
-      if (editing) {
-        await updatePBC(editing, form)
-      } else {
-        await createPBC(form)
-      }
+      await createPBC(form)
       resetForm()
       loadData()
     } catch (err) {
       setError(err.message)
     }
-  }
-
-  const handleEdit = (pbc) => {
-    setForm({
-      name: pbc.name,
-      description: pbc.description || '',
-      api_endpoint: pbc.api_endpoint || '',
-      status: pbc.status || 'ACTIVE',
-      abb_ids: pbc.abb_ids || [],
-    })
-    setEditing(pbc.id)
-    setShowForm(true)
-  }
-
-  const handleDelete = (id, name) => {
-    setDeleteTarget({ id, name: name || id })
-  }
-
-  const confirmDelete = async () => {
-    if (!deleteTarget) return
-    try {
-      await deletePBC(deleteTarget.id)
-      loadData()
-    } catch (err) {
-      setError(err.message)
-    }
-    setDeleteTarget(null)
   }
 
   const toggleAbb = (abbId) => {
@@ -122,7 +87,6 @@ export default function PBCManager() {
       pbc.name?.toLowerCase().includes(q) ||
       pbc.id?.toLowerCase().includes(q) ||
       pbc.description?.toLowerCase().includes(q) ||
-      pbc.api_endpoint?.toLowerCase().includes(q) ||
       (pbc.abb_ids || []).some(id => id.toLowerCase().includes(q))
     )
   })
@@ -200,9 +164,7 @@ export default function PBCManager() {
       {/* Form */}
       {showForm && (
         <div className="card space-y-4">
-          <h2 className="text-sm font-semibold text-gray-400">
-            {editing ? `Edit ${editing}` : 'New Business Capability'}
-          </h2>
+          <h2 className="text-sm font-semibold text-gray-400">New Business Capability</h2>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs text-gray-500 mb-1">Name <span className="text-red-400">*</span></label>
@@ -238,16 +200,6 @@ export default function PBCManager() {
             />
           </div>
           <div>
-            <label className="block text-xs text-gray-500 mb-1">API Endpoint (optional)</label>
-            <input
-              type="text"
-              value={form.api_endpoint}
-              onChange={e => setForm(f => ({ ...f, api_endpoint: e.target.value }))}
-              placeholder="/api/v1/chat"
-              className="input w-full"
-            />
-          </div>
-          <div>
             <label className="block text-xs text-gray-500 mb-2">Composed ABBs</label>
             <div className="flex flex-wrap gap-2">
               {abbs.map(abb => (
@@ -266,9 +218,7 @@ export default function PBCManager() {
             </div>
           </div>
           <div className="flex gap-2">
-            <button onClick={handleSave} className="btn-primary">
-              {editing ? 'Update PBC' : 'Create PBC'}
-            </button>
+            <button onClick={handleSave} className="btn-primary">Create PBC</button>
             <button onClick={resetForm} className="btn-secondary">Cancel</button>
           </div>
         </div>
@@ -290,8 +240,6 @@ export default function PBCManager() {
                 <SortableHeader label="Status" field="status" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} className="text-xs" />
                 <th className="text-left text-xs text-gray-500 pb-3 font-medium">Description</th>
                 <th className="text-left text-xs text-gray-500 pb-3 font-medium">ABBs</th>
-                <SortableHeader label="Endpoint" field="api_endpoint" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} className="text-xs" />
-                <th className="text-right text-xs text-gray-500 pb-3 font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -320,13 +268,6 @@ export default function PBCManager() {
                       ))}
                     </div>
                   </td>
-                  <td className="py-2.5 text-gray-500 font-mono text-xs">{pbc.api_endpoint}</td>
-                  <td className="py-2.5 text-right">
-                    <div className="flex gap-1 justify-end">
-                      <button onClick={() => handleEdit(pbc)} className="btn-secondary text-xs">Edit</button>
-                      <button onClick={() => handleDelete(pbc.id, pbc.name)} className="btn-danger text-xs">Delete</button>
-                    </div>
-                  </td>
                 </tr>
               ))}
             </tbody>
@@ -351,11 +292,6 @@ export default function PBCManager() {
                   {pbc.description && (
                     <p className="text-sm text-gray-400 mb-3">{pbc.description}</p>
                   )}
-                  {pbc.api_endpoint && (
-                    <p className="text-xs text-gray-600 mb-2">
-                      Endpoint: <span className="text-gray-400 font-mono">{pbc.api_endpoint}</span>
-                    </p>
-                  )}
                   {pbc.abb_ids && pbc.abb_ids.length > 0 && (
                     <div className="flex flex-wrap gap-1.5 mt-2">
                       <span className="text-xs text-gray-600">Composes:</span>
@@ -370,10 +306,6 @@ export default function PBCManager() {
                       ))}
                     </div>
                   )}
-                </div>
-                <div className="flex gap-2 ml-4">
-                  <button onClick={() => handleEdit(pbc)} className="btn-secondary text-xs">Edit</button>
-                  <button onClick={() => handleDelete(pbc.id, pbc.name)} className="btn-danger text-xs">Delete</button>
                 </div>
               </div>
             </div>
@@ -391,15 +323,6 @@ export default function PBCManager() {
         />
       )}
 
-      <ConfirmModal
-        open={!!deleteTarget}
-        title="Delete Business Capability"
-        message={`Are you sure you want to delete "${deleteTarget?.name}"? This action cannot be undone.`}
-        confirmLabel="Delete"
-        variant="danger"
-        onConfirm={confirmDelete}
-        onCancel={() => setDeleteTarget(null)}
-      />
     </div>
   )
 }
