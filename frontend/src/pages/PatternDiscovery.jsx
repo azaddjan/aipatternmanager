@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { fetchInventory, discoverPatterns, fetchProviders } from '../api/client'
 
 const PRIORITY_COLORS = {
@@ -99,6 +99,11 @@ export default function PatternDiscovery() {
 
   return (
     <div className="space-y-6">
+      <div className="flex items-center gap-2 text-sm">
+        <Link to="/" className="text-gray-500 hover:text-gray-300 transition-colors">&larr; Dashboard</Link>
+        <span className="text-gray-700">/</span>
+        <span className="text-gray-400">Pattern Discovery</span>
+      </div>
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-white">Pattern Discovery</h1>

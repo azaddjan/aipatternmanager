@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { Link } from 'react-router-dom'
 import {
   fetchAdminSettings, updateAdminSettings, setApiKey, testProvider,
   exportHtmlUrl, exportPptxUrl, exportDocxUrl,
@@ -618,6 +619,11 @@ export default function Admin() {
 
   return (
     <div className="space-y-6">
+      <div className="flex items-center gap-2 text-sm">
+        <Link to="/" className="text-gray-500 hover:text-gray-300 transition-colors">&larr; Dashboard</Link>
+        <span className="text-gray-700">/</span>
+        <span className="text-gray-400">Administration</span>
+      </div>
       <div>
         <h1 className="text-2xl font-bold text-white">Administration</h1>
         <p className="text-gray-500 text-sm mt-1">Manage providers, export data, and import backups</p>

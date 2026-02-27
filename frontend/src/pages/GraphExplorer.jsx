@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import { fetchFullGraph, fetchTeams } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
 import GraphView from '../components/GraphView'
@@ -76,6 +77,11 @@ export default function GraphExplorer() {
 
   return (
     <div className="space-y-6">
+      <div className="flex items-center gap-2 text-sm">
+        <Link to="/" className="text-gray-500 hover:text-gray-300 transition-colors">&larr; Dashboard</Link>
+        <span className="text-gray-700">/</span>
+        <span className="text-gray-400">Graph Explorer</span>
+      </div>
       <div>
         <h1 className="text-2xl font-bold text-white">Graph Explorer</h1>
         <p className="text-gray-500 text-sm mt-1">

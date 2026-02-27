@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import { fetchUsers, createUser, updateUser, deleteUser, fetchTeams } from '../api/client'
 import ConfirmModal from '../components/ConfirmModal'
 
@@ -129,6 +130,11 @@ export default function UserManagement() {
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
+      <div className="flex items-center gap-2 text-sm">
+        <Link to="/admin" className="text-gray-500 hover:text-gray-300 transition-colors">&larr; Admin</Link>
+        <span className="text-gray-700">/</span>
+        <span className="text-gray-400">Users</span>
+      </div>
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white">User Management</h1>

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom'
 import {
   fetchPattern, createPattern, updatePattern,
   fetchCategories, fetchPatterns, fetchPBCs,
@@ -974,6 +974,11 @@ export default function PatternEditor() {
   // --- EDITOR STEP ---
   return (
     <div className="space-y-6">
+      <div className="flex items-center gap-2 text-sm">
+        <Link to="/patterns" className="text-gray-500 hover:text-gray-300 transition-colors">&larr; Patterns</Link>
+        <span className="text-gray-700">/</span>
+        <span className="text-gray-400">{isNew ? 'New Pattern' : `Edit ${id}`}</span>
+      </div>
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-white">
           {isNew ? 'New Pattern' : `Edit ${id}`}

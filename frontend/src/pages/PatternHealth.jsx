@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import {
   fetchPatternHealth, analyzePatternHealth, fetchProviders,
   fetchLatestHealthAnalysis, fetchHealthAnalyses, deleteHealthAnalysis,
@@ -195,6 +196,11 @@ export default function PatternHealth() {
 
   return (
     <div className="space-y-6">
+      <div className="flex items-center gap-2 text-sm">
+        <Link to="/" className="text-gray-500 hover:text-gray-300 transition-colors">&larr; Dashboard</Link>
+        <span className="text-gray-700">/</span>
+        <span className="text-gray-400">Pattern Health</span>
+      </div>
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>

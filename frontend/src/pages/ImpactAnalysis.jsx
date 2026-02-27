@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
-import { fetchPatterns, fetchTechnologies, fetchImpactAnalysis, fetchTechnologyImpact, fetchPatternGraph } from '../api/client'
+import { fetchPatterns, fetchTechnologies, fetchImpactAnalysis, fetchTechnologyImpact, fetchPatternGraph, fetchTechnologyGraph } from '../api/client'
 import GraphView from '../components/GraphView'
+import Pagination from '../components/Pagination'
 import { TypeBadge } from '../components/PatternCard'
 
 /* ── Searchable Autocomplete Dropdown ── */
@@ -105,6 +106,8 @@ export default function ImpactAnalysis() {
   const [techImpacts, setTechImpacts] = useState(null)
   const [graphData, setGraphData] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [page, setPage] = useState(1)
+  const PAGE_SIZE = 25
 
   useEffect(() => {
     fetchPatterns({ limit: 500 }).then(res => setPatterns(res.patterns || []))
@@ -114,6 +117,7 @@ export default function ImpactAnalysis() {
   useEffect(() => {
     if (!selectedId) return
     setLoading(true)
+    setPage(1)
     if (mode === 'pattern') {
       Promise.all([
         fetchImpactAnalysis(selectedId),
@@ -124,10 +128,13 @@ export default function ImpactAnalysis() {
         setGraphData(graph)
       }).finally(() => setLoading(false))
     } else {
-      fetchTechnologyImpact(selectedId).then(result => {
+      Promise.all([
+        fetchTechnologyImpact(selectedId),
+        fetchTechnologyGraph(selectedId),
+      ]).then(([result, graph]) => {
         setTechImpacts(result)
         setImpacts(null)
-        setGraphData(null)
+        setGraphData(graph)
       }).finally(() => setLoading(false))
     }
   }, [selectedId, mode])
@@ -142,6 +149,11 @@ export default function ImpactAnalysis() {
 
   return (
     <div className="space-y-6">
+      <div className="flex items-center gap-2 text-sm">
+        <Link to="/" className="text-gray-500 hover:text-gray-300 transition-colors">&larr; Dashboard</Link>
+        <span className="text-gray-700">/</span>
+        <span className="text-gray-400">Impact Analysis</span>
+      </div>
       <div>
         <h1 className="text-2xl font-bold text-white">Impact Analysis</h1>
         <p className="text-gray-500 text-sm mt-1">
@@ -229,23 +241,37 @@ export default function ImpactAnalysis() {
 
             {impacts.count === 0 ? (
               <p className="text-gray-500 italic">No downstream dependencies found.</p>
-            ) : (
-              <div className="space-y-2">
-                {impacts.impacts?.map((imp, i) => (
-                  <div key={i} className="flex items-center gap-3 py-2 border-b border-gray-800/50">
-                    <span className="text-xs text-gray-600 font-mono w-16">depth {imp.depth}</span>
-                    <TypeBadge type={imp.type} />
-                    <Link to={`/patterns/${imp.id}`} className="text-blue-400 font-mono text-xs hover:underline">
-                      {imp.id}
-                    </Link>
-                    <span className="text-gray-400 text-sm">{imp.name}</span>
-                    <span className="text-xs text-gray-600 ml-auto">
-                      Path: {imp.path?.join(' → ')}
-                    </span>
+            ) : (() => {
+              const allItems = impacts.impacts || []
+              const totalPages = Math.ceil(allItems.length / PAGE_SIZE)
+              const paged = allItems.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+              return (
+                <>
+                  <div className="space-y-2">
+                    {paged.map((imp, i) => (
+                      <div key={i} className="flex items-center gap-3 py-2 border-b border-gray-800/50">
+                        <span className="text-xs text-gray-600 font-mono w-16">depth {imp.depth}</span>
+                        <TypeBadge type={imp.type} />
+                        <Link to={`/patterns/${imp.id}`} className="text-blue-400 font-mono text-xs hover:underline">
+                          {imp.id}
+                        </Link>
+                        <span className="text-gray-400 text-sm">{imp.name}</span>
+                        <span className="text-xs text-gray-600 ml-auto">
+                          Path: {imp.path?.join(' → ')}
+                        </span>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            )}
+                  <Pagination
+                    page={page}
+                    totalPages={totalPages}
+                    total={allItems.length}
+                    pageSize={PAGE_SIZE}
+                    onPageChange={setPage}
+                  />
+                </>
+              )
+            })()}
           </div>
 
           {/* Graph */}
@@ -260,51 +286,75 @@ export default function ImpactAnalysis() {
 
       {/* Technology Impact Results */}
       {techImpacts && !loading && (
-        <div className="card">
-          <h2 className="text-lg font-semibold mb-3">
-            Technology Impact for{' '}
-            <span className="text-cyan-400">{techImpacts.technology?.name || selectedId}</span>
-          </h2>
-          <div className="flex items-center gap-4 text-sm text-gray-400 mb-4">
-            <span>{techImpacts.count} pattern(s) use this technology</span>
-            {techImpacts.technology?.vendor && (
-              <span className="text-gray-600">Vendor: {techImpacts.technology.vendor}</span>
-            )}
-            {techImpacts.technology?.status && (
-              <span className={`text-xs px-2 py-0.5 rounded ${
-                techImpacts.technology.status === 'APPROVED' ? 'bg-green-500/20 text-green-400' :
-                techImpacts.technology.status === 'DEPRECATED' ? 'bg-red-500/20 text-red-400' :
-                'bg-yellow-500/20 text-yellow-400'
-              }`}>{techImpacts.technology.status}</span>
+        <>
+          <div className="card">
+            <h2 className="text-lg font-semibold mb-3">
+              Technology Impact for{' '}
+              <span className="text-cyan-400">{techImpacts.technology?.name || selectedId}</span>
+            </h2>
+            <div className="flex items-center gap-4 text-sm text-gray-400 mb-4">
+              <span>{techImpacts.count} pattern(s) use this technology</span>
+              {techImpacts.technology?.vendor && (
+                <span className="text-gray-600">Vendor: {techImpacts.technology.vendor}</span>
+              )}
+              {techImpacts.technology?.status && (
+                <span className={`text-xs px-2 py-0.5 rounded ${
+                  techImpacts.technology.status === 'APPROVED' ? 'bg-green-500/20 text-green-400' :
+                  techImpacts.technology.status === 'DEPRECATED' ? 'bg-red-500/20 text-red-400' :
+                  'bg-yellow-500/20 text-yellow-400'
+                }`}>{techImpacts.technology.status}</span>
+              )}
+            </div>
+
+            {techImpacts.count === 0 ? (
+              <p className="text-gray-500 italic">No patterns currently use this technology.</p>
+            ) : (() => {
+              const allItems = techImpacts.affected_patterns || []
+              const totalPages = Math.ceil(allItems.length / PAGE_SIZE)
+              const paged = allItems.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+              return (
+                <>
+                  <div className="space-y-2">
+                    {paged.map((p, i) => (
+                      <div key={i} className="flex items-center gap-3 py-2 border-b border-gray-800/50">
+                        <TypeBadge type={p.type} />
+                        <Link to={`/patterns/${p.id}`} className="text-blue-400 font-mono text-xs hover:underline">
+                          {p.id}
+                        </Link>
+                        <span className="text-gray-400 text-sm">{p.name}</span>
+                        <span className="text-xs text-gray-600 ml-auto">{p.category} · {p.status}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <Pagination
+                    page={page}
+                    totalPages={totalPages}
+                    total={allItems.length}
+                    pageSize={PAGE_SIZE}
+                    onPageChange={setPage}
+                  />
+                </>
+              )
+            })()}
+
+            {techImpacts.technology?.status === 'DEPRECATED' && techImpacts.count > 0 && (
+              <div className="mt-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
+                <p className="text-red-400 text-sm">
+                  <strong>Warning:</strong> This technology is deprecated and still used by {techImpacts.count} pattern(s).
+                  Consider migrating affected patterns to alternative technologies.
+                </p>
+              </div>
             )}
           </div>
 
-          {techImpacts.count === 0 ? (
-            <p className="text-gray-500 italic">No patterns currently use this technology.</p>
-          ) : (
-            <div className="space-y-2">
-              {techImpacts.affected_patterns?.map((p, i) => (
-                <div key={i} className="flex items-center gap-3 py-2 border-b border-gray-800/50">
-                  <TypeBadge type={p.type} />
-                  <Link to={`/patterns/${p.id}`} className="text-blue-400 font-mono text-xs hover:underline">
-                    {p.id}
-                  </Link>
-                  <span className="text-gray-400 text-sm">{p.name}</span>
-                  <span className="text-xs text-gray-600 ml-auto">{p.category} · {p.status}</span>
-                </div>
-              ))}
+          {/* Technology Graph */}
+          {graphData && (
+            <div>
+              <h2 className="text-lg font-semibold mb-3">Technology Relationship Graph</h2>
+              <GraphView data={graphData} height="400px" />
             </div>
           )}
-
-          {techImpacts.technology?.status === 'DEPRECATED' && techImpacts.count > 0 && (
-            <div className="mt-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
-              <p className="text-red-400 text-sm">
-                <strong>Warning:</strong> This technology is deprecated and still used by {techImpacts.count} pattern(s).
-                Consider migrating affected patterns to alternative technologies.
-              </p>
-            </div>
-          )}
-        </div>
+        </>
       )}
     </div>
   )
