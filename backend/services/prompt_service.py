@@ -30,6 +30,7 @@ SECTION_LABELS = {
     "discovery": "Pattern Discovery",
     "advisor": "Pattern Advisor (GraphRAG)",
     "advisor_clarify": "Advisor Clarification",
+    "advisor_followup": "Advisor Follow-up",
     "field_assist": "Field Assist",
     "technology_suggest": "Technology Suggest",
     "technology_assist": "Technology Assist",

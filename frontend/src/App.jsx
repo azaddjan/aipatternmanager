@@ -16,9 +16,8 @@ import Admin from './pages/Admin'
 import PatternDiscovery from './pages/PatternDiscovery'
 import PatternAdvisor from './pages/PatternAdvisor'
 import ImpactAnalysis from './pages/ImpactAnalysis'
-import PatternHealth from './pages/PatternHealth'
-import UserManagement from './pages/UserManagement'
-import TeamManagement from './pages/TeamManagement'
+import Documents from './pages/Documents'
+import DocumentDetail from './pages/DocumentDetail'
 
 export default function App() {
   const { user, loading, isAdmin } = useAuth()
@@ -57,9 +56,11 @@ export default function App() {
             <Route path="/discovery" element={<PatternDiscovery />} />
             <Route path="/advisor" element={<PatternAdvisor />} />
             <Route path="/admin" element={isAdmin ? <Admin /> : <Navigate to="/" />} />
-            <Route path="/admin/users" element={isAdmin ? <UserManagement /> : <Navigate to="/" />} />
-            <Route path="/admin/teams" element={isAdmin ? <TeamManagement /> : <Navigate to="/" />} />
-            <Route path="/health" element={<PatternHealth />} />
+            <Route path="/admin/users" element={<Navigate to="/admin" />} />
+            <Route path="/admin/teams" element={<Navigate to="/admin" />} />
+            <Route path="/health" element={isAdmin ? <Navigate to="/admin" /> : <Navigate to="/" />} />
+            <Route path="/documents" element={<Documents />} />
+            <Route path="/documents/:id" element={<DocumentDetail />} />
             <Route path="/impact" element={<ImpactAnalysis />} />
           </Routes>
         </main>

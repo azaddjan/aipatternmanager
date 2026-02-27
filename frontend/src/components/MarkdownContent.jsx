@@ -1,7 +1,68 @@
-import { Children, isValidElement, cloneElement } from 'react'
+import { Children, isValidElement, cloneElement, useState, useEffect, useRef, useId } from 'react'
 import { Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import mermaid from 'mermaid'
+
+// Initialize mermaid with dark theme (runs once)
+mermaid.initialize({
+  startOnLoad: false,
+  theme: 'dark',
+  themeVariables: {
+    primaryColor: '#3b82f6',
+    primaryTextColor: '#e5e7eb',
+    primaryBorderColor: '#4b5563',
+    lineColor: '#6b7280',
+    secondaryColor: '#1f2937',
+    tertiaryColor: '#111827',
+    fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+    fontSize: '14px',
+  },
+  flowchart: { curve: 'basis' },
+  securityLevel: 'loose',
+})
+
+/**
+ * Renders a Mermaid diagram from source code.
+ * Shows rendered SVG on success, raw code + error on failure.
+ */
+function MermaidBlock({ code }) {
+  const containerRef = useRef(null)
+  const [error, setError] = useState(null)
+  const uniqueId = useId().replace(/:/g, '-')
+
+  useEffect(() => {
+    if (!code?.trim() || !containerRef.current) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const { svg } = await mermaid.render(`mermaid${uniqueId}`, code.trim())
+        if (!cancelled && containerRef.current) {
+          containerRef.current.innerHTML = svg
+          setError(null)
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err.message || 'Mermaid render error')
+          if (containerRef.current) containerRef.current.innerHTML = ''
+        }
+      }
+    })()
+    return () => { cancelled = true }
+  }, [code, uniqueId])
+
+  return (
+    <div className="mb-3 rounded-lg border border-gray-700 overflow-hidden">
+      <div ref={containerRef} className="p-3 flex justify-center bg-gray-900/50 [&_svg]:max-w-full" />
+      {error && (
+        <div className="border-t border-gray-700">
+          <div className="px-3 py-1 text-[10px] text-red-400 bg-red-500/10">{error}</div>
+          <pre className="bg-gray-900 p-3 overflow-x-auto text-xs text-gray-400 font-mono">{code}</pre>
+        </div>
+      )}
+    </div>
+  )
+}
 
 // Pattern ID regex: ABB-XXX-NNN, SBB-XXX-NNN, AB-PAT-NNN
 const PATTERN_ID_RE = /\b((?:ABB|SBB|AB)-[\w]+-\d{3})\b/g
@@ -10,6 +71,7 @@ const PATTERN_ID_RE = /\b((?:ABB|SBB|AB)-[\w]+-\d{3})\b/g
  * Renders markdown content with:
  *  - GitHub-flavored markdown (tables, strikethrough, etc.)
  *  - Auto-linked pattern IDs (ABB-xxx-nnn, SBB-xxx-nnn, AB-xxx-nnn)
+ *  - Mermaid diagram rendering for ```mermaid code blocks
  *  - Dark theme styled tables, lists, and headings
  */
 export default function MarkdownContent({ content }) {
@@ -68,16 +130,25 @@ export default function MarkdownContent({ content }) {
           <li className="text-gray-300 leading-relaxed">{processChildren(children)}</li>
         ),
 
-        // Code
-        code: ({ inline, children, className }) =>
-          inline !== false && !className ? (
+        // Code — detect mermaid blocks
+        code: ({ inline, children, className }) => {
+          if (className === 'language-mermaid') {
+            const code = String(children).replace(/\n$/, '')
+            return <MermaidBlock code={code} />
+          }
+          return inline !== false && !className ? (
             <code className="px-1.5 py-0.5 bg-gray-800 text-blue-300 text-xs rounded font-mono">{children}</code>
           ) : (
             <code className="text-gray-300 text-xs font-mono">{children}</code>
-          ),
-        pre: ({ children }) => (
-          <pre className="bg-gray-900 rounded-lg p-3 overflow-x-auto mb-3">{children}</pre>
-        ),
+          )
+        },
+        pre: ({ children }) => {
+          // If child is a MermaidBlock, don't wrap in <pre>
+          if (isValidElement(children) && children.props?.className === 'language-mermaid') {
+            return <>{children}</>
+          }
+          return <pre className="bg-gray-900 rounded-lg p-3 overflow-x-auto mb-3">{children}</pre>
+        },
 
         // Headings
         h1: ({ children }) => <h1 className="text-xl font-bold text-white mb-2">{processChildren(children)}</h1>,

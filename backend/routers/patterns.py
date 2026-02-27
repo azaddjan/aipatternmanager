@@ -68,12 +68,14 @@ def list_patterns(
     type: Optional[str] = Query(None, description="Filter by type: AB, ABB, SBB"),
     category: Optional[str] = Query(None, description="Filter by category code"),
     status: Optional[str] = Query(None, description="Filter by status"),
+    team_ids: Optional[str] = Query(None, description="Comma-separated team IDs to filter"),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
     _user=Depends(get_current_user_or_anonymous),
 ):
     db = get_db()
-    patterns, total = db.list_patterns(type, category, status, skip, limit)
+    team_id_list = [t.strip() for t in team_ids.split(",") if t.strip()] if team_ids else None
+    patterns, total = db.list_patterns(type, category, status, skip, limit, team_ids=team_id_list)
     return {"patterns": patterns, "total": total}
 
 

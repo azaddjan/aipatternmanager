@@ -16,6 +16,10 @@ import {
 } from '../api/client'
 import ConfirmModal from '../components/ConfirmModal'
 import { useToast } from '../components/Toast'
+import UserManagement from './UserManagement'
+import TeamManagement from './TeamManagement'
+import PatternHealth from './PatternHealth'
+import LegacyImport from './LegacyImport'
 
 const PROVIDER_LABELS = {
   anthropic: { label: 'Anthropic (Claude)', icon: '🟣' },
@@ -32,11 +36,15 @@ const CONFIDENCE_COLORS = {
 
 const TABS = [
   { key: 'config', label: 'Configuration', icon: '⚙️' },
+  { key: 'users', label: 'Users', icon: '👥' },
+  { key: 'teams', label: 'Teams', icon: '🏢' },
+  { key: 'health', label: 'Pattern Health', icon: '🏥' },
   { key: 'export', label: 'Export', icon: '📤' },
   { key: 'import', label: 'Backup', icon: '💾' },
   { key: 'status', label: 'System Status', icon: '📊' },
   { key: 'prompts', label: 'AI Prompts', icon: '📝' },
   { key: 'advisor', label: 'Advisor', icon: '🧠' },
+  { key: 'legacy-import', label: 'Legacy Import', icon: '📄' },
 ]
 
 export default function Admin() {
@@ -730,6 +738,18 @@ export default function Admin() {
           <button onClick={() => setMsg('')} className="float-right text-gray-500 hover:text-gray-300">✕</button>
         </div>
       )}
+
+      {/* ============ Users Tab ============ */}
+      {tab === 'users' && <UserManagement embedded />}
+
+      {/* ============ Teams Tab ============ */}
+      {tab === 'teams' && <TeamManagement embedded />}
+
+      {/* ============ Pattern Health Tab ============ */}
+      {tab === 'health' && <PatternHealth embedded />}
+
+      {/* ============ Legacy Import Tab ============ */}
+      {tab === 'legacy-import' && <LegacyImport />}
 
       {/* ============ Configuration Tab ============ */}
       {tab === 'config' && (

@@ -414,6 +414,7 @@ class ImportService:
             "owned_by_restored": 0,
             "advisor_reports_imported": 0,
             "health_analyses_imported": 0,
+            "discovery_analyses_imported": 0,
             "errors": [],
         }
 
@@ -421,7 +422,7 @@ class ImportService:
         if include is None:
             include = ["teams", "users", "settings",
                        "patterns", "technologies", "pbcs", "categories",
-                       "advisor_reports", "health_analyses"]
+                       "advisor_reports", "health_analyses", "discovery_analyses"]
 
         # Determine format
         if isinstance(data, list):
@@ -458,16 +459,33 @@ class ImportService:
             # 10. Health Analyses
             if "health_analyses" in include and "health_analyses" in data:
                 self._import_health_analyses(data["health_analyses"], stats)
+            # 11. Discovery Analyses
+            if "discovery_analyses" in include and "discovery_analyses" in data:
+                self._import_discovery_analyses(data["discovery_analyses"], stats)
         else:
             raise ValueError("Unrecognized data format. Expected a JSON object or array.")
 
         return stats
 
+    @staticmethod
+    def _strip_embeddings(records: list[dict]) -> list[dict]:
+        """Remove embedding vectors from exported records.
+
+        Embeddings are large float arrays (1536+ dims) that bloat backup files
+        and must be regenerated after restore anyway (provider/model may change).
+        """
+        for rec in records:
+            rec.pop("embedding", None)
+        return records
+
     def export_backup(self) -> dict:
         """
         Export all data as a JSON-serializable dict for backup.
         Includes patterns, technologies, PBCs, categories, advisor reports,
-        health analyses, teams, users, and settings.
+        health analyses, discovery analyses, teams, users, and settings.
+
+        Note: Vector embeddings are excluded — they must be regenerated
+        after restore via the Admin > Embed Missing/All endpoints.
         """
         patterns, _ = self.db.list_patterns(limit=10000)
         full_patterns = []
@@ -475,6 +493,7 @@ class ImportService:
             full = self.db.get_pattern_with_relationships(p["id"])
             if full:
                 full_patterns.append(full)
+        self._strip_embeddings(full_patterns)
 
         technologies, _ = self.db.list_technologies(limit=10000)
         full_techs = []
@@ -482,8 +501,11 @@ class ImportService:
             full_t = self.db.get_technology_with_patterns(t["id"])
             if full_t:
                 full_techs.append(full_t)
+        self._strip_embeddings(full_techs)
 
         pbcs = self.db.list_pbcs()
+        self._strip_embeddings(pbcs)
+
         categories = self.db.list_categories()
 
         # Export advisor reports (full data including result_json)
@@ -505,6 +527,17 @@ class ImportService:
                 full_ha = self.db.get_health_analysis(ha["id"])
                 if full_ha:
                     health_analyses.append(full_ha)
+        except Exception:
+            pass
+
+        # Export discovery analyses (full data including suggestions_json)
+        discovery_analyses = []
+        try:
+            da_list = self.db.list_discovery_analyses(limit=10000)
+            for da in da_list:
+                full_da = self.db.get_discovery_analysis(da["id"])
+                if full_da:
+                    discovery_analyses.append(full_da)
         except Exception:
             pass
 
@@ -555,7 +588,7 @@ class ImportService:
 
         return {
             "export_date": datetime.now(timezone.utc).isoformat(),
-            "version": "1.2",
+            "version": "1.3",
             "teams": teams,
             "users": users,
             "settings": settings,
@@ -565,6 +598,7 @@ class ImportService:
             "categories": categories,
             "advisor_reports": advisor_reports,
             "health_analyses": health_analyses,
+            "discovery_analyses": discovery_analyses,
         }
 
     # ------------------------------------------------------------------
@@ -906,6 +940,51 @@ class ImportService:
                 stats["health_analyses_imported"] += 1
             except Exception as e:
                 stats["errors"].append(f"HealthAnalysis '{ha.get('id', '?')}': {e}")
+
+    def _import_discovery_analyses(self, analyses: list, stats: dict):
+        """Import discovery analyses, preserving original IDs and timestamps."""
+        for da in analyses:
+            try:
+                did = da.get("id", "")
+                if not did:
+                    continue
+                existing = self.db.get_discovery_analysis(did)
+                if existing:
+                    # Already exists, skip
+                    continue
+                suggestions = da.get("suggestions_json", [])
+                if isinstance(suggestions, list):
+                    suggestions_str = json.dumps(suggestions)
+                else:
+                    suggestions_str = str(suggestions)
+
+                query = """
+                CREATE (d:DiscoveryAnalysis {
+                    id: $id,
+                    title: $title,
+                    suggestions_json: $suggestions_json,
+                    provider: $provider,
+                    model: $model,
+                    focus_area: $focus_area,
+                    suggestion_count: $suggestion_count,
+                    created_at: $created_at
+                })
+                RETURN d
+                """
+                with self.db.session() as session:
+                    session.run(query, {
+                        "id": did,
+                        "title": da.get("title", ""),
+                        "suggestions_json": suggestions_str,
+                        "provider": da.get("provider", ""),
+                        "model": da.get("model", ""),
+                        "focus_area": da.get("focus_area", ""),
+                        "suggestion_count": da.get("suggestion_count", 0),
+                        "created_at": da.get("created_at", datetime.now(timezone.utc).isoformat()),
+                    })
+                stats["discovery_analyses_imported"] += 1
+            except Exception as e:
+                stats["errors"].append(f"DiscoveryAnalysis '{da.get('id', '?')}': {e}")
 
     def _prepare_pattern_data(self, p: dict) -> dict:
         """Prepare pattern data dict, handling both old and new format fields."""

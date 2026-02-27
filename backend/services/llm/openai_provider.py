@@ -1,5 +1,6 @@
 import os
 import logging
+from typing import AsyncIterator
 
 from openai import AsyncOpenAI
 
@@ -42,3 +43,24 @@ class OpenAIProvider(BaseLLMProvider):
         )
         content = response.choices[0].message.content
         return {"content": content, "provider": self.name, "model": model}
+
+    async def generate_stream(
+        self, system_prompt: str, user_prompt: str, model: str | None = None
+    ) -> AsyncIterator[str]:
+        if not self.client:
+            raise RuntimeError("OpenAI API key not configured")
+
+        model = model or self.DEFAULT_MODEL
+        stream = await self.client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            max_tokens=4096,
+            stream=True,
+        )
+        async for chunk in stream:
+            delta = chunk.choices[0].delta
+            if delta.content:
+                yield delta.content

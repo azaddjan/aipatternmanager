@@ -1,14 +1,15 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  analyzePattern, clarifyProblem, fetchEmbeddingStatus, fetchProviders, fetchCategories,
+  analyzePattern, analyzePatternStream, clarifyProblem, fetchEmbeddingStatus, fetchProviders, fetchCategories,
   fetchAdvisorReports, fetchAdvisorReport, updateAdvisorReport,
   deleteAdvisorReport, deleteAllAdvisorReports, cleanupAdvisorReports,
   advisorReportExportHtmlUrl, advisorReportExportDocxUrl,
-  authenticatedDownload,
+  authenticatedDownload, sendAdvisorFollowup,
 } from '../api/client'
 import MarkdownContent from '../components/MarkdownContent'
 import ConfirmModal from '../components/ConfirmModal'
+import ConversationThread from '../components/ConversationThread'
 import { useToast } from '../components/Toast'
 import EmptyState from '../components/EmptyState'
 
@@ -26,8 +27,9 @@ const PRIORITY_COLORS = {
 
 const PROGRESS_STEPS = [
   'Generating problem embedding',
-  'Vector search across knowledge graph',
-  'Expanding graph context via relationships',
+  'Searching knowledge graph',
+  'Fetching pattern catalog',
+  'Building graph context',
   'AI analyzing patterns against your problem',
   'Structuring recommendations',
 ]
@@ -67,6 +69,13 @@ export default function PatternAdvisor() {
   const [clarificationQuestions, setClarificationQuestions] = useState(null)
   const [clarificationAnswers, setClarificationAnswers] = useState({})
 
+  // --- Conversation follow-up state ---
+  const [messages, setMessages] = useState([])
+  const [sendingFollowup, setSendingFollowup] = useState(false)
+
+  // --- Progress message from SSE ---
+  const [progressMessage, setProgressMessage] = useState('')
+
   // Load providers, categories, embedding status, and reports on mount
   useEffect(() => {
     Promise.all([
@@ -100,6 +109,7 @@ export default function PatternAdvisor() {
             )
             setSavedReportId(report.id)
             setResultTab('overview')
+            setMessages(report.messages_json || [])
           }
         }).catch(() => {})
       }
@@ -117,19 +127,8 @@ export default function PatternAdvisor() {
     setResultTab('overview')
     setClarificationQuestions(null)
     setClarificationAnswers({})
+    setMessages([])
   }
-
-  // Animated progress during analysis
-  useEffect(() => {
-    if (!analyzing) return
-    setProgressStep(0)
-    const timings = [800, 2000, 3500, 5500]
-    const timers = timings.map((ms, i) =>
-      setTimeout(() => setProgressStep(i + 1), ms)
-    )
-    return () => timers.forEach(clearTimeout)
-  }, [analyzing])
-
 
   const handleAnalyze = async () => {
     if (problem.trim().length < 10) {
@@ -178,8 +177,11 @@ export default function PatternAdvisor() {
 
   const runFullAnalysis = async (clarifications) => {
     setAnalyzing(true)
+    setProgressStep(0)
+    setProgressMessage('')
     setClarificationQuestions(null)
     setClarificationAnswers({})
+    setMessages([])
     try {
       const data = {
         problem: problem.trim(),
@@ -190,9 +192,18 @@ export default function PatternAdvisor() {
         model: model || null,
         clarifications: clarifications,
       }
-      const res = await analyzePattern(data)
+      const res = await analyzePatternStream(data, (event) => {
+        setProgressStep(event.step)
+        setProgressMessage(event.message || '')
+      })
       setResult(res)
-      setProgressStep(4)
+      setProgressStep(PROGRESS_STEPS.length)
+      // Initialize conversation messages for the new analysis
+      const initialMessages = [
+        { role: 'user', content: problem.trim(), type: 'initial' },
+        { role: 'assistant', content: JSON.stringify(res), type: 'initial' },
+      ]
+      setMessages(initialMessages)
       if (res.saved_report_id) {
         setSavedReportId(res.saved_report_id)
         toast.success('Analysis saved')
@@ -203,6 +214,7 @@ export default function PatternAdvisor() {
       toast.error('Analysis failed')
     }
     setAnalyzing(false)
+    setProgressMessage('')
   }
 
   const handleSkipClarification = () => {
@@ -245,6 +257,7 @@ export default function PatternAdvisor() {
         )
         setSavedReportId(report.id)
         setResultTab('overview')
+        setMessages(report.messages_json || [])
         window.scrollTo({ top: 0, behavior: 'smooth' })
       }
     } catch (err) {
@@ -336,6 +349,36 @@ export default function PatternAdvisor() {
     } catch (err) {
       setError(`Cleanup failed: ${err.message}`)
     }
+  }
+
+  const handleSendFollowup = async (question) => {
+    if (!savedReportId || sendingFollowup) return
+
+    // Optimistically add user message
+    const userMsg = { role: 'user', content: question, type: 'followup' }
+    setMessages(prev => [...prev, userMsg])
+    setSendingFollowup(true)
+
+    try {
+      const res = await sendAdvisorFollowup(savedReportId, {
+        question,
+        provider: provider || null,
+        model: model || null,
+      })
+      // Add assistant response
+      const assistantMsg = {
+        role: 'assistant',
+        content: res.response,
+        type: 'followup',
+        should_continue: res.should_continue,
+      }
+      setMessages(prev => [...prev, assistantMsg])
+    } catch (err) {
+      // Remove optimistic user message on failure
+      setMessages(prev => prev.slice(0, -1))
+      toast.error(`Follow-up failed: ${err.message}`)
+    }
+    setSendingFollowup(false)
   }
 
   const analysis = result?.analysis || {}
@@ -512,22 +555,25 @@ export default function PatternAdvisor() {
         <div className="card">
           <h3 className="text-sm font-semibold text-gray-400 mb-3">GraphRAG Pipeline</h3>
           <div className="space-y-2">
-            {PROGRESS_STEPS.map((step, i) => (
-              <div key={i} className="flex items-center gap-3 text-sm">
-                <span className={`w-5 h-5 flex items-center justify-center rounded-full text-xs ${
-                  i < progressStep
-                    ? 'bg-green-500/20 text-green-400'
-                    : i === progressStep
-                      ? 'bg-blue-500/20 text-blue-400 animate-pulse'
-                      : 'bg-gray-800 text-gray-600'
-                }`}>
-                  {i < progressStep ? '✓' : i === progressStep ? '⟳' : '○'}
-                </span>
-                <span className={i <= progressStep ? 'text-gray-300' : 'text-gray-600'}>
-                  {step}
-                </span>
-              </div>
-            ))}
+            {PROGRESS_STEPS.map((step, i) => {
+              const stepNum = i + 1
+              return (
+                <div key={i} className="flex items-center gap-3 text-sm">
+                  <span className={`w-5 h-5 flex items-center justify-center rounded-full text-xs ${
+                    stepNum < progressStep
+                      ? 'bg-green-500/20 text-green-400'
+                      : stepNum === progressStep
+                        ? 'bg-blue-500/20 text-blue-400 animate-pulse'
+                        : 'bg-gray-800 text-gray-600'
+                  }`}>
+                    {stepNum < progressStep ? '✓' : stepNum === progressStep ? '⟳' : '○'}
+                  </span>
+                  <span className={stepNum <= progressStep ? 'text-gray-300' : 'text-gray-600'}>
+                    {stepNum === progressStep && progressMessage ? progressMessage : step}
+                  </span>
+                </div>
+              )
+            })}
           </div>
         </div>
       )}
@@ -707,6 +753,17 @@ export default function PatternAdvisor() {
         </div>
       )}
 
+      {/* Follow-up Conversation Thread */}
+      {result && savedReportId && (
+        <ConversationThread
+          messages={messages}
+          onSendFollowup={handleSendFollowup}
+          sending={sendingFollowup}
+          messageCount={messages.length}
+          disabled={analyzing}
+        />
+      )}
+
       {/* Report History */}
       {reports.length === 0 && !result && !analyzing && (
         <EmptyState
@@ -804,6 +861,13 @@ export default function PatternAdvisor() {
                           CONFIDENCE_COLORS[rpt.confidence] || CONFIDENCE_COLORS.MEDIUM
                         }`}>
                           {rpt.confidence}
+                        </span>
+                      )}
+
+                      {/* Follow-up Badge */}
+                      {(rpt.message_count || 0) > 2 && (
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-400">
+                          {Math.floor(((rpt.message_count || 0) - 2) / 2)} follow-up{Math.floor(((rpt.message_count || 0) - 2) / 2) !== 1 ? 's' : ''}
                         </span>
                       )}
                     </div>
@@ -1025,6 +1089,11 @@ function PatternsTab({ analysis }) {
                 {abb.role && (
                   <p className="text-gray-400 text-sm mt-2">{abb.role}</p>
                 )}
+                {abb.restrictions_note && (
+                  <p className="text-orange-400 text-xs mt-2 bg-orange-500/10 rounded px-2 py-1">
+                    ⚠️ {abb.restrictions_note}
+                  </p>
+                )}
               </div>
             ))}
           </div>
@@ -1138,7 +1207,12 @@ function ComparisonsTab({ analysis }) {
                         ? <ul className="list-disc list-inside space-y-0.5">{sbb.weaknesses.map((w, i) => <li key={i}>{w}</li>)}</ul>
                         : sbb.weaknesses}
                     </td>
-                    <td className="py-2.5 px-3 text-gray-300 text-xs">{sbb.best_for}</td>
+                    <td className="py-2.5 px-3 text-gray-300 text-xs">
+                      {sbb.best_for}
+                      {sbb.restrictions_note && (
+                        <p className="text-orange-400 mt-1">⚠️ {sbb.restrictions_note}</p>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

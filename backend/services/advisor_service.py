@@ -375,12 +375,21 @@ async def analyze_problem(
     provider_name: Optional[str] = None,
     model: Optional[str] = None,
     clarifications: Optional[dict] = None,
+    progress_callback: Optional[callable] = None,
 ) -> dict:
     """Main GraphRAG entry point: Embed → Vector Search → Graph Context → LLM Reason."""
+
+    def _progress(stage: str, step: int, total: int, message: str):
+        if progress_callback:
+            try:
+                progress_callback(stage, step, total, message)
+            except Exception:
+                pass
 
     prompts = _get_prompts()
 
     # Step 1: EMBED the user's problem
+    _progress("embedding", 1, 6, "Generating problem embedding...")
     vector_matches_text = "Embedding service not available — using full catalog search."
     pattern_matches = []
     tech_matches = []
@@ -391,6 +400,7 @@ async def analyze_problem(
             query_embedding = embedding_svc.generate_embedding(problem)
 
             # Step 2: VECTOR RETRIEVE
+            _progress("vector_search", 2, 6, "Searching knowledge graph...")
             try:
                 pattern_matches = db.vector_search_patterns(query_embedding, limit=10)
             except Exception as e:
@@ -407,12 +417,19 @@ async def analyze_problem(
             vector_matches_text = _format_vector_matches(pattern_matches, tech_matches, pbc_matches)
         except Exception as e:
             logger.warning(f"Embedding generation failed: {e}")
+    else:
+        _progress("vector_search", 2, 6, "Embeddings unavailable, using full catalog...")
 
-    # Step 3 & 4: Fetch full catalog and build context
+    # Step 3: Fetch full catalog
+    _progress("catalog", 3, 6, "Fetching pattern catalog...")
     catalog = _fetch_full_catalog(db)
+
+    # Step 4: Build graph context
+    _progress("graph_context", 4, 6, "Building graph context...")
     graph_context = _build_graph_context(catalog)
 
     # Step 5: LLM REASON
+    _progress("llm_reasoning", 5, 6, "AI analyzing patterns against your problem...")
     # Enrich the problem with clarification answers if provided
     enriched_problem = problem
     if clarifications:
@@ -435,6 +452,7 @@ async def analyze_problem(
     result = await provider.generate(system_prompt, user_prompt, model)
 
     # Step 6: PARSE
+    _progress("parsing", 6, 6, "Structuring recommendations...")
     content = result.get("content", "")
     analysis = _parse_advisor_response(content)
 
@@ -453,6 +471,196 @@ async def analyze_problem(
             "sbbs": len(catalog["sbbs"]),
             "technologies": len(catalog["technologies"]),
         },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Follow-up Conversation
+# ---------------------------------------------------------------------------
+
+MAX_FOLLOWUP_MESSAGES = 18  # 2 initial + up to 8 follow-up rounds (16 messages)
+
+
+def _build_followup_context(report: dict) -> str:
+    """Extract compact context from the stored analysis for follow-up prompts."""
+    result_json = report.get("result_json", {})
+    analysis = result_json.get("analysis", {})
+    sections = []
+
+    # Summary
+    if analysis.get("summary"):
+        sections.append(f"**Summary:** {analysis['summary']}")
+
+    # Recommended patterns
+    for key, label in [("recommended_pbcs", "PBCs"), ("recommended_abbs", "ABBs"), ("recommended_sbbs", "SBBs")]:
+        items = analysis.get(key, [])
+        if items:
+            names = [f"{p.get('id', '?')}: {p.get('name', '?')}" for p in items[:8]]
+            sections.append(f"**Recommended {label}:** {', '.join(names)}")
+
+    # Architecture
+    if analysis.get("architecture_composition"):
+        arch = analysis["architecture_composition"]
+        sections.append(f"**Architecture:** {arch[:500]}")
+
+    # Gaps
+    gaps = analysis.get("platform_gaps", [])
+    if gaps:
+        gap_names = [g.get("capability", "?") for g in gaps[:5]]
+        sections.append(f"**Identified Gaps:** {', '.join(gap_names)}")
+
+    # SBB comparisons
+    comparisons = analysis.get("sbb_comparisons", [])
+    if comparisons:
+        comp_text = []
+        for c in comparisons[:3]:
+            abb = c.get("abb_name", c.get("abb_id", "?"))
+            sbbs = [s.get("id", "?") for s in c.get("sbbs", [])]
+            comp_text.append(f"{abb}: [{', '.join(sbbs)}]")
+        sections.append(f"**SBB Comparisons:** {'; '.join(comp_text)}")
+
+    # Confidence
+    sections.append(f"**Confidence:** {analysis.get('confidence', 'N/A')}")
+
+    # Graph stats
+    graph_stats = result_json.get("graph_stats", {})
+    if graph_stats:
+        sections.append(
+            f"**Catalog Size:** {graph_stats.get('pbcs', 0)} PBCs, "
+            f"{graph_stats.get('abbs', 0)} ABBs, {graph_stats.get('sbbs', 0)} SBBs, "
+            f"{graph_stats.get('technologies', 0)} Technologies"
+        )
+
+    return "\n".join(sections)
+
+
+def _format_conversation_history(messages: list) -> str:
+    """Format messages into readable conversation history for the LLM."""
+    lines = []
+    for msg in messages:
+        role = msg.get("role", "unknown")
+        msg_type = msg.get("type", "followup")
+        content = msg.get("content", "")
+
+        if msg_type == "initial" and role == "user":
+            lines.append(f"**User (initial problem):** {content[:300]}...")
+        elif msg_type == "initial" and role == "assistant":
+            # For initial analysis, just show a brief summary
+            try:
+                parsed = json.loads(content) if isinstance(content, str) else content
+                summary = parsed.get("analysis", {}).get("summary", content[:200])
+                lines.append(f"**Assistant (initial analysis):** {summary[:300]}")
+            except (json.JSONDecodeError, TypeError):
+                lines.append(f"**Assistant (initial analysis):** {str(content)[:300]}")
+        elif role == "user":
+            lines.append(f"**User:** {content}")
+        elif role == "assistant":
+            lines.append(f"**Assistant:** {content}")
+
+    return "\n\n".join(lines) if lines else "No previous conversation."
+
+
+def _parse_followup_response(content: str) -> dict:
+    """Parse a follow-up response: markdown body + optional should_continue metadata."""
+    should_continue = True
+    markdown_body = content
+
+    # Try to extract the JSON metadata block from the end
+    separator_idx = content.rfind("---")
+    if separator_idx > 0:
+        after_sep = content[separator_idx + 3:].strip()
+        # Try to find JSON in the remaining text
+        json_start = after_sep.find("{")
+        json_end = after_sep.rfind("}") + 1
+        if json_start >= 0 and json_end > json_start:
+            try:
+                meta = json.loads(after_sep[json_start:json_end])
+                should_continue = meta.get("should_continue", True)
+                # Remove the metadata block from the markdown
+                markdown_body = content[:separator_idx].rstrip()
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+    return {"response": markdown_body, "should_continue": bool(should_continue)}
+
+
+async def followup_question(
+    db: Neo4jService,
+    report_id: str,
+    question: str,
+    provider_name: Optional[str] = None,
+    model: Optional[str] = None,
+) -> dict:
+    """Handle a follow-up question on an existing advisor report.
+
+    Lightweight — no re-embedding, no vector search. Uses stored analysis as context.
+    """
+    # 1. Load existing report + messages
+    report = db.get_report(report_id)
+    if not report:
+        raise ValueError(f"Report {report_id} not found")
+
+    messages = report.get("messages_json", [])
+    message_count = report.get("message_count", len(messages))
+
+    # 2. Guard: check conversation limit
+    if message_count >= MAX_FOLLOWUP_MESSAGES:
+        return {
+            "response": (
+                "This conversation has reached its limit of 8 follow-up exchanges. "
+                "To continue exploring, please start a new analysis — you can reference "
+                "this report's findings in your problem description."
+            ),
+            "should_continue": False,
+            "provider": "",
+            "model": "",
+            "message_count": message_count,
+            "report_id": report_id,
+        }
+
+    # 3. Build context from stored analysis
+    context_summary = _build_followup_context(report)
+    conversation_history = _format_conversation_history(messages)
+
+    # 4. Build prompts
+    prompts = _get_prompts()
+    system_prompt = prompts["advisor_followup"]["system"]
+    user_prompt = prompts["advisor_followup"]["user"].format(
+        original_problem=report.get("problem", ""),
+        analysis_summary=report.get("summary", ""),
+        context_summary=context_summary,
+        conversation_history=conversation_history,
+        followup_question=question,
+        message_count=message_count,
+    )
+
+    # 5. Single LLM call
+    provider = get_provider(provider_name)
+    result = await provider.generate(system_prompt, user_prompt, model)
+
+    content = result.get("content", "")
+    parsed = _parse_followup_response(content)
+
+    # 6. Append messages to report
+    new_messages = [
+        {"role": "user", "content": question, "type": "followup"},
+        {
+            "role": "assistant",
+            "content": parsed["response"],
+            "type": "followup",
+            "should_continue": parsed["should_continue"],
+        },
+    ]
+    updated_report = db.append_messages(report_id, new_messages)
+    new_count = updated_report.get("message_count", message_count + 2) if updated_report else message_count + 2
+
+    return {
+        "response": parsed["response"],
+        "should_continue": parsed["should_continue"],
+        "provider": result.get("provider", ""),
+        "model": result.get("model", ""),
+        "message_count": new_count,
+        "report_id": report_id,
     }
 
 

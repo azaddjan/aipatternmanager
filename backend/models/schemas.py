@@ -337,6 +337,14 @@ class AdvisorReportUpdate(BaseModel):
     starred: Optional[bool] = None
 
 
+class AdvisorFollowupRequest(BaseModel):
+    """Follow-up question on an existing advisor report."""
+    question: str = Field(..., min_length=5, max_length=3000,
+                          description="Follow-up question about the analysis")
+    provider: Optional[LLMProvider] = None
+    model: Optional[str] = None
+
+
 # --- AI Field Assist (per-field editing support) ---
 
 class AIFieldAssistAction(str, Enum):
@@ -376,3 +384,40 @@ class AISmartActionRequest(BaseModel):
     custom_prompt: Optional[str] = None
     provider: Optional[LLMProvider] = None
     model: Optional[str] = None
+
+
+# --- Documents ---
+
+class DocumentCreate(BaseModel):
+    title: str = "Untitled Document"
+    doc_type: str = "guide"  # guide | reference | adr | overview | other
+    status: str = "draft"  # draft | published | archived
+    summary: str = ""
+    tags: list[str] = []
+    team_id: Optional[str] = None
+    source_analysis_id: Optional[str] = None
+    sections: list[dict] = []  # [{title, content}] for initial creation
+
+class DocumentUpdate(BaseModel):
+    title: Optional[str] = None
+    doc_type: Optional[str] = None
+    status: Optional[str] = None
+    summary: Optional[str] = None
+    tags: Optional[list[str]] = None
+    team_id: Optional[str] = None
+
+class DocumentSectionCreate(BaseModel):
+    title: str = "New Section"
+    content: str = ""
+    order_index: Optional[int] = None
+
+class DocumentSectionUpdate(BaseModel):
+    title: Optional[str] = None
+    content: Optional[str] = None
+
+class DocumentSectionReorder(BaseModel):
+    section_ids: list[str]
+
+class DocumentLinkCreate(BaseModel):
+    entity_id: str
+    entity_label: str = "Pattern"  # Pattern | Technology | PBC

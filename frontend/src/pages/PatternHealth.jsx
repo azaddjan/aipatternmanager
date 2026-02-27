@@ -45,7 +45,7 @@ const TYPE_BADGE = {
   SBB: 'bg-green-500/10 text-green-400',
 }
 
-export default function PatternHealth() {
+export default function PatternHealth({ embedded = false }) {
   const { user, isAdmin } = useAuth()
   const { toast } = useToast()
   const [healthData, setHealthData] = useState(null)
@@ -183,10 +183,12 @@ export default function PatternHealth() {
   if (loading) {
     return (
       <div className="space-y-6">
-        <div>
-          <h1 className="page-title">Pattern Health</h1>
-          <p className="page-subtitle">Quality, completeness, and coverage of your pattern library</p>
-        </div>
+        {!embedded && (
+          <div>
+            <h1 className="page-title">Pattern Health</h1>
+            <p className="page-subtitle">Quality, completeness, and coverage of your pattern library</p>
+          </div>
+        )}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <SkeletonStatCard />
           <SkeletonStatCard />
@@ -216,27 +218,29 @@ export default function PatternHealth() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-2 text-sm">
-        <Link to="/" className="text-gray-500 hover:text-gray-300 transition-colors">&larr; Dashboard</Link>
-        <span className="text-gray-700">/</span>
-        <span className="text-gray-400">Pattern Health</span>
-      </div>
-      {/* Header */}
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="page-title flex items-center gap-2">
-            Pattern Health
-          </h1>
-          <p className="page-subtitle">
-            Quality, completeness, and coverage of your pattern library
-            {selectedTeam !== 'all' && (
-              <span className="ml-2 text-xs bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded border border-blue-500/30">
-                {teams.find(t => t.id === selectedTeam)?.name || 'Team'} scope
-              </span>
-            )}
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
+      {!embedded && (
+        <>
+          <div className="flex items-center gap-2 text-sm">
+            <Link to="/" className="text-gray-500 hover:text-gray-300 transition-colors">&larr; Dashboard</Link>
+            <span className="text-gray-700">/</span>
+            <span className="text-gray-400">Pattern Health</span>
+          </div>
+          {/* Header */}
+          <div className="flex items-start justify-between">
+            <div>
+              <h1 className="page-title flex items-center gap-2">
+                Pattern Health
+              </h1>
+              <p className="page-subtitle">
+                Quality, completeness, and coverage of your pattern library
+                {selectedTeam !== 'all' && (
+                  <span className="ml-2 text-xs bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded border border-blue-500/30">
+                    {teams.find(t => t.id === selectedTeam)?.name || 'Team'} scope
+                  </span>
+                )}
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
           {/* Team Scope Selector */}
           <div className="flex items-center gap-2">
             <label className="text-xs text-gray-500">Scope:</label>
@@ -266,6 +270,48 @@ export default function PatternHealth() {
           </div>
         </div>
       </div>
+        </>
+      )}
+      {embedded && (
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-gray-400">
+            Quality, completeness, and coverage of your pattern library
+            {selectedTeam !== 'all' && (
+              <span className="ml-2 text-xs bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded border border-blue-500/30">
+                {teams.find(t => t.id === selectedTeam)?.name || 'Team'} scope
+              </span>
+            )}
+          </p>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-500">Scope:</label>
+              <select
+                value={selectedTeam}
+                onChange={e => setSelectedTeam(e.target.value)}
+                className="input text-xs py-1.5 px-2 min-w-[160px]"
+              >
+                <option value="all">🌐 All Patterns</option>
+                {teams.map(t => (
+                  <option key={t.id} value={t.id}>
+                    {t.id === user?.team_id ? `⭐ ${t.name} (My Team)` : `🏢 ${t.name}`}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <button onClick={loadHealthData} className="text-xs text-gray-400 hover:text-white transition-colors">
+              Refresh
+            </button>
+            <div className="text-center">
+              <div className={`text-3xl font-bold ${getScoreColor(health_score)}`}>
+                {Math.round(health_score)}
+              </div>
+              <span className={`text-xs px-2 py-0.5 rounded border ${band.color}`}>
+                {band.label}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Error */}
       {error && (

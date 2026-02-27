@@ -34,10 +34,14 @@ def get_impact_analysis(pattern_id: str, _user=Depends(get_current_user_or_anony
 
 
 @router.get("/coverage")
-def get_coverage_matrix(_user=Depends(get_current_user_or_anonymous)):
+def get_coverage_matrix(
+    team_id: Optional[str] = Query(None, description="Team ID to scope coverage, or omit for all"),
+    _user=Depends(get_current_user_or_anonymous),
+):
     """ABB coverage matrix: which ABBs have SBB implementations."""
     db = get_db()
-    coverage = db.get_coverage_matrix()
+    effective_team = None if (not team_id or team_id == "all") else team_id
+    coverage = db.get_coverage_matrix(team_id=effective_team)
     total_abbs = len(coverage)
     covered = sum(1 for c in coverage if c["sbb_count"] > 0)
     return {

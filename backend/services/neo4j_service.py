@@ -11,6 +11,46 @@ _JSON_FIELDS = {"sbb_mapping", "diagrams", "images"}
 # Fields that are stored as native Neo4j string lists
 _LIST_FIELDS = {"business_capabilities", "consumed_by_ids", "works_with_ids", "tags"}
 
+# Per-type completeness field definitions (shared by get_pattern_health & get_team_stats)
+_TYPE_FIELDS = {
+    "AB": {
+        "description": "Description",
+        "intent": "Intent",
+        "problem": "Problem",
+        "solution": "Solution",
+        "structural_elements": "Structural Elements",
+        "invariants": "Invariants",
+        "inter_element_contracts": "Contracts",
+        "related_patterns_text": "Related Patterns",
+        "related_adrs": "Related ADRs",
+        "building_blocks_note": "Building Blocks",
+    },
+    "ABB": {
+        "description": "Description",
+        "functionality": "Functionality",
+        "inbound_interfaces": "Inbound Interfaces",
+        "outbound_interfaces": "Outbound Interfaces",
+        "business_capabilities": "Business Capabilities",
+        "quality_attributes": "Quality Attributes",
+        "compliance_requirements": "Compliance Requirements",
+    },
+    "SBB": {
+        "description": "Description",
+        "specific_functionality": "Specific Functionality",
+        "inbound_interfaces": "Inbound Interfaces",
+        "outbound_interfaces": "Outbound Interfaces",
+        "sbb_mapping": "SBB Mapping",
+        "business_capabilities": "Business Capabilities",
+        "vendor": "Vendor",
+        "deployment_model": "Deployment Model",
+        "cost_tier": "Cost Tier",
+        "licensing": "Licensing",
+        "maturity": "Maturity",
+    },
+}
+# Fields checked via list length > 0 (rather than string non-empty)
+_COMPLETENESS_LIST_FIELDS = {"business_capabilities", "sbb_mapping", "consumed_by_ids", "works_with_ids", "tags"}
+
 
 class Neo4jService:
     def __init__(self):
@@ -47,6 +87,7 @@ class Neo4jService:
             "CREATE CONSTRAINT advisor_report_id IF NOT EXISTS FOR (r:AdvisorReport) REQUIRE r.id IS UNIQUE",
             "CREATE CONSTRAINT health_analysis_id IF NOT EXISTS FOR (h:HealthAnalysis) REQUIRE h.id IS UNIQUE",
             "CREATE CONSTRAINT discovery_analysis_id IF NOT EXISTS FOR (d:DiscoveryAnalysis) REQUIRE d.id IS UNIQUE",
+            "CREATE CONSTRAINT legacy_analysis_id IF NOT EXISTS FOR (l:LegacyImportAnalysis) REQUIRE l.id IS UNIQUE",
             # Auth & config
             "CREATE CONSTRAINT user_id IF NOT EXISTS FOR (u:User) REQUIRE u.id IS UNIQUE",
             "CREATE CONSTRAINT user_email IF NOT EXISTS FOR (u:User) REQUIRE u.email IS UNIQUE",
@@ -54,6 +95,9 @@ class Neo4jService:
             "CREATE CONSTRAINT team_name IF NOT EXISTS FOR (t:Team) REQUIRE t.name IS UNIQUE",
             "CREATE CONSTRAINT system_config_key IF NOT EXISTS FOR (c:SystemConfig) REQUIRE c.key IS UNIQUE",
             "CREATE CONSTRAINT audit_log_id IF NOT EXISTS FOR (a:AuditLog) REQUIRE a.id IS UNIQUE",
+            # Documents
+            "CREATE CONSTRAINT document_id IF NOT EXISTS FOR (d:Document) REQUIRE d.id IS UNIQUE",
+            "CREATE CONSTRAINT document_section_id IF NOT EXISTS FOR (s:DocumentSection) REQUIRE s.id IS UNIQUE",
         ]
         with self.session() as session:
             for q in queries:
@@ -72,6 +116,9 @@ class Neo4jService:
             # Audit indexes
             "CREATE INDEX audit_timestamp IF NOT EXISTS FOR (a:AuditLog) ON (a.timestamp)",
             "CREATE INDEX audit_entity IF NOT EXISTS FOR (a:AuditLog) ON (a.entity_type, a.entity_id)",
+            # Document indexes
+            "CREATE INDEX document_status IF NOT EXISTS FOR (d:Document) ON (d.status)",
+            "CREATE INDEX document_doc_type IF NOT EXISTS FOR (d:Document) ON (d.doc_type)",
         ]
         with self.session() as session:
             for q in queries:
@@ -771,17 +818,30 @@ class Neo4jService:
             records = session.run(query, id=pattern_id)
             return [dict(r) for r in records]
 
-    def get_coverage_matrix(self) -> list[dict]:
-        query = """
-        MATCH (abb:Pattern {type: 'ABB'})
-        OPTIONAL MATCH (sbb:Pattern {type: 'SBB'})-[:IMPLEMENTS]->(abb)
-        RETURN abb.id as abb_id, abb.name as abb_name,
-               count(sbb) as sbb_count,
-               collect(sbb.id) as sbb_ids
-        ORDER BY abb.id
-        """
+    def get_coverage_matrix(self, team_id: str = None) -> list[dict]:
+        if team_id:
+            query = """
+            MATCH (abb:Pattern {type: 'ABB'})-[:OWNED_BY]->(:Team {id: $team_id})
+            OPTIONAL MATCH (sbb:Pattern {type: 'SBB'})-[:IMPLEMENTS]->(abb)
+            WHERE EXISTS { (sbb)-[:OWNED_BY]->(:Team {id: $team_id}) }
+            RETURN abb.id as abb_id, abb.name as abb_name,
+                   count(sbb) as sbb_count,
+                   collect(sbb.id) as sbb_ids
+            ORDER BY abb.id
+            """
+            params = {"team_id": team_id}
+        else:
+            query = """
+            MATCH (abb:Pattern {type: 'ABB'})
+            OPTIONAL MATCH (sbb:Pattern {type: 'SBB'})-[:IMPLEMENTS]->(abb)
+            RETURN abb.id as abb_id, abb.name as abb_name,
+                   count(sbb) as sbb_count,
+                   collect(sbb.id) as sbb_ids
+            ORDER BY abb.id
+            """
+            params = {}
         with self.session() as session:
-            records = session.run(query)
+            records = session.run(query, **params)
             return [dict(r) for r in records]
 
     # --- Counts ---
@@ -1133,6 +1193,13 @@ class Neo4jService:
         problem = data.get("problem", "")
         title = data.get("title") or (problem[:80] + ("..." if len(problem) > 80 else ""))
 
+        # Build initial conversation messages
+        result_json = data.get("result_json", {})
+        initial_messages = [
+            {"role": "user", "content": problem, "type": "initial"},
+            {"role": "assistant", "content": json.dumps(result_json), "type": "initial"},
+        ]
+
         props = {
             "id": report_id,
             "title": title,
@@ -1142,7 +1209,9 @@ class Neo4jService:
             "starred": False,
             "provider": data.get("provider", ""),
             "model": data.get("model", ""),
-            "result_json": json.dumps(data.get("result_json", {})),
+            "result_json": json.dumps(result_json),
+            "messages_json": json.dumps(initial_messages),
+            "message_count": 2,
             "created_at": now,
         }
         if data.get("category_focus"):
@@ -1205,7 +1274,8 @@ class Neo4jService:
                r.starred AS starred, r.provider AS provider,
                r.model AS model, r.created_at AS created_at,
                r.category_focus AS category_focus,
-               r.technology_preferences AS technology_preferences
+               r.technology_preferences AS technology_preferences,
+               r.message_count AS message_count
         ORDER BY r.starred DESC, r.created_at DESC
         LIMIT $limit
         """
@@ -1216,6 +1286,7 @@ class Neo4jService:
                 row = dict(r)
                 row["starred"] = bool(row.get("starred"))
                 row["technology_preferences"] = row.get("technology_preferences") or []
+                row["message_count"] = row.get("message_count") or 0
                 results.append(row)
             return results
 
@@ -1315,14 +1386,58 @@ class Neo4jService:
         with self.session() as session:
             return session.run("MATCH (r:AdvisorReport) RETURN count(r) as c").single()["c"]
 
+    def append_messages(self, report_id: str, new_messages: list) -> Optional[dict]:
+        """Append new messages to a report's conversation and increment message_count."""
+        with self.session() as session:
+            # Read current messages
+            result = session.run(
+                "MATCH (r:AdvisorReport {id: $id}) RETURN r.messages_json AS mj, r.message_count AS mc",
+                id=report_id,
+            )
+            record = result.single()
+            if not record:
+                return None
+
+            existing_json = record["mj"] or "[]"
+            try:
+                existing = json.loads(existing_json)
+            except (json.JSONDecodeError, TypeError):
+                existing = []
+
+            existing.extend(new_messages)
+            new_count = (record["mc"] or 0) + len(new_messages)
+
+            # Write back
+            session.run(
+                """
+                MATCH (r:AdvisorReport {id: $id})
+                SET r.messages_json = $messages_json, r.message_count = $message_count
+                """,
+                id=report_id,
+                messages_json=json.dumps(existing),
+                message_count=new_count,
+            )
+
+        return self.get_report(report_id)
+
     def _deserialize_report(self, report: dict) -> dict:
-        """Deserialize result_json string back to dict."""
+        """Deserialize result_json and messages_json strings back to dicts/lists."""
         val = report.get("result_json")
         if isinstance(val, str):
             try:
                 report["result_json"] = json.loads(val)
             except (json.JSONDecodeError, TypeError):
                 report["result_json"] = {}
+        # Deserialize messages_json (backward compat: default to [])
+        msg_val = report.get("messages_json")
+        if isinstance(msg_val, str):
+            try:
+                report["messages_json"] = json.loads(msg_val)
+            except (json.JSONDecodeError, TypeError):
+                report["messages_json"] = []
+        elif msg_val is None:
+            report["messages_json"] = []
+        report["message_count"] = report.get("message_count") or len(report.get("messages_json", []))
         report["starred"] = bool(report.get("starred"))
         report["technology_preferences"] = report.get("technology_preferences") or []
         return report
@@ -1513,6 +1628,142 @@ class Neo4jService:
                 data["suggestions_json"] = []
         return data
 
+    # ── Legacy Import Analysis Persistence ────────────────────────────
+
+    def generate_legacy_analysis_id(self) -> str:
+        """Generate next sequential legacy analysis ID (LIA-001, LIA-002, ...)."""
+        query = "MATCH (l:LegacyImportAnalysis) RETURN l.id AS id ORDER BY l.id DESC LIMIT 1"
+        with self.session() as session:
+            record = session.run(query).single()
+        if record and record["id"]:
+            try:
+                num = int(record["id"].split("-")[-1]) + 1
+            except (ValueError, IndexError):
+                num = 1
+        else:
+            num = 1
+        return f"LIA-{num:03d}"
+
+    def save_legacy_analysis(self, data: dict) -> dict:
+        """Persist a LegacyImportAnalysis node."""
+        analysis_id = self.generate_legacy_analysis_id()
+        now = datetime.now(timezone.utc).isoformat()
+
+        props = {
+            "id": analysis_id,
+            "title": data.get("title", ""),
+            "filename": data.get("filename", ""),
+            "document_type": data.get("document_type", ""),
+            "page_count": data.get("page_count", 0),
+            "overview_json": json.dumps(data.get("overview", {})),
+            "entities_json": json.dumps(data.get("entities", {})),
+            "cross_references_json": json.dumps(data.get("cross_references", {})),
+            "summary_json": json.dumps(data.get("summary", {})),
+            "provider": data.get("provider", ""),
+            "model": data.get("model", ""),
+            "created_by": data.get("created_by", ""),
+            "messages_json": "[]",
+            "message_count": 0,
+            "created_at": now,
+        }
+        props = {k: v for k, v in props.items() if v is not None}
+        prop_str = ", ".join(f"{k}: ${k}" for k in props)
+        query = f"CREATE (l:LegacyImportAnalysis {{{prop_str}}}) RETURN l"
+
+        with self.session() as session:
+            result = session.run(query, **props)
+            return self._deserialize_legacy_analysis(dict(result.single()["l"]))
+
+    def get_legacy_analysis(self, analysis_id: str) -> Optional[dict]:
+        """Get a single legacy import analysis by ID (full data)."""
+        query = "MATCH (l:LegacyImportAnalysis {id: $id}) RETURN l"
+        with self.session() as session:
+            result = session.run(query, id=analysis_id)
+            record = result.single()
+            if not record:
+                return None
+            return self._deserialize_legacy_analysis(dict(record["l"]))
+
+    def list_legacy_analyses(self, limit: int = 50) -> list:
+        """List legacy analyses (without full JSON payloads), newest first."""
+        query = """
+        MATCH (l:LegacyImportAnalysis)
+        RETURN l.id AS id, l.title AS title, l.filename AS filename,
+               l.document_type AS document_type, l.page_count AS page_count,
+               l.summary_json AS summary_json,
+               l.provider AS provider, l.model AS model,
+               l.message_count AS message_count,
+               l.created_by AS created_by, l.created_at AS created_at
+        ORDER BY l.created_at DESC
+        LIMIT $limit
+        """
+        with self.session() as session:
+            records = session.run(query, limit=limit)
+            results = []
+            for r in records:
+                row = dict(r)
+                # Deserialize summary_json for list display
+                val = row.get("summary_json")
+                if isinstance(val, str):
+                    try:
+                        row["summary_json"] = json.loads(val)
+                    except (json.JSONDecodeError, TypeError):
+                        row["summary_json"] = {}
+                results.append(row)
+            return results
+
+    def delete_legacy_analysis(self, analysis_id: str) -> bool:
+        """Delete a single legacy import analysis."""
+        query = "MATCH (l:LegacyImportAnalysis {id: $id}) DELETE l RETURN count(l) as deleted"
+        with self.session() as session:
+            result = session.run(query, id=analysis_id)
+            return result.single()["deleted"] > 0
+
+    def update_legacy_analysis_chat(
+        self, analysis_id: str, messages_json: str, message_count: int
+    ):
+        """Update chat history on a legacy import analysis."""
+        with self.session() as session:
+            session.run(
+                """
+                MATCH (l:LegacyImportAnalysis {id: $id})
+                SET l.messages_json = $messages_json,
+                    l.message_count = $message_count
+                """,
+                id=analysis_id,
+                messages_json=messages_json,
+                message_count=message_count,
+            )
+
+    def update_legacy_analysis_entities(self, analysis_id: str, entities_json: str, summary_json: str):
+        """Update entities and summary on a legacy import analysis (after chat refinement)."""
+        with self.session() as session:
+            session.run(
+                """
+                MATCH (l:LegacyImportAnalysis {id: $id})
+                SET l.entities_json = $entities_json,
+                    l.summary_json = $summary_json
+                """,
+                id=analysis_id,
+                entities_json=entities_json,
+                summary_json=summary_json,
+            )
+
+    def _deserialize_legacy_analysis(self, data: dict) -> dict:
+        """Deserialize JSON string fields back to dicts/lists."""
+        json_fields = [
+            "overview_json", "entities_json", "cross_references_json",
+            "summary_json", "messages_json",
+        ]
+        for field in json_fields:
+            val = data.get(field)
+            if isinstance(val, str):
+                try:
+                    data[field] = json.loads(val)
+                except (json.JSONDecodeError, TypeError):
+                    data[field] = {} if field != "messages_json" else []
+        return data
+
     # --- Pattern Health Analysis ---
 
     def get_pattern_health(self, team_id: str = None) -> dict:
@@ -1533,46 +1784,9 @@ class Neo4jService:
             _team_where = ""
             _team_params = {}
 
-        # Per-type field definitions (actual Neo4j property names)
-        TYPE_FIELDS = {
-            "AB": {
-                "description": "Description",
-                "intent": "Intent",
-                "problem": "Problem",
-                "solution": "Solution",
-                "structural_elements": "Structural Elements",
-                "invariants": "Invariants",
-                "inter_element_contracts": "Contracts",
-                "related_patterns_text": "Related Patterns",
-                "related_adrs": "Related ADRs",
-                "building_blocks_note": "Building Blocks",
-            },
-            "ABB": {
-                "description": "Description",
-                "functionality": "Functionality",
-                "inbound_interfaces": "Inbound Interfaces",
-                "outbound_interfaces": "Outbound Interfaces",
-                "business_capabilities": "Business Capabilities",
-                "quality_attributes": "Quality Attributes",
-                "compliance_requirements": "Compliance Requirements",
-            },
-            "SBB": {
-                "description": "Description",
-                "specific_functionality": "Specific Functionality",
-                "inbound_interfaces": "Inbound Interfaces",
-                "outbound_interfaces": "Outbound Interfaces",
-                "sbb_mapping": "SBB Mapping",
-                "business_capabilities": "Business Capabilities",
-                "vendor": "Vendor",
-                "deployment_model": "Deployment Model",
-                "cost_tier": "Cost Tier",
-                "licensing": "Licensing",
-                "maturity": "Maturity",
-            },
-        }
-
-        # List fields (checked via size() > 0 rather than string non-empty)
-        LIST_FIELDS = {"business_capabilities", "sbb_mapping", "consumed_by_ids", "works_with_ids", "tags"}
+        # Use module-level constants for field definitions
+        TYPE_FIELDS = _TYPE_FIELDS
+        LIST_FIELDS = _COMPLETENESS_LIST_FIELDS
 
         with self.session() as session:
             # ── 1. Overall Counts ──
@@ -1919,6 +2133,106 @@ class Neo4jService:
 
         return health
 
+    # --- Dashboard Team Stats ---
+
+    def get_team_stats(self) -> dict:
+        """Aggregated per-team pattern statistics for the Dashboard comparison table.
+
+        Returns a dict with 'teams' (list of per-team stats) and 'unowned' (unowned pattern counts).
+        """
+        result = {"teams": [], "unowned": {}}
+
+        with self.session() as session:
+            # 1. Per-team counts in a single query
+            counts_q = """
+            MATCH (t:Team)
+            OPTIONAL MATCH (u:User)-[:MEMBER_OF]->(t)
+            OPTIONAL MATCH (p:Pattern)-[:OWNED_BY]->(t)
+            WITH t, count(DISTINCT u) AS member_count, collect(DISTINCT p) AS pats
+            RETURN t.id AS team_id, t.name AS team_name, t.description AS description,
+                   member_count,
+                   size(pats) AS total,
+                   size([x IN pats WHERE x.type = 'AB']) AS ab,
+                   size([x IN pats WHERE x.type = 'ABB']) AS abb,
+                   size([x IN pats WHERE x.type = 'SBB']) AS sbb,
+                   size([x IN pats WHERE x.status = 'ACTIVE']) AS active,
+                   size([x IN pats WHERE x.status = 'DRAFT']) AS draft,
+                   size([x IN pats WHERE x.status = 'DEPRECATED']) AS deprecated
+            ORDER BY t.name
+            """
+            team_rows = [dict(r) for r in session.run(counts_q)]
+
+            # 2. Per-team completeness — fetch patterns grouped by team
+            comp_q = """
+            MATCH (p:Pattern)-[:OWNED_BY]->(t:Team)
+            RETURN t.id AS team_id, collect(properties(p)) AS patterns
+            """
+            comp_map = {}
+            for row in session.run(comp_q):
+                team_id = row["team_id"]
+                patterns = row["patterns"]
+                if not patterns:
+                    comp_map[team_id] = 0.0
+                    continue
+                scores = []
+                for p in patterns:
+                    p_type = p.get("type")
+                    fields = _TYPE_FIELDS.get(p_type, {})
+                    if not fields:
+                        continue
+                    filled = 0
+                    for field_name in fields:
+                        val = p.get(field_name)
+                        if field_name in _COMPLETENESS_LIST_FIELDS:
+                            if val and (isinstance(val, list) and len(val) > 0):
+                                filled += 1
+                        else:
+                            if val and str(val).strip():
+                                filled += 1
+                    scores.append(filled / len(fields) * 100)
+                comp_map[team_id] = round(sum(scores) / len(scores), 1) if scores else 0.0
+
+            # 3. Assemble team entries
+            for row in team_rows:
+                result["teams"].append({
+                    "id": row["team_id"],
+                    "name": row["team_name"],
+                    "description": row.get("description") or "",
+                    "member_count": row["member_count"],
+                    "patterns": {
+                        "total": row["total"],
+                        "ab": row["ab"],
+                        "abb": row["abb"],
+                        "sbb": row["sbb"],
+                    },
+                    "status": {
+                        "active": row["active"],
+                        "draft": row["draft"],
+                        "deprecated": row["deprecated"],
+                    },
+                    "completeness_avg": comp_map.get(row["team_id"], 0.0),
+                })
+
+            # 4. Unowned patterns
+            unowned_q = """
+            MATCH (p:Pattern)
+            WHERE NOT EXISTS { (p)-[:OWNED_BY]->(:Team) }
+            RETURN count(p) AS total,
+                   count(CASE WHEN p.type = 'AB' THEN 1 END) AS ab,
+                   count(CASE WHEN p.type = 'ABB' THEN 1 END) AS abb,
+                   count(CASE WHEN p.type = 'SBB' THEN 1 END) AS sbb
+            """
+            unowned = session.run(unowned_q).single()
+            if unowned:
+                result["unowned"] = {
+                    "total": unowned["total"],
+                    "ab": unowned["ab"],
+                    "abb": unowned["abb"],
+                    "sbb": unowned["sbb"],
+                }
+
+        return result
+
     def get_pattern_library_summary(self, team_id: str = None) -> str:
         """Get a rich text summary of the pattern library for LLM analysis.
 
@@ -2111,6 +2425,393 @@ class Neo4jService:
                 pass
 
         return "\n".join(lines)
+
+    # --- Documents ---
+
+    def _next_document_id(self) -> str:
+        """Generate next sequential DOC-NNN id."""
+        query = """
+        MATCH (d:Document)
+        WHERE d.id STARTS WITH 'DOC-'
+        RETURN d.id AS id
+        ORDER BY d.id DESC
+        LIMIT 1
+        """
+        with self.session() as session:
+            record = session.run(query).single()
+        if record:
+            num_str = record["id"].split("-")[-1]
+            next_num = int(num_str) + 1
+        else:
+            next_num = 1
+        return f"DOC-{next_num:03d}"
+
+    def create_document(self, data: dict) -> dict:
+        """Create a new Document node with optional initial sections."""
+        doc_id = self._next_document_id()
+        now = datetime.now(timezone.utc).isoformat()
+
+        tags = data.get("tags", [])
+        if not isinstance(tags, list):
+            tags = []
+
+        props = {
+            "id": doc_id,
+            "title": data.get("title", "Untitled Document"),
+            "doc_type": data.get("doc_type", "guide"),
+            "status": data.get("status", "draft"),
+            "summary": data.get("summary", ""),
+            "tags": tags,
+            "created_by": data.get("created_by", ""),
+            "source_analysis_id": data.get("source_analysis_id", ""),
+            "created_date": now,
+            "updated_date": now,
+        }
+        props = {k: v for k, v in props.items() if v is not None}
+        prop_str = ", ".join(f"{k}: ${k}" for k in props)
+        query = f"CREATE (d:Document {{{prop_str}}}) RETURN d"
+
+        with self.session() as session:
+            result = session.run(query, **props)
+            doc = dict(result.single()["d"])
+
+        # Create initial sections if provided
+        sections = data.get("sections", [])
+        for idx, sec in enumerate(sections):
+            sec["order_index"] = idx
+            self.add_document_section(doc_id, sec)
+
+        # Link to source analysis if provided
+        source_id = data.get("source_analysis_id")
+        if source_id:
+            self.add_relationship(doc_id, source_id, "SOURCED_FROM")
+
+        # Assign to team if provided
+        team_id = data.get("team_id")
+        if team_id:
+            self.add_relationship(doc_id, team_id, "OWNED_BY")
+
+        return self.get_document(doc_id)
+
+    def get_document(self, doc_id: str) -> Optional[dict]:
+        """Get document with its sections and linked entities."""
+        query = "MATCH (d:Document {id: $id}) RETURN d"
+        with self.session() as session:
+            record = session.run(query, id=doc_id).single()
+            if not record:
+                return None
+            doc = dict(record["d"])
+
+        # Ensure tags is a list
+        tags = doc.get("tags")
+        if tags is None:
+            doc["tags"] = []
+        elif isinstance(tags, str):
+            try:
+                doc["tags"] = json.loads(tags)
+            except (json.JSONDecodeError, TypeError):
+                doc["tags"] = []
+
+        # Fetch sections ordered
+        sections_query = """
+        MATCH (d:Document {id: $id})-[:HAS_SECTION]->(s:DocumentSection)
+        RETURN s
+        ORDER BY s.order_index
+        """
+        with self.session() as session:
+            records = session.run(sections_query, id=doc_id)
+            doc["sections"] = [dict(r["s"]) for r in records]
+
+        # Fetch linked entities
+        links_query = """
+        MATCH (d:Document {id: $id})-[:REFERENCES]->(e)
+        RETURN e.id AS entity_id, e.name AS entity_name, labels(e)[0] AS entity_label
+        """
+        with self.session() as session:
+            records = session.run(links_query, id=doc_id)
+            doc["linked_entities"] = [
+                {"id": r["entity_id"], "name": r["entity_name"], "label": r["entity_label"]}
+                for r in records
+            ]
+
+        # Fetch team ownership
+        team_query = """
+        MATCH (d:Document {id: $id})-[:OWNED_BY]->(t:Team)
+        RETURN t.id AS team_id, t.name AS team_name
+        """
+        with self.session() as session:
+            team_rec = session.run(team_query, id=doc_id).single()
+            doc["team_id"] = team_rec["team_id"] if team_rec else None
+            doc["team_name"] = team_rec["team_name"] if team_rec else None
+
+        return doc
+
+    def list_documents(
+        self,
+        status: Optional[str] = None,
+        doc_type: Optional[str] = None,
+        search: Optional[str] = None,
+        team_id: Optional[str] = None,
+        skip: int = 0,
+        limit: int = 50,
+    ) -> tuple[list[dict], int]:
+        """List documents with optional filters, paginated."""
+        where_clauses = []
+        params: dict = {"skip": skip, "limit": limit}
+
+        if status:
+            where_clauses.append("d.status = $status")
+            params["status"] = status
+        if doc_type:
+            where_clauses.append("d.doc_type = $doc_type")
+            params["doc_type"] = doc_type
+        if search:
+            where_clauses.append("(toLower(d.title) CONTAINS toLower($search) OR toLower(d.summary) CONTAINS toLower($search))")
+            params["search"] = search
+        if team_id:
+            where_clauses.append("EXISTS { (d)-[:OWNED_BY]->(t:Team) WHERE t.id = $team_id }")
+            params["team_id"] = team_id
+
+        where = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+
+        count_query = f"MATCH (d:Document) {where} RETURN count(d) AS total"
+        data_query = f"""
+        MATCH (d:Document) {where}
+        OPTIONAL MATCH (d)-[:HAS_SECTION]->(s:DocumentSection)
+        OPTIONAL MATCH (d)-[:REFERENCES]->(e)
+        OPTIONAL MATCH (d)-[:OWNED_BY]->(team:Team)
+        RETURN d,
+               count(DISTINCT s) AS section_count,
+               count(DISTINCT e) AS link_count,
+               team.id AS team_id,
+               team.name AS team_name
+        ORDER BY d.updated_date DESC
+        SKIP $skip LIMIT $limit
+        """
+
+        with self.session() as session:
+            total = session.run(count_query, **params).single()["total"]
+            records = session.run(data_query, **params)
+            docs = []
+            for r in records:
+                doc = dict(r["d"])
+                tags = doc.get("tags")
+                if tags is None:
+                    doc["tags"] = []
+                elif isinstance(tags, str):
+                    try:
+                        doc["tags"] = json.loads(tags)
+                    except (json.JSONDecodeError, TypeError):
+                        doc["tags"] = []
+                doc["section_count"] = r["section_count"]
+                doc["link_count"] = r["link_count"]
+                doc["team_id"] = r["team_id"]
+                doc["team_name"] = r["team_name"]
+                docs.append(doc)
+        return docs, total
+
+    def update_document(self, doc_id: str, data: dict) -> Optional[dict]:
+        """Update document metadata fields."""
+        data["updated_date"] = datetime.now(timezone.utc).isoformat()
+        # Don't allow changing id
+        data.pop("id", None)
+        data.pop("created_date", None)
+
+        # Handle team assignment separately
+        team_id = data.pop("team_id", None)
+
+        if data:
+            set_clauses = ", ".join(f"d.{k} = ${k}" for k in data)
+            query = f"MATCH (d:Document {{id: $id}}) SET {set_clauses} RETURN d"
+            data["id"] = doc_id
+
+            with self.session() as session:
+                result = session.run(query, **data)
+                record = result.single()
+                if not record:
+                    return None
+
+        # Update team ownership if provided
+        if team_id is not None:
+            # Remove existing ownership
+            with self.session() as session:
+                session.run(
+                    "MATCH (d:Document {id: $id})-[r:OWNED_BY]->() DELETE r",
+                    id=doc_id,
+                )
+            # Set new team if not empty
+            if team_id:
+                self.add_relationship(doc_id, team_id, "OWNED_BY")
+
+        return self.get_document(doc_id)
+
+    def delete_document(self, doc_id: str) -> bool:
+        """Delete document and cascade-delete its sections."""
+        # Delete sections first
+        sec_query = """
+        MATCH (d:Document {id: $id})-[:HAS_SECTION]->(s:DocumentSection)
+        DETACH DELETE s
+        """
+        # Then delete the document
+        doc_query = "MATCH (d:Document {id: $id}) DETACH DELETE d RETURN count(d) AS deleted"
+
+        with self.session() as session:
+            session.run(sec_query, id=doc_id)
+            result = session.run(doc_query, id=doc_id)
+            return result.single()["deleted"] > 0
+
+    def document_exists(self, doc_id: str) -> bool:
+        query = "MATCH (d:Document {id: $id}) RETURN count(d) AS c"
+        with self.session() as session:
+            return session.run(query, id=doc_id).single()["c"] > 0
+
+    # --- Document Sections ---
+
+    def _next_section_id(self, doc_id: str) -> str:
+        """Generate next section ID like DOC-001-S01."""
+        query = """
+        MATCH (d:Document {id: $doc_id})-[:HAS_SECTION]->(s:DocumentSection)
+        RETURN s.id AS id
+        ORDER BY s.id DESC
+        LIMIT 1
+        """
+        with self.session() as session:
+            record = session.run(query, doc_id=doc_id).single()
+        if record:
+            # Extract SNN suffix
+            last_id = record["id"]
+            suffix = last_id.split("-S")[-1]
+            next_num = int(suffix) + 1
+        else:
+            next_num = 1
+        return f"{doc_id}-S{next_num:02d}"
+
+    def add_document_section(self, doc_id: str, section_data: dict) -> Optional[dict]:
+        """Add a new section to a document."""
+        section_id = self._next_section_id(doc_id)
+        now = datetime.now(timezone.utc).isoformat()
+
+        # Determine order_index: use provided or append at end
+        order_index = section_data.get("order_index")
+        if order_index is None:
+            count_query = """
+            MATCH (d:Document {id: $doc_id})-[:HAS_SECTION]->(s:DocumentSection)
+            RETURN count(s) AS c
+            """
+            with self.session() as session:
+                order_index = session.run(count_query, doc_id=doc_id).single()["c"]
+
+        props = {
+            "id": section_id,
+            "title": section_data.get("title", "New Section"),
+            "content": section_data.get("content", ""),
+            "order_index": order_index,
+            "created_date": now,
+            "updated_date": now,
+        }
+        prop_str = ", ".join(f"{k}: ${k}" for k in props)
+
+        query = f"""
+        MATCH (d:Document {{id: $doc_id}})
+        CREATE (s:DocumentSection {{{prop_str}}})
+        CREATE (d)-[:HAS_SECTION]->(s)
+        SET d.updated_date = $now
+        RETURN s
+        """
+        params = {**props, "doc_id": doc_id, "now": now}
+
+        with self.session() as session:
+            result = session.run(query, **params)
+            record = result.single()
+            return dict(record["s"]) if record else None
+
+    def update_document_section(self, section_id: str, data: dict) -> Optional[dict]:
+        """Update a section's title or content."""
+        data["updated_date"] = datetime.now(timezone.utc).isoformat()
+        data.pop("id", None)
+        data.pop("created_date", None)
+
+        set_clauses = ", ".join(f"s.{k} = ${k}" for k in data)
+        # Also bump parent document's updated_date
+        query = f"""
+        MATCH (d:Document)-[:HAS_SECTION]->(s:DocumentSection {{id: $id}})
+        SET {set_clauses}, d.updated_date = $updated_date
+        RETURN s
+        """
+        data["id"] = section_id
+
+        with self.session() as session:
+            result = session.run(query, **data)
+            record = result.single()
+            return dict(record["s"]) if record else None
+
+    def delete_document_section(self, section_id: str) -> bool:
+        """Delete a section and update parent document timestamp."""
+        query = """
+        MATCH (d:Document)-[:HAS_SECTION]->(s:DocumentSection {id: $id})
+        SET d.updated_date = $now
+        DETACH DELETE s
+        RETURN count(s) AS deleted
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        with self.session() as session:
+            result = session.run(query, id=section_id, now=now)
+            return result.single()["deleted"] > 0
+
+    def reorder_document_sections(self, doc_id: str, section_ids: list[str]) -> bool:
+        """Reorder sections by setting order_index based on position in section_ids list."""
+        query = """
+        MATCH (d:Document {id: $doc_id})-[:HAS_SECTION]->(s:DocumentSection {id: $sid})
+        SET s.order_index = $idx, d.updated_date = $now
+        RETURN count(s) AS updated
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        with self.session() as session:
+            for idx, sid in enumerate(section_ids):
+                session.run(query, doc_id=doc_id, sid=sid, idx=idx, now=now)
+        return True
+
+    # --- Document Linking ---
+
+    def link_document_to_entity(self, doc_id: str, entity_id: str, entity_label: str) -> bool:
+        """Create REFERENCES relationship from document to an entity, and reverse DOCUMENTED_BY."""
+        # Use label-safe approach: match by id across all node types
+        query = """
+        MATCH (d:Document {id: $doc_id})
+        MATCH (e {id: $entity_id})
+        MERGE (d)-[:REFERENCES]->(e)
+        MERGE (e)-[:DOCUMENTED_BY]->(d)
+        RETURN count(d) AS linked
+        """
+        with self.session() as session:
+            result = session.run(query, doc_id=doc_id, entity_id=entity_id)
+            return result.single()["linked"] > 0
+
+    def unlink_document_from_entity(self, doc_id: str, entity_id: str) -> bool:
+        """Remove REFERENCES and DOCUMENTED_BY relationships between document and entity."""
+        query = """
+        MATCH (d:Document {id: $doc_id})-[r1:REFERENCES]->(e {id: $entity_id})
+        DELETE r1
+        WITH d, e
+        OPTIONAL MATCH (e)-[r2:DOCUMENTED_BY]->(d)
+        DELETE r2
+        RETURN 1 AS done
+        """
+        with self.session() as session:
+            session.run(query, doc_id=doc_id, entity_id=entity_id)
+            return True
+
+    def get_documents_for_entity(self, entity_id: str) -> list[dict]:
+        """Get all documents linked to a specific entity (reverse lookup)."""
+        query = """
+        MATCH (d:Document)-[:REFERENCES]->(e {id: $entity_id})
+        RETURN d.id AS id, d.title AS title, d.doc_type AS doc_type,
+               d.status AS status, d.updated_date AS updated_date
+        ORDER BY d.updated_date DESC
+        """
+        with self.session() as session:
+            records = session.run(query, entity_id=entity_id)
+            return [dict(r) for r in records]
 
     # --- Bulk operations for seeding ---
 

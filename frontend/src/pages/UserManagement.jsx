@@ -17,7 +17,7 @@ const ROLE_COLORS = {
   viewer: 'bg-gray-500/20 text-gray-400 border-gray-500/30',
 }
 
-export default function UserManagement() {
+export default function UserManagement({ embedded = false }) {
   const { toast } = useToast()
   const [users, setUsers] = useState([])
   const [teams, setTeams] = useState([])
@@ -129,7 +129,7 @@ export default function UserManagement() {
 
   if (loading) {
     return (
-      <div className="max-w-5xl mx-auto space-y-6">
+      <div className={`${embedded ? '' : 'max-w-5xl mx-auto '}space-y-6`}>
         <div className="card overflow-hidden">
           <table className="w-full text-sm">
             <thead>
@@ -154,21 +154,33 @@ export default function UserManagement() {
   }
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
-      <div className="flex items-center gap-2 text-sm">
-        <Link to="/admin" className="text-gray-500 hover:text-gray-300 transition-colors">&larr; Admin</Link>
-        <span className="text-gray-700">/</span>
-        <span className="text-gray-400">Users</span>
-      </div>
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="page-title">User Management</h1>
-          <p className="page-subtitle">{users.length} user{users.length !== 1 ? 's' : ''}</p>
+    <div className={`${embedded ? '' : 'max-w-5xl mx-auto '}space-y-6`}>
+      {!embedded && (
+        <>
+          <div className="flex items-center gap-2 text-sm">
+            <Link to="/admin" className="text-gray-500 hover:text-gray-300 transition-colors">&larr; Admin</Link>
+            <span className="text-gray-700">/</span>
+            <span className="text-gray-400">Users</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="page-title">User Management</h1>
+              <p className="page-subtitle">{users.length} user{users.length !== 1 ? 's' : ''}</p>
+            </div>
+            <button onClick={startCreate} className="btn-primary">
+              + New User
+            </button>
+          </div>
+        </>
+      )}
+      {embedded && (
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-gray-400">{users.length} user{users.length !== 1 ? 's' : ''}</p>
+          <button onClick={startCreate} className="btn-primary">
+            + New User
+          </button>
         </div>
-        <button onClick={startCreate} className="btn-primary">
-          + New User
-        </button>
-      </div>
+      )}
 
       {error && (
         <div className="bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg px-4 py-3 text-sm">

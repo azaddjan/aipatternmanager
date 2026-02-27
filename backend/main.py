@@ -100,6 +100,9 @@ from routers.teams import router as teams_router
 from routers.pattern_health import router as pattern_health_router
 from routers.search import router as search_router
 from routers.audit import router as audit_router
+from routers.dashboard import router as dashboard_router
+from routers.legacy_import import router as legacy_import_router
+from routers.documents import router as documents_router
 
 app.include_router(auth_router)
 app.include_router(users_router)
@@ -116,6 +119,9 @@ app.include_router(advisor_router)
 app.include_router(pattern_health_router)
 app.include_router(search_router)
 app.include_router(audit_router)
+app.include_router(dashboard_router)
+app.include_router(legacy_import_router)
+app.include_router(documents_router)
 
 # Serve uploaded images
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/app/uploads")

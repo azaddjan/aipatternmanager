@@ -1,5 +1,6 @@
 import os
 import logging
+from typing import AsyncIterator
 
 from ollama import AsyncClient
 
@@ -39,3 +40,20 @@ class OllamaProvider(BaseLLMProvider):
         )
         content = response["message"]["content"]
         return {"content": content, "provider": self.name, "model": model}
+
+    async def generate_stream(
+        self, system_prompt: str, user_prompt: str, model: str | None = None
+    ) -> AsyncIterator[str]:
+        model = model or self.DEFAULT_MODEL
+        stream = await self.client.chat(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            stream=True,
+        )
+        async for chunk in stream:
+            content = chunk.get("message", {}).get("content", "")
+            if content:
+                yield content

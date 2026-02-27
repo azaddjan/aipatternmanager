@@ -6,20 +6,16 @@ import { useToast } from './Toast'
 
 const NAV_ITEMS = [
   { to: '/',             icon: '📊', label: 'Dashboard' },
-  { to: '/patterns',     icon: '🧩', label: 'Patterns' },
-  { to: '/graph',        icon: '🕸️', label: 'Graph Explorer' },
-  { to: '/technologies', icon: '⚙️', label: 'Technologies' },
   { to: '/pbcs',         icon: '📦', label: 'Business Capabilities' },
-  { to: '/discovery',    icon: '🔍', label: 'Pattern Discovery' },
+  { to: '/patterns',     icon: '🧩', label: 'Patterns' },
+  { to: '/technologies', icon: '⚙️', label: 'Technologies' },
+  { to: '/documents',    icon: '📄', label: 'Documents' },
   { to: '/advisor',      icon: '🧠', label: 'Pattern Advisor' },
-  { to: '/health',       icon: '🏥', label: 'Pattern Health' },
   { to: '/impact',       icon: '💥', label: 'Impact Analysis' },
 ]
 
 const ADMIN_ITEMS = [
   { to: '/admin',        icon: '🛠️', label: 'Admin' },
-  { to: '/admin/users',  icon: '👥', label: 'Users' },
-  { to: '/admin/teams',  icon: '🏢', label: 'Teams' },
 ]
 
 const ROLE_LABELS = {

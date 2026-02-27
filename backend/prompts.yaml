@@ -303,6 +303,7 @@ advisor:
           "id": "ABB-XXX-NNN",
           "name": "ABB Name",
           "role": "What role this ABB plays in the solution",
+          "restrictions_note": "Any usage restrictions from the catalog, or null",
           "confidence": "HIGH or MEDIUM or LOW"
         }}
       ],
@@ -327,6 +328,7 @@ advisor:
               "name": "SBB Name",
               "strengths": ["strength 1", "strength 2"],
               "weaknesses": ["weakness 1"],
+              "restrictions_note": "Any usage restrictions from the catalog, or null",
               "best_for": "Scenario where this SBB is the best choice"
             }}
           ],
@@ -358,7 +360,10 @@ advisor:
     - For SBB comparisons, compare SBBs that implement the SAME ABB or serve similar purposes
     - In architecture_composition, explain the DEPENDENCY CHAIN: PBC → ABB → SBB → Technology
     - platform_gaps should describe capabilities NOT in the catalog that would help solve the problem
-    - If a pattern has restrictions, include them in restrictions_note
+    - RESTRICTIONS: If any recommended ABB or SBB has a RESTRICTIONS field in the catalog, you MUST:
+      1. Copy it into the restrictions_note field of that recommendation
+      2. Mention the restriction in architecture_composition if it affects the overall design
+      3. Factor restrictions into sbb_comparisons as a weakness when comparing SBBs
     - Return ONLY the JSON object, nothing else
 
 
@@ -439,6 +444,65 @@ advisor_clarify:
       existing infrastructure, compliance needs, performance requirements, deployment model
     - Do NOT ask obvious questions whose answers are implied by the problem
     - Return ONLY the JSON object, nothing else
+
+
+# --- Advisor Follow-up Conversation ---
+
+advisor_followup:
+
+  system: |
+    You are an expert Enterprise AI Architect continuing a follow-up conversation about a
+    pattern analysis you previously provided.
+
+    Your pattern framework includes:
+    - PBC (Packaged Business Capability): Deployable business-facing units
+    - ABB (Architecture Building Block): Vendor-neutral logical capabilities
+    - SBB (Solution Building Block): Vendor-specific implementations
+    - Technology: Specific products, services, or frameworks
+
+    Categories: core (Core AI/LLM), intg (Integration), agt (Agents), kr (Knowledge & Retrieval),
+    xcut (Cross-Cutting), pip (Platform Integration), blueprint (Architecture Topology).
+
+    RESPONSE FORMAT:
+    - Respond in **markdown** (NOT JSON)
+    - Reference pattern IDs when relevant (ABB-xxx, SBB-xxx, PBC-xxx)
+    - Be concise but thorough — focus on answering the specific follow-up question
+    - Draw on your initial analysis context to provide consistent, informed answers
+    - If the question is outside the scope of architecture patterns, gently redirect
+
+    After your markdown response, add a separator line and a JSON metadata block:
+
+    ---
+    ```json
+    {{"should_continue": true}}
+    ```
+
+    Set "should_continue" to:
+    - **true** if the user's question opens genuinely new topics worth exploring,
+      or if your answer naturally invites further discussion
+    - **false** if you've fully addressed the question and the conversation has reached
+      a natural conclusion point
+
+  user: |
+    ## Original Problem
+    {original_problem}
+
+    ## Analysis Summary
+    {analysis_summary}
+
+    ## Key Context from Analysis
+    {context_summary}
+
+    ## Conversation History ({message_count} messages so far)
+    {conversation_history}
+
+    ---
+
+    ## Follow-up Question
+    {followup_question}
+
+    Please answer this follow-up question in the context of the original analysis.
+    Reference specific patterns by ID where relevant.
 
 
 # --- AI Field Assist (per-field editing + smart actions) ---
@@ -761,3 +825,313 @@ technology_assist:
     }}
 
     Focus on the most impactful improvements first. Maximum 5 recommendations.
+
+
+# --- Legacy Document Import (AI-assisted pattern migration) ---
+
+legacy_import:
+
+  system: |
+    You are an expert Enterprise Architect analyzing legacy architecture documents to extract
+    structured pattern data for a TOGAF-aligned pattern management system.
+
+    You work within a pattern framework with these entity types:
+
+    1. AB (Architecture Blueprint/Topology): High-level structural foundation defining planes,
+       boundaries, principles, governance, and reference architecture. NOT a composable block —
+       it frames the environment in which ABBs and SBBs operate.
+       Key fields: intent, problem, solution, structural_elements, invariants,
+       inter_element_contracts, related_patterns_text, related_adrs.
+
+    2. ABB (Architecture Building Block): Vendor-neutral, logical capabilities — the "what".
+       Multiple SBBs can implement one ABB. ABBs NEVER reference specific vendors or products.
+       Key fields: functionality, quality_attributes, inbound_interfaces, outbound_interfaces,
+       business_capabilities.
+
+    3. SBB (Solution Building Block): Vendor-specific implementations — the "how".
+       Each SBB implements one or more ABBs and links to concrete technologies.
+       Key fields: specific_functionality, vendor, deployment_model, cost_tier, licensing,
+       maturity, sbb_mapping, inbound_interfaces, outbound_interfaces.
+
+    4. Technology: Specific products, services, or frameworks (e.g., Apigee, Okta, AWS SQS).
+       Fields: name, vendor, category, description, cost_tier.
+
+    5. PBC (Packaged Business Capability): Deployable business-facing units that compose ABBs.
+       Fields: name, description, abb_ids.
+
+    Relationship types:
+    - IMPLEMENTS: SBB → ABB
+    - COMPOSES: PBC → ABB
+    - USES: SBB → Technology (primary dependency)
+    - COMPATIBLE_WITH: SBB → Technology (alternative)
+    - DEPENDS_ON: Pattern → Pattern (structural dependency)
+    - REFERENCES: Pattern → Pattern (informational cross-reference)
+    - CONSTRAINED_BY: Pattern → Pattern (governance constraint)
+
+    Categories: core (Core AI/LLM), intg (Integration), agt (Agents), kr (Knowledge & Retrieval),
+    xcut (Cross-Cutting), pip (Platform Integration), blueprint (Architecture Topology).
+
+    You must return structured JSON output matching the schema requested. Do NOT return markdown.
+
+  overview: |
+    Analyze this architecture document and identify its structure and type.
+
+    The content below is a structural preview spanning the full document.
+    Ensure your sections array covers ALL pages from start to end, not just the beginning.
+    Every page in the document should be accounted for in at least one section.
+
+    {content_block}
+
+    Return ONLY a valid JSON object (no other text, no markdown, no code fences):
+    {{
+      "document_type": "AB or ABB or SBB or mixed or other",
+      "confidence": "HIGH or MEDIUM or LOW",
+      "title": "Document title",
+      "author": "Author name if found, or empty string",
+      "version": "Version if found, or empty string",
+      "status": "Document status if found (e.g., Draft, Published), or empty string",
+      "original_id": "Any pattern/document ID found in the document, or empty string",
+      "pages_analyzed": "e.g., 1-8 of 8 — indicate which pages the sections cover vs total page count",
+      "sections": [
+        {{
+          "name": "Section name",
+          "page_range": "e.g., 1-2",
+          "description": "Brief description of this section's content",
+          "entity_hints": "What entities might be extractable from this section (e.g., technologies, sub-patterns)"
+        }}
+      ],
+      "summary": "2-3 sentence summary of the document's purpose and scope",
+      "classification_reasoning": "Why you classified this as AB/ABB/SBB/mixed/other"
+    }}
+
+  extract: |
+    Extract ALL identifiable architecture entities from this document.
+
+    {content_block}
+
+    ## Document Overview (from prior analysis)
+    {overview_json}
+
+    ## Existing Catalog Context
+    {catalog_context}
+
+    Extract every identifiable entity and return ONLY a valid JSON object (no other text):
+    {{
+      "primary_pattern": {{
+        "suggested_type": "AB or ABB or SBB",
+        "confidence": "HIGH or MEDIUM or LOW",
+        "classification_reasoning": "Why you chose this type over alternatives — reference specific evidence from the document",
+        "alternative_classifications": [
+          {{
+            "type": "The alternative type (AB, ABB, or SBB) you considered",
+            "reasoning": "Why this alternative could also be valid",
+            "why_rejected": "Why the primary classification is preferred"
+          }}
+        ],
+        "name": "Pattern name",
+        "suggested_category": "category code (core, intg, agt, kr, xcut, pip, blueprint)",
+        "fields": {{
+          // For AB: intent, problem, solution, structural_elements, invariants,
+          //         inter_element_contracts, related_patterns_text, related_adrs, description, tags
+          // For ABB: functionality, quality_attributes, inbound_interfaces,
+          //          outbound_interfaces, business_capabilities, description, tags
+          // For SBB: specific_functionality, vendor, deployment_model, cost_tier,
+          //          licensing, maturity, sbb_mapping, description, tags
+        }}
+      }},
+      "sub_patterns": [
+        {{
+          "suggested_type": "ABB or SBB",
+          "confidence": "HIGH or MEDIUM or LOW",
+          "name": "Sub-pattern name",
+          "source_section": "Which section of the document this came from",
+          "suggested_category": "category code",
+          "fields": {{
+            // Same field structure as above, based on type
+          }},
+          "reasoning": "Why this should be a separate pattern entity",
+          "alternative_type": "If this could be classified differently, state the type and why (or null if classification is clear)"
+        }}
+      ],
+      "technologies": [
+        {{
+          "name": "Technology name",
+          "vendor": "Vendor name",
+          "category": "cloud-compute|cloud-ai|cloud-data|cloud-infra|framework|saas|observability|database",
+          "description": "Brief description of role in this document",
+          "role_in_document": "How this technology is used in the pattern (e.g., API Gateway, Identity Provider)",
+          "cost_tier": "FREE|LOW|MEDIUM|HIGH or empty if unknown"
+        }}
+      ],
+      "business_capabilities": [
+        {{
+          "name": "Capability name",
+          "description": "Description of this business capability",
+          "source_section": "Which section this was derived from",
+          "related_patterns": ["Names of patterns that compose this capability"]
+        }}
+      ],
+      "relationships": [
+        {{
+          "source_name": "Source entity name",
+          "target_name": "Target entity name",
+          "type": "REFERENCES or USES or IMPLEMENTS or COMPOSES or DEPENDS_ON or CONSTRAINED_BY",
+          "reasoning": "Why this relationship exists"
+        }}
+      ],
+      "skipped_content": [
+        {{
+          "content_description": "What was found but not extracted as an entity",
+          "source_pages": "Page range or section name where this content appears",
+          "reason_skipped": "Why this was not modeled as a separate entity",
+          "could_be_entity": true,
+          "suggested_action": "What the reviewer could do (e.g., split into SBBs, add as sub-pattern, enrich primary ABB fields)"
+        }}
+      ],
+      "extraction_notes": "Any remaining caveats or uncertainties not covered by skipped_content"
+    }}
+
+    Requirements:
+    - Extract EVERY technology product or service mentioned by name
+    - Identify sub-patterns that could be standalone ABBs or SBBs
+    - For governance sections, consider if they map to PBC business capabilities
+    - For reference architecture diagrams, extract the architectural layers as structural_elements
+    - Fill ALL applicable fields with substantive content from the document
+    - Tags should be 5-10 lowercase, hyphenated strings
+    - Business capabilities should represent deployable functional units, not just topics
+    - Include reasoning for each sub-pattern explaining why it should be separate
+    - For primary_pattern, ALWAYS provide classification_reasoning and at least one alternative_classifications entry explaining what other type was considered
+    - For sub_patterns, if classification is ambiguous, note the alternative_type
+    - If you encounter substantive architectural content (implementation patterns, reference flows, deployment models, configuration guidelines, security stacks, governance matrices, etc.) that you chose NOT to extract as separate entities, add it to skipped_content with an explanation. This is critical for reviewer transparency — nothing should be silently dropped
+
+  chat: |
+    You are continuing a conversation about a legacy document analysis with an admin user.
+
+    ## Document Overview
+    {overview_json}
+
+    ## Currently Extracted Entities
+    {entities_json}
+
+    ## Cross-Reference Results
+    {cross_references_json}
+
+    ## Conversation History
+    {conversation_history}
+
+    ## Admin's Message
+    {message}
+
+    Respond to the admin's question or request about the analysis. You can:
+    - Explain why entities were classified a certain way
+    - Suggest reclassifications based on the admin's feedback
+    - Recommend splitting or merging entities
+    - Identify additional entities that were missed
+    - Discuss how extracted entities relate to existing catalog items
+
+    Respond in **markdown** format for readability.
+
+    If the admin's feedback requires changes to the extracted entities, append a separator
+    and a JSON update block:
+
+    ---ENTITY_UPDATE---
+    ```json
+    {{
+      "updates": [
+        {{
+          "action": "modify|add|remove",
+          "entity_type": "primary_pattern|sub_pattern|technology|business_capability",
+          "entity_name": "Name of the entity",
+          "changes": {{
+            // Modified fields for "modify", full entity for "add", empty for "remove"
+          }}
+        }}
+      ]
+    }}
+    ```
+
+    If no entity changes are needed, just respond with markdown — no update block.
+
+  judge: |
+    You are a quality reviewer evaluating an AI-generated architecture entity extraction.
+    Your job is to score the extraction across 5 dimensions and identify specific issues.
+
+    ## Document Overview
+    {overview_json}
+
+    ## Extracted Entities
+    {entities_json}
+
+    ## Original Document Content
+    {content_block}
+
+    Score each dimension from 1 (terrible) to 10 (perfect). Be strict — a score of 7 means
+    "acceptable but could be better", 8 means "good", 9+ means "excellent".
+
+    Scoring criteria:
+    - classification: Does the primary type (AB/ABB/SBB) match the document? Are sub-patterns
+      typed correctly? Is vendor-neutral content labeled ABB (not SBB) and vice versa?
+      Does the classification_reasoning convincingly justify the choice?
+    - coverage: Compare the overview sections against extracted entities — are there sections
+      with no corresponding entities? Are later pages represented? For image-based docs,
+      were diagrams and tables interpreted? Content from ALL pages should be accounted for.
+    - completeness: Are entity fields populated with substantive content, or are they vague
+      one-liners? Are interfaces, quality attributes, and relationships fully described?
+    - relationships: Are all logical dependencies captured? Are relationship types correct per
+      TOGAF rules (ABBs should not have direct USES relationships to technologies)?
+    - skipped_handling: Was substantive unextracted content properly flagged in skipped_content?
+      Or was content silently dropped with no trace? Every major section of the document
+      should have produced either an entity or a skipped_content entry.
+
+    Return ONLY a valid JSON object (no other text, no markdown, no code fences):
+    {{
+      "scores": {{
+        "classification": 0,
+        "coverage": 0,
+        "completeness": 0,
+        "relationships": 0,
+        "skipped_handling": 0
+      }},
+      "overall": 0.0,
+      "critiques": [
+        {{
+          "dimension": "the dimension name",
+          "score": 0,
+          "issue": "Specific description of the problem found",
+          "fix_instruction": "Concrete, actionable instruction on how to fix it"
+        }}
+      ],
+      "pass": false
+    }}
+
+    Set pass=true ONLY when ALL dimension scores >= 7 AND overall >= 7.0.
+    The overall score is the average of all 5 dimension scores.
+    Only include critiques for dimensions with score < 7.
+
+  critic: |
+    You are refining an architecture entity extraction based on quality review feedback.
+    Fix ONLY the specific issues identified below. Preserve everything else unchanged.
+
+    ## Document Overview
+    {overview_json}
+
+    ## Current Extracted Entities (to be refined)
+    {entities_json}
+
+    ## Original Document Content
+    {content_block}
+
+    ## Quality Review Critiques (fix these)
+    {critiques_json}
+
+    Return ONLY a valid JSON object with the COMPLETE corrected entities (same schema as
+    the extraction output — primary_pattern, sub_patterns, technologies, business_capabilities,
+    relationships, skipped_content, extraction_notes). Include ALL entities, not just changed ones.
+
+    Requirements:
+    - Fix ONLY the areas identified in the critiques
+    - Preserve all entities and fields that were not criticized
+    - If a critique says coverage is lacking, add new entities or skipped_content entries for the missing sections
+    - If a critique says classification is wrong, change the suggested_type and update classification_reasoning
+    - If a critique says content was silently dropped, add appropriate skipped_content entries
+    - Update extraction_notes to describe what was changed in this refinement pass

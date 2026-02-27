@@ -5,7 +5,7 @@ import ConfirmModal from '../components/ConfirmModal'
 import { useToast } from '../components/Toast'
 import { SkeletonTableRow } from '../components/Skeleton'
 
-export default function TeamManagement() {
+export default function TeamManagement({ embedded = false }) {
   const { toast } = useToast()
   const [teams, setTeams] = useState([])
   const [loading, setLoading] = useState(true)
@@ -97,7 +97,7 @@ export default function TeamManagement() {
 
   if (loading) {
     return (
-      <div className="max-w-5xl mx-auto space-y-6">
+      <div className={`${embedded ? '' : 'max-w-5xl mx-auto '}space-y-6`}>
         <div className="card overflow-hidden">
           <table className="w-full text-sm">
             <thead>
@@ -120,21 +120,33 @@ export default function TeamManagement() {
   }
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
-      <div className="flex items-center gap-2 text-sm">
-        <Link to="/admin" className="text-gray-500 hover:text-gray-300 transition-colors">&larr; Admin</Link>
-        <span className="text-gray-700">/</span>
-        <span className="text-gray-400">Teams</span>
-      </div>
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="page-title">Team Management</h1>
-          <p className="page-subtitle">{teams.length} team{teams.length !== 1 ? 's' : ''}</p>
+    <div className={`${embedded ? '' : 'max-w-5xl mx-auto '}space-y-6`}>
+      {!embedded && (
+        <>
+          <div className="flex items-center gap-2 text-sm">
+            <Link to="/admin" className="text-gray-500 hover:text-gray-300 transition-colors">&larr; Admin</Link>
+            <span className="text-gray-700">/</span>
+            <span className="text-gray-400">Teams</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="page-title">Team Management</h1>
+              <p className="page-subtitle">{teams.length} team{teams.length !== 1 ? 's' : ''}</p>
+            </div>
+            <button onClick={startCreate} className="btn-primary">
+              + New Team
+            </button>
+          </div>
+        </>
+      )}
+      {embedded && (
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-gray-400">{teams.length} team{teams.length !== 1 ? 's' : ''}</p>
+          <button onClick={startCreate} className="btn-primary">
+            + New Team
+          </button>
         </div>
-        <button onClick={startCreate} className="btn-primary">
-          + New Team
-        </button>
-      </div>
+      )}
 
       {error && (
         <div className="bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg px-4 py-3 text-sm">

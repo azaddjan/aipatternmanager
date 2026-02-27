@@ -120,6 +120,7 @@ export function fetchPatterns(params = {}) {
   if (params.type) qs.set('type', params.type)
   if (params.category) qs.set('category', params.category)
   if (params.status) qs.set('status', params.status)
+  if (params.team_ids) qs.set('team_ids', params.team_ids)
   if (params.skip != null) qs.set('skip', params.skip)
   if (params.limit != null) qs.set('limit', params.limit)
   const query = qs.toString()
@@ -264,8 +265,9 @@ export function fetchImpactAnalysis(id) {
   return request(`/graph/impact/${id}`)
 }
 
-export function fetchCoverage() {
-  return request('/graph/coverage')
+export function fetchCoverage(teamId = null) {
+  const params = teamId ? `?team_id=${encodeURIComponent(teamId)}` : ''
+  return request(`/graph/coverage${params}`)
 }
 
 // --- AI ---
@@ -435,6 +437,52 @@ export function analyzePattern(data) {
   return request('/advisor/analyze', { method: 'POST', body: JSON.stringify(data) })
 }
 
+export async function analyzePatternStream(data, onProgress) {
+  const url = `${BASE_URL}/advisor/analyze-stream`
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-cache',
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(error.detail || `Analysis failed: ${res.status}`)
+  }
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let finalResult = null
+  let buffer = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() // keep incomplete line in buffer
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue
+      try {
+        const event = JSON.parse(line.slice(6))
+        if (event.type === 'progress' && onProgress) {
+          onProgress(event)
+        } else if (event.type === 'complete') {
+          finalResult = event.result
+        } else if (event.type === 'error') {
+          throw new Error(event.message)
+        }
+      } catch (e) {
+        if (e.message && !e.message.includes('JSON')) throw e
+      }
+    }
+  }
+  return finalResult
+}
+
 export function clarifyProblem(data) {
   return request('/advisor/clarify', { method: 'POST', body: JSON.stringify(data) })
 }
@@ -474,6 +522,13 @@ export function deleteAllAdvisorReports() {
 
 export function cleanupAdvisorReports() {
   return request('/advisor/reports/cleanup', { method: 'POST' })
+}
+
+export function sendAdvisorFollowup(reportId, data) {
+  return request(`/advisor/reports/${encodeURIComponent(reportId)}/followup`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
 }
 
 export function advisorReportExportHtmlUrl(id) {
@@ -614,6 +669,12 @@ export async function fetchTeams() {
   return res.teams || res
 }
 
+// --- Dashboard ---
+
+export function fetchTeamStats() {
+  return request('/dashboard/team-stats')
+}
+
 export function fetchTeam(id) {
   return request(`/teams/${encodeURIComponent(id)}`)
 }
@@ -682,6 +743,161 @@ export function fetchAuditLogs(params = {}) {
 
 export function fetchEntityHistory(entityType, entityId, limit = 20) {
   return request(`/audit/entity/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}?limit=${limit}`)
+}
+
+// --- Legacy Document Import (Admin) ---
+
+export function uploadAndAnalyzeLegacy(file) {
+  // Returns a fetch Response for SSE streaming — caller must handle EventSource-style reading
+  const formData = new FormData()
+  formData.append('file', file)
+  const token = localStorage.getItem('pm_access_token')
+  return fetch(`${BASE_URL}/admin/legacy-import/upload-and-analyze`, {
+    method: 'POST',
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: formData,
+  })
+}
+
+export function listLegacyAnalyses(limit = 50) {
+  return request(`/admin/legacy-import/analyses?limit=${limit}`)
+}
+
+export function getLegacyAnalysis(id) {
+  return request(`/admin/legacy-import/analyses/${encodeURIComponent(id)}`)
+}
+
+export function deleteLegacyAnalysis(id) {
+  return request(`/admin/legacy-import/analyses/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export function chatLegacyAnalysis(id, message) {
+  return request(`/admin/legacy-import/analyses/${encodeURIComponent(id)}/chat`, {
+    method: 'POST',
+    body: JSON.stringify({ message }),
+  })
+}
+
+export function chatLegacyAnalysisStream(id, message, onToken) {
+  const token = getStoredToken()
+  const abortController = new AbortController()
+
+  const promise = (async () => {
+    const res = await fetch(`${BASE_URL}/admin/legacy-import/analyses/${encodeURIComponent(id)}/chat-stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ message }),
+      signal: abortController.signal,
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }))
+      throw new Error(err.detail || `Chat stream failed: ${res.status}`)
+    }
+
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop()
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        try {
+          const event = JSON.parse(line.slice(6))
+          if (event.type === 'token') {
+            onToken(event.content)
+          } else if (event.type === 'error') {
+            throw new Error(event.message)
+          }
+          // 'done' event — stream complete
+        } catch (e) {
+          if (e.message && !e.message.includes('JSON')) throw e
+        }
+      }
+    }
+  })()
+
+  promise.abort = () => abortController.abort()
+  return promise
+}
+
+// --- Documents ---
+
+export function listDocuments(params = {}) {
+  const qs = new URLSearchParams()
+  if (params.status) qs.set('status', params.status)
+  if (params.doc_type) qs.set('doc_type', params.doc_type)
+  if (params.search) qs.set('search', params.search)
+  if (params.team_id) qs.set('team_id', params.team_id)
+  if (params.skip != null) qs.set('skip', params.skip)
+  if (params.limit != null) qs.set('limit', params.limit)
+  const query = qs.toString()
+  return request(`/documents${query ? `?${query}` : ''}`)
+}
+
+export function getDocument(id) {
+  return request(`/documents/${encodeURIComponent(id)}`)
+}
+
+export function createDocument(data) {
+  return request('/documents', { method: 'POST', body: JSON.stringify(data) })
+}
+
+export function updateDocument(id, data) {
+  return request(`/documents/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(data) })
+}
+
+export function deleteDocument(id) {
+  return request(`/documents/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export function addDocumentSection(docId, data) {
+  return request(`/documents/${encodeURIComponent(docId)}/sections`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
+export function updateDocumentSection(docId, sectionId, data) {
+  return request(`/documents/${encodeURIComponent(docId)}/sections/${encodeURIComponent(sectionId)}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  })
+}
+
+export function deleteDocumentSection(docId, sectionId) {
+  return request(`/documents/${encodeURIComponent(docId)}/sections/${encodeURIComponent(sectionId)}`, {
+    method: 'DELETE',
+  })
+}
+
+export function reorderDocumentSections(docId, sectionIds) {
+  return request(`/documents/${encodeURIComponent(docId)}/sections/reorder`, {
+    method: 'PUT',
+    body: JSON.stringify({ section_ids: sectionIds }),
+  })
+}
+
+export function linkDocumentEntity(docId, entityId, entityLabel) {
+  return request(`/documents/${encodeURIComponent(docId)}/links`, {
+    method: 'POST',
+    body: JSON.stringify({ entity_id: entityId, entity_label: entityLabel }),
+  })
+}
+
+export function unlinkDocumentEntity(docId, entityId) {
+  return request(`/documents/${encodeURIComponent(docId)}/links/${encodeURIComponent(entityId)}`, {
+    method: 'DELETE',
+  })
 }
 
 // --- System ---

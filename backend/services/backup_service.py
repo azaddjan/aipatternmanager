@@ -43,6 +43,7 @@ class BackupService:
             "categories": len(data.get("categories", [])),
             "advisor_reports": len(data.get("advisor_reports", [])),
             "health_analyses": len(data.get("health_analyses", [])),
+            "discovery_analyses": len(data.get("discovery_analyses", [])),
         }
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M")
@@ -70,6 +71,7 @@ class BackupService:
             "categories": data.get("categories", []),
             "advisor_reports": data.get("advisor_reports", []),
             "health_analyses": data.get("health_analyses", []),
+            "discovery_analyses": data.get("discovery_analyses", []),
         }
 
         filepath = os.path.join(BACKUPS_DIR, filename)
