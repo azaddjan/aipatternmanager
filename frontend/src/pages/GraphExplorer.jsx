@@ -6,7 +6,7 @@ import GraphView from '../components/GraphView'
 
 const FILTER_OPTIONS = [
   { value: '', label: 'All' },
-  { value: 'AB', label: 'AB (Topology)' },
+  { value: 'AB', label: 'AB (Conceptual)' },
   { value: 'ABB', label: 'ABB (Logical)' },
   { value: 'SBB', label: 'SBB (Physical)' },
   { value: 'Technology', label: 'Technologies' },
@@ -14,7 +14,7 @@ const FILTER_OPTIONS = [
 
 const CATEGORY_OPTIONS = [
   { value: '', label: 'All Categories' },
-  { value: 'blueprint', label: 'Architecture Topology' },
+  { value: 'blueprint', label: 'Architecture Blueprint' },
   { value: 'core', label: 'Core AI/LLM' },
   { value: 'intg', label: 'Integration' },
   { value: 'agt', label: 'Agents' },

@@ -9,6 +9,7 @@ import {
   aiSmartAction, fetchTeams,
 } from '../api/client'
 import AIFieldAssist from '../components/AIFieldAssist'
+import MarkdownContent from '../components/MarkdownContent'
 import { useAuth } from '../contexts/AuthContext'
 import ConfirmModal from '../components/ConfirmModal'
 
@@ -22,6 +23,84 @@ const TYPE_DESCRIPTIONS = {
 
 // Business capabilities are now loaded from PBC database (not hardcoded)
 
+const SparkleIcon = () => (
+  <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
+    <path d="M10 2a.75.75 0 01.69.46l1.52 3.56 3.56 1.52a.75.75 0 010 1.38l-3.56 1.52-1.52 3.56a.75.75 0 01-1.38 0L7.79 10.44 4.23 8.92a.75.75 0 010-1.38l3.56-1.52L9.31 2.46A.75.75 0 0110 2z" />
+  </svg>
+)
+
+const Spinner = ({ text }) => (
+  <span className="flex items-center gap-1.5">
+    <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24" fill="none">
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z" />
+    </svg>
+    {text}
+  </span>
+)
+
+function PatternAIPromptBox({ onRun, loading, result, onClear, error }) {
+  const [prompt, setPrompt] = useState('')
+  const [expanded, setExpanded] = useState(true)
+
+  return (
+    <div className="card border border-purple-500/20">
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-sm font-semibold text-purple-400 flex items-center gap-1.5">
+          <SparkleIcon /> AI Assistant
+        </h3>
+        <div className="flex items-center gap-2">
+          {result && onClear && (
+            <button onClick={() => { onClear(); setPrompt('') }} className="text-xs text-gray-500 hover:text-red-400 transition-colors">
+              Clear
+            </button>
+          )}
+          <button onClick={() => setExpanded(!expanded)} className="text-xs text-gray-500 hover:text-gray-300 transition-colors">
+            {expanded ? 'Collapse' : 'Expand'}
+          </button>
+        </div>
+      </div>
+      {expanded && (
+        <>
+          <div className="flex gap-2 mb-3">
+            <input
+              value={prompt}
+              onChange={e => setPrompt(e.target.value)}
+              placeholder="Ask anything about this pattern — architecture advice, TOGAF compliance, field suggestions..."
+              className="input flex-1 text-sm"
+              onKeyDown={e => e.key === 'Enter' && onRun(prompt)}
+            />
+            <button
+              onClick={() => onRun(prompt)}
+              disabled={loading || !prompt.trim()}
+              className="px-4 py-1.5 text-sm rounded-lg bg-purple-600/30 text-purple-300 hover:bg-purple-600/50 disabled:opacity-50 transition-colors flex items-center gap-1.5"
+            >
+              {loading ? <Spinner text="Generating..." /> : (<><SparkleIcon /> Generate</>)}
+            </button>
+          </div>
+          {error && (
+            <div className="bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg px-3 py-2 text-xs mb-3">
+              {error}
+            </div>
+          )}
+          {result && (
+            <div className="bg-gray-900/50 rounded-lg px-3 py-2 max-h-64 overflow-y-auto">
+              <MarkdownContent content={typeof result === 'string' ? result : JSON.stringify(result, null, 2)} />
+              <div className="flex gap-2 mt-2">
+                <button onClick={() => { onClear(); setPrompt('') }} className="px-3 py-1 text-xs rounded bg-gray-700 text-gray-400 hover:bg-gray-600 transition-colors">
+                  Clear
+                </button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+      {!expanded && (
+        <p className="text-xs text-gray-600">Click &quot;Expand&quot; to use AI to generate or improve content.</p>
+      )}
+    </div>
+  )
+}
 
 export default function PatternEditor() {
   const { id } = useParams()
@@ -505,6 +584,10 @@ export default function PatternEditor() {
   const [smartResult, setSmartResult] = useState(null) // { action, data }
   const [smartError, setSmartError] = useState('')
 
+  // --- Custom AI Prompt state ---
+  const [customLoading, setCustomLoading] = useState(false)
+  const [customResult, setCustomResult] = useState(null) // markdown text
+
   const handleSmartAction = async (action) => {
     setSmartLoading(action)
     setSmartError('')
@@ -553,6 +636,26 @@ export default function PatternEditor() {
       else if (field === 'deprecation_note') setDeprecationNote(content)
     }
     setSmartResult(null)
+  }
+
+  const handleCustomAI = async (prompt) => {
+    if (!prompt.trim()) return
+    setCustomLoading(true)
+    setCustomResult(null)
+    setSmartError('')
+    try {
+      const res = await aiSmartAction({
+        action: 'custom',
+        custom_prompt: prompt.trim(),
+        pattern_context: buildPatternContext(),
+        pattern_type: form.type,
+        pattern_id: id || null,
+      })
+      setCustomResult(res.result?.text || res.result)
+    } catch (err) {
+      setSmartError(err.message)
+    }
+    setCustomLoading(false)
   }
 
   // --- Category Overview Panel (collapsible) ---
@@ -1003,247 +1106,218 @@ export default function PatternEditor() {
         <div className="bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg px-4 py-3 text-sm">{aiError}</div>
       )}
 
-      {/* AI Assistance */}
-      <div className="card border border-purple-500/20">
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-sm font-semibold text-purple-400 flex items-center gap-1.5">
-            <span>&#10024;</span> AI Assistance
-          </h2>
-          <div className="flex items-center gap-2">
-            {smartResult && (
-              <button onClick={() => setSmartResult(null)} className="text-xs text-gray-500 hover:text-red-400 transition-colors">Clear</button>
-            )}
-            {smartLoading && (
-              <span className="text-xs text-purple-300 flex items-center gap-1.5">
-                <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z" /></svg>
-                Running {smartLoading.replace('_', ' ')}...
-              </span>
-            )}
-          </div>
-        </div>
+      {/* AI Assistant — Prompt Box (matches TechnologyDetail style) */}
+      <PatternAIPromptBox
+        onRun={handleCustomAI}
+        loading={customLoading}
+        result={customResult}
+        onClear={() => setCustomResult(null)}
+        error={smartError}
+      />
 
-        <div className="flex flex-wrap gap-2 mb-3">
+      {/* Quick AI Actions */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs text-gray-600 font-medium">Quick Actions</span>
+        {[
+          { action: 'auto_tags',              label: 'Auto Tags',     icon: '\u{1F3F7}' },
+          { action: 'generate_description',   label: 'Description',   icon: '\u{1F4C4}' },
+          { action: 'suggest_relationships',  label: 'Relationships', icon: '\u{1F517}' },
+          { action: 'quality_check',          label: 'Quality Check', icon: '\u2705' },
+          { action: 'auto_fill_empty',        label: 'Fill Empty',    icon: '\u{1F527}' },
+        ].map(({ action, label, icon }) => (
           <button
-            onClick={() => handleSmartAction('auto_tags')}
-            disabled={!!smartLoading}
-            className="px-3 py-1.5 text-xs rounded-lg bg-purple-600/20 text-purple-300 hover:bg-purple-600/40 disabled:opacity-40 transition-colors border border-purple-500/20"
+            key={action}
+            onClick={() => handleSmartAction(action)}
+            disabled={!!smartLoading || customLoading}
+            className="px-3 py-1 text-xs rounded-full bg-gray-800 border border-gray-700 text-gray-400 hover:border-purple-500/30 hover:text-purple-400 disabled:opacity-40 transition-colors flex items-center gap-1"
           >
-            &#127991; Auto Tags
+            {smartLoading === action ? (
+              <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z" /></svg>
+            ) : (
+              <span>{icon}</span>
+            )}
+            {label}
           </button>
-          <button
-            onClick={() => handleSmartAction('generate_description')}
-            disabled={!!smartLoading}
-            className="px-3 py-1.5 text-xs rounded-lg bg-purple-600/20 text-purple-300 hover:bg-purple-600/40 disabled:opacity-40 transition-colors border border-purple-500/20"
-          >
-            &#128196; Description
-          </button>
-          <button
-            onClick={() => handleSmartAction('suggest_relationships')}
-            disabled={!!smartLoading}
-            className="px-3 py-1.5 text-xs rounded-lg bg-purple-600/20 text-purple-300 hover:bg-purple-600/40 disabled:opacity-40 transition-colors border border-purple-500/20"
-          >
-            &#128279; Relationships
-          </button>
-          <button
-            onClick={() => handleSmartAction('quality_check')}
-            disabled={!!smartLoading}
-            className="px-3 py-1.5 text-xs rounded-lg bg-purple-600/20 text-purple-300 hover:bg-purple-600/40 disabled:opacity-40 transition-colors border border-purple-500/20"
-          >
-            &#9989; Quality Check
-          </button>
-          <button
-            onClick={() => handleSmartAction('auto_fill_empty')}
-            disabled={!!smartLoading}
-            className="px-3 py-1.5 text-xs rounded-lg bg-purple-600/20 text-purple-300 hover:bg-purple-600/40 disabled:opacity-40 transition-colors border border-purple-500/20"
-          >
-            &#128295; Fill Empty
-          </button>
-        </div>
-
-        {smartError && (
-          <div className="bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg px-3 py-2 text-xs">
-            {smartError}
-          </div>
-        )}
-
-        {/* Smart Action Results */}
-        {smartResult && smartResult.action === 'auto_tags' && Array.isArray(smartResult.data) && (
-          <div className="mt-3 p-3 bg-gray-900/50 rounded-lg">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs text-gray-400 font-medium">Suggested Tags</span>
-              <button onClick={() => applyAutoTags(smartResult.data)} className="px-3 py-1 text-xs rounded bg-purple-600/30 text-purple-300 hover:bg-purple-600/50 transition-colors">
-                Add All
-              </button>
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {smartResult.data.map(tag => (
-                <button
-                  key={tag}
-                  onClick={() => {
-                    if (!tags.includes(tag)) setTags([...tags, tag])
-                  }}
-                  className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${
-                    tags.includes(tag)
-                      ? 'bg-blue-500/15 text-blue-400 border-blue-500/30'
-                      : 'bg-gray-700/50 text-gray-300 border-gray-600 hover:bg-purple-500/15 hover:text-purple-400 hover:border-purple-500/30'
-                  }`}
-                >
-                  {tags.includes(tag) ? '\u2713 ' : '+ '}{tag}
-                </button>
-              ))}
-            </div>
-            <button onClick={() => setSmartResult(null)} className="px-3 py-1 text-xs rounded bg-gray-700 text-gray-400 hover:bg-gray-600 transition-colors mt-2">
-              Clear
-            </button>
-          </div>
-        )}
-
-        {smartResult && smartResult.action === 'generate_description' && (
-          <div className="mt-3 p-3 bg-gray-900/50 rounded-lg">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs text-gray-400 font-medium">Generated Description</span>
-            </div>
-            <p className="text-sm text-gray-200 mb-2">{smartResult.data.description}</p>
-            <div className="flex gap-2">
-              <button onClick={() => applyDescription(smartResult.data.description)} className="px-3 py-1 text-xs rounded bg-purple-600/30 text-purple-300 hover:bg-purple-600/50 transition-colors">
-                Apply
-              </button>
-              <button onClick={() => setSmartResult(null)} className="px-3 py-1 text-xs rounded bg-gray-700 text-gray-400 hover:bg-gray-600 transition-colors">
-                Clear
-              </button>
-            </div>
-          </div>
-        )}
-
-        {smartResult && smartResult.action === 'suggest_relationships' && (
-          <div className="mt-3 p-3 bg-gray-900/50 rounded-lg">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs text-gray-400 font-medium">Suggested Relationships</span>
-            </div>
-            {smartResult.data.depends_on?.length > 0 && (
-              <div className="mb-2">
-                <span className="text-xs text-cyan-400 font-semibold">DEPENDS_ON:</span>
-                {smartResult.data.depends_on.map(r => (
-                  <div key={r.id} className="flex items-center gap-2 mt-1 ml-2">
-                    <button
-                      onClick={() => {
-                        if (!selectedDeps.includes(r.id)) setSelectedDeps([...selectedDeps, r.id])
-                      }}
-                      className={`text-xs px-2 py-0.5 rounded border transition-colors ${
-                        selectedDeps.includes(r.id)
-                          ? 'bg-green-500/15 text-green-400 border-green-500/30'
-                          : 'bg-gray-700/50 text-gray-300 border-gray-600 hover:bg-cyan-500/15 hover:text-cyan-400'
-                      }`}
-                    >
-                      {selectedDeps.includes(r.id) ? '\u2713 ' : '+ '}{r.id}
-                    </button>
-                    <span className="text-xs text-gray-400">{r.name} — {r.reason}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-            {smartResult.data.references?.length > 0 && (
-              <div className="mb-2">
-                <span className="text-xs text-cyan-400 font-semibold">REFERENCES:</span>
-                {smartResult.data.references.map(r => (
-                  <div key={r.id} className="flex items-center gap-2 mt-1 ml-2">
-                    <span className="text-xs font-mono text-gray-300">{r.id}</span>
-                    <span className="text-xs text-gray-400">{r.name} — {r.reason}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-            {smartResult.data.reasoning && (
-              <p className="text-xs text-gray-500 mt-2 italic">{smartResult.data.reasoning}</p>
-            )}
-            <button onClick={() => setSmartResult(null)} className="px-3 py-1 text-xs rounded bg-gray-700 text-gray-400 hover:bg-gray-600 transition-colors mt-2">
-              Clear
-            </button>
-          </div>
-        )}
-
-        {smartResult && smartResult.action === 'quality_check' && (
-          <div className="mt-3 p-3 bg-gray-900/50 rounded-lg">
-            <div className="flex items-center gap-4 mb-3">
-              <div className="text-center">
-                <div className={`quality-score quality-grade-${smartResult.data.grade || 'C'}`}>
-                  {smartResult.data.score || 0}
-                </div>
-                <div className="text-xs text-gray-500">Score</div>
-              </div>
-              <div className={`text-2xl font-bold quality-grade-${smartResult.data.grade || 'C'}`}>
-                {smartResult.data.grade || '?'}
-              </div>
-            </div>
-            {smartResult.data.strengths?.length > 0 && (
-              <div className="mb-2">
-                <span className="text-xs text-green-400 font-semibold">Strengths:</span>
-                {smartResult.data.strengths.map((s, i) => (
-                  <div key={i} className="text-xs text-gray-300 ml-2 mt-0.5">&#10003; {s}</div>
-                ))}
-              </div>
-            )}
-            {smartResult.data.issues?.length > 0 && (
-              <div className="mb-2">
-                <span className="text-xs text-amber-400 font-semibold">Issues:</span>
-                {smartResult.data.issues.map((issue, i) => (
-                  <div key={i} className="flex items-center gap-2 ml-2 mt-0.5">
-                    <span className={`text-xs px-1.5 py-0.5 rounded ${
-                      issue.severity === 'HIGH' ? 'bg-red-500/15 text-red-400'
-                      : issue.severity === 'MEDIUM' ? 'bg-amber-500/15 text-amber-400'
-                      : 'bg-gray-700 text-gray-400'
-                    }`}>{issue.severity}</span>
-                    <span className="text-xs text-gray-300">{issue.field}: {issue.message}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-            {smartResult.data.suggestions?.length > 0 && (
-              <div className="mb-2">
-                <span className="text-xs text-blue-400 font-semibold">Suggestions:</span>
-                {smartResult.data.suggestions.map((s, i) => (
-                  <div key={i} className="text-xs text-gray-300 ml-2 mt-0.5">&#8226; {s}</div>
-                ))}
-              </div>
-            )}
-            <button onClick={() => setSmartResult(null)} className="px-3 py-1 text-xs rounded bg-gray-700 text-gray-400 hover:bg-gray-600 transition-colors mt-2">
-              Clear
-            </button>
-          </div>
-        )}
-
-        {smartResult && smartResult.action === 'auto_fill_empty' && typeof smartResult.data === 'object' && (
-          <div className="mt-3 p-3 bg-gray-900/50 rounded-lg">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs text-gray-400 font-medium">Generated Content for Empty Fields</span>
-              <button onClick={() => applyAutoFill(smartResult.data)} className="px-3 py-1 text-xs rounded bg-purple-600/30 text-purple-300 hover:bg-purple-600/50 transition-colors">
-                Apply All
-              </button>
-            </div>
-            <div className="space-y-2 max-h-64 overflow-y-auto">
-              {Object.entries(smartResult.data).map(([field, content]) => (
-                <div key={field} className="border border-gray-700/50 rounded p-2">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs font-mono text-purple-400">{field}</span>
-                    <button
-                      onClick={() => {
-                        applyAutoFill({ [field]: content })
-                      }}
-                      className="text-xs text-purple-400 hover:text-purple-300"
-                    >
-                      Apply
-                    </button>
-                  </div>
-                  <p className="text-xs text-gray-300 line-clamp-3">{String(content).slice(0, 200)}{String(content).length > 200 ? '...' : ''}</p>
-                </div>
-              ))}
-            </div>
-            <button onClick={() => setSmartResult(null)} className="px-3 py-1 text-xs rounded bg-gray-700 text-gray-400 hover:bg-gray-600 transition-colors mt-2">
-              Clear
-            </button>
-          </div>
-        )}
+        ))}
       </div>
+
+      {/* Smart Action Results */}
+      {smartResult && smartResult.action === 'auto_tags' && Array.isArray(smartResult.data) && (
+        <div className="p-3 bg-gray-900/50 rounded-lg border border-gray-800">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs text-gray-400 font-medium">Suggested Tags</span>
+            <button onClick={() => applyAutoTags(smartResult.data)} className="px-3 py-1 text-xs rounded bg-purple-600/30 text-purple-300 hover:bg-purple-600/50 transition-colors">
+              Add All
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {smartResult.data.map(tag => (
+              <button
+                key={tag}
+                onClick={() => {
+                  if (!tags.includes(tag)) setTags([...tags, tag])
+                }}
+                className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${
+                  tags.includes(tag)
+                    ? 'bg-blue-500/15 text-blue-400 border-blue-500/30'
+                    : 'bg-gray-700/50 text-gray-300 border-gray-600 hover:bg-purple-500/15 hover:text-purple-400 hover:border-purple-500/30'
+                }`}
+              >
+                {tags.includes(tag) ? '\u2713 ' : '+ '}{tag}
+              </button>
+            ))}
+          </div>
+          <button onClick={() => setSmartResult(null)} className="px-3 py-1 text-xs rounded bg-gray-700 text-gray-400 hover:bg-gray-600 transition-colors mt-2">
+            Clear
+          </button>
+        </div>
+      )}
+
+      {smartResult && smartResult.action === 'generate_description' && (
+        <div className="p-3 bg-gray-900/50 rounded-lg border border-gray-800">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs text-gray-400 font-medium">Generated Description</span>
+          </div>
+          <p className="text-sm text-gray-200 mb-2">{smartResult.data.description}</p>
+          <div className="flex gap-2">
+            <button onClick={() => applyDescription(smartResult.data.description)} className="px-3 py-1 text-xs rounded bg-purple-600/30 text-purple-300 hover:bg-purple-600/50 transition-colors">
+              Apply
+            </button>
+            <button onClick={() => setSmartResult(null)} className="px-3 py-1 text-xs rounded bg-gray-700 text-gray-400 hover:bg-gray-600 transition-colors">
+              Clear
+            </button>
+          </div>
+        </div>
+      )}
+
+      {smartResult && smartResult.action === 'suggest_relationships' && (
+        <div className="p-3 bg-gray-900/50 rounded-lg border border-gray-800">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs text-gray-400 font-medium">Suggested Relationships</span>
+          </div>
+          {smartResult.data.depends_on?.length > 0 && (
+            <div className="mb-2">
+              <span className="text-xs text-cyan-400 font-semibold">DEPENDS_ON:</span>
+              {smartResult.data.depends_on.map(r => (
+                <div key={r.id} className="flex items-center gap-2 mt-1 ml-2">
+                  <button
+                    onClick={() => {
+                      if (!selectedDeps.includes(r.id)) setSelectedDeps([...selectedDeps, r.id])
+                    }}
+                    className={`text-xs px-2 py-0.5 rounded border transition-colors ${
+                      selectedDeps.includes(r.id)
+                        ? 'bg-green-500/15 text-green-400 border-green-500/30'
+                        : 'bg-gray-700/50 text-gray-300 border-gray-600 hover:bg-cyan-500/15 hover:text-cyan-400'
+                    }`}
+                  >
+                    {selectedDeps.includes(r.id) ? '\u2713 ' : '+ '}{r.id}
+                  </button>
+                  <span className="text-xs text-gray-400">{r.name} — {r.reason}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {smartResult.data.references?.length > 0 && (
+            <div className="mb-2">
+              <span className="text-xs text-cyan-400 font-semibold">REFERENCES:</span>
+              {smartResult.data.references.map(r => (
+                <div key={r.id} className="flex items-center gap-2 mt-1 ml-2">
+                  <span className="text-xs font-mono text-gray-300">{r.id}</span>
+                  <span className="text-xs text-gray-400">{r.name} — {r.reason}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {smartResult.data.reasoning && (
+            <p className="text-xs text-gray-500 mt-2 italic">{smartResult.data.reasoning}</p>
+          )}
+          <button onClick={() => setSmartResult(null)} className="px-3 py-1 text-xs rounded bg-gray-700 text-gray-400 hover:bg-gray-600 transition-colors mt-2">
+            Clear
+          </button>
+        </div>
+      )}
+
+      {smartResult && smartResult.action === 'quality_check' && (
+        <div className="p-3 bg-gray-900/50 rounded-lg border border-gray-800">
+          <div className="flex items-center gap-4 mb-3">
+            <div className="text-center">
+              <div className={`quality-score quality-grade-${smartResult.data.grade || 'C'}`}>
+                {smartResult.data.score || 0}
+              </div>
+              <div className="text-xs text-gray-500">Score</div>
+            </div>
+            <div className={`text-2xl font-bold quality-grade-${smartResult.data.grade || 'C'}`}>
+              {smartResult.data.grade || '?'}
+            </div>
+          </div>
+          {smartResult.data.strengths?.length > 0 && (
+            <div className="mb-2">
+              <span className="text-xs text-green-400 font-semibold">Strengths:</span>
+              {smartResult.data.strengths.map((s, i) => (
+                <div key={i} className="text-xs text-gray-300 ml-2 mt-0.5">&#10003; {s}</div>
+              ))}
+            </div>
+          )}
+          {smartResult.data.issues?.length > 0 && (
+            <div className="mb-2">
+              <span className="text-xs text-amber-400 font-semibold">Issues:</span>
+              {smartResult.data.issues.map((issue, i) => (
+                <div key={i} className="flex items-center gap-2 ml-2 mt-0.5">
+                  <span className={`text-xs px-1.5 py-0.5 rounded ${
+                    issue.severity === 'HIGH' ? 'bg-red-500/15 text-red-400'
+                    : issue.severity === 'MEDIUM' ? 'bg-amber-500/15 text-amber-400'
+                    : 'bg-gray-700 text-gray-400'
+                  }`}>{issue.severity}</span>
+                  <span className="text-xs text-gray-300">{issue.field}: {issue.message}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {smartResult.data.suggestions?.length > 0 && (
+            <div className="mb-2">
+              <span className="text-xs text-blue-400 font-semibold">Suggestions:</span>
+              {smartResult.data.suggestions.map((s, i) => (
+                <div key={i} className="text-xs text-gray-300 ml-2 mt-0.5">&#8226; {s}</div>
+              ))}
+            </div>
+          )}
+          <button onClick={() => setSmartResult(null)} className="px-3 py-1 text-xs rounded bg-gray-700 text-gray-400 hover:bg-gray-600 transition-colors mt-2">
+            Clear
+          </button>
+        </div>
+      )}
+
+      {smartResult && smartResult.action === 'auto_fill_empty' && typeof smartResult.data === 'object' && (
+        <div className="p-3 bg-gray-900/50 rounded-lg border border-gray-800">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs text-gray-400 font-medium">Generated Content for Empty Fields</span>
+            <button onClick={() => applyAutoFill(smartResult.data)} className="px-3 py-1 text-xs rounded bg-purple-600/30 text-purple-300 hover:bg-purple-600/50 transition-colors">
+              Apply All
+            </button>
+          </div>
+          <div className="space-y-2 max-h-64 overflow-y-auto">
+            {Object.entries(smartResult.data).map(([field, content]) => (
+              <div key={field} className="border border-gray-700/50 rounded p-2">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-mono text-purple-400">{field}</span>
+                  <button
+                    onClick={() => {
+                      applyAutoFill({ [field]: content })
+                    }}
+                    className="text-xs text-purple-400 hover:text-purple-300"
+                  >
+                    Apply
+                  </button>
+                </div>
+                <p className="text-xs text-gray-300 line-clamp-3">{String(content).slice(0, 200)}{String(content).length > 200 ? '...' : ''}</p>
+              </div>
+            ))}
+          </div>
+          <button onClick={() => setSmartResult(null)} className="px-3 py-1 text-xs rounded bg-gray-700 text-gray-400 hover:bg-gray-600 transition-colors mt-2">
+            Clear
+          </button>
+        </div>
+      )}
 
       {/* Metadata */}
       <div className="card">

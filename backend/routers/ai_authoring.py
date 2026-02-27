@@ -91,6 +91,7 @@ async def smart_action(request: AISmartActionRequest, _user=Depends(get_current_
         pattern_type=request.pattern_type.value,
         pattern_id=request.pattern_id,
         db=db,
+        custom_prompt=request.custom_prompt,
         provider_name=request.provider.value if request.provider else None,
         model=request.model,
     )

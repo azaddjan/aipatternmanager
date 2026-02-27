@@ -21,7 +21,7 @@ const CAT_LABELS = {
   kr: 'Knowledge & Retrieval',
   xcut: 'Cross-Cutting',
   pip: 'Platform Integration',
-  blueprint: 'Architecture Topology',
+  blueprint: 'Architecture Blueprint',
 }
 
 export default function PatternDiscovery() {

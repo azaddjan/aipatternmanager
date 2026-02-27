@@ -105,7 +105,7 @@ export default function Dashboard() {
       {/* Stat Cards */}
       <div className="grid grid-cols-5 gap-4">
         <StatCard label="Total Patterns" value={patterns.length} color="blue" />
-        <StatCard label="AB (Topology)" value={abCount} color="orange" />
+        <StatCard label="AB (Conceptual)" value={abCount} color="orange" />
         <StatCard label="ABB (Logical)" value={abbCount} color="blue" />
         <StatCard label="SBB (Physical)" value={sbbCount} color="green" />
         <StatCard label="PBCs" value={health?.pbc_count || 0} color="purple" />

@@ -31,6 +31,7 @@ Thumbs.db
 # Backups
 backups/*.zip
 backups/*.json
+backups/*.json.gz
 
 # Runtime settings (contains masked keys)
 backend/settings.json

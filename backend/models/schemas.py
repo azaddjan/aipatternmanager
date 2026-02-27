@@ -364,6 +364,7 @@ class AISmartAction(str, Enum):
     SUGGEST_RELATIONSHIPS = "suggest_relationships"
     QUALITY_CHECK = "quality_check"
     AUTO_FILL_EMPTY = "auto_fill_empty"
+    CUSTOM = "custom"
 
 
 class AISmartActionRequest(BaseModel):
@@ -372,5 +373,6 @@ class AISmartActionRequest(BaseModel):
     pattern_context: dict
     pattern_type: PatternType
     pattern_id: Optional[str] = None
+    custom_prompt: Optional[str] = None
     provider: Optional[LLMProvider] = None
     model: Optional[str] = None

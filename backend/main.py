@@ -44,6 +44,10 @@ async def lifespan(app: FastAPI):
         from services.auth_service import seed_admin_user
         seed_admin_user()
 
+        # Seed sample data if database is empty (first boot)
+        from seed_sample_data import seed_if_empty
+        seed_if_empty(db_service)
+
         # Auto-embed any nodes missing embeddings (background thread)
         def _startup_embed():
             try:

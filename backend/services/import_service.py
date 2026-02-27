@@ -26,7 +26,7 @@ REQUIRED_USER_FIELDS = {"id", "email"}
 VALID_PATTERN_TYPES = {"AB", "ABB", "SBB"}
 VALID_STATUSES = {"DRAFT", "REVIEW", "ACTIVE", "DEPRECATED", "Draft", "Review", "Active", "Deprecated"}
 VALID_TECH_STATUSES = {"Candidate", "APPROVED", "DEPRECATED", "EXPERIMENTAL", "Approved", "Deprecated", "Experimental"}
-VALID_ROLES = {"admin", "editor", "viewer"}
+VALID_ROLES = {"admin", "editor", "viewer", "team_member"}
 
 
 def validate_backup_schema(data: dict) -> list:
@@ -440,16 +440,16 @@ class ImportService:
             # 4. Categories
             if "categories" in include and "categories" in data:
                 self._import_categories(data["categories"], stats)
-            # 5. Patterns
-            if "patterns" in include and "patterns" in data:
-                self._import_patterns(data["patterns"], stats)
-            # 6. OWNED_BY restoration (only if both teams and patterns included)
-            if "teams" in include and "patterns" in include and "patterns" in data:
-                self._restore_owned_by(data["patterns"], stats)
-            # 7. Technologies
+            # 5. Technologies (before patterns — patterns may USES technologies)
             if "technologies" in include and "technologies" in data:
                 self._import_technologies(data["technologies"], stats)
-            # 8. PBCs
+            # 6. Patterns (after technologies so USES relationships can resolve)
+            if "patterns" in include and "patterns" in data:
+                self._import_patterns(data["patterns"], stats)
+            # 7. OWNED_BY restoration (only if both teams and patterns included)
+            if "teams" in include and "patterns" in include and "patterns" in data:
+                self._restore_owned_by(data["patterns"], stats)
+            # 8. PBCs (after patterns so COMPOSES relationships can resolve)
             if "pbcs" in include and "pbcs" in data:
                 self._import_pbcs(data["pbcs"], stats)
             # 9. Advisor Reports
@@ -771,16 +771,16 @@ class ImportService:
                 stats["errors"].append(f"Technology '{t.get('id', '?')}': {e}")
 
     def _import_pbcs(self, pbcs: list, stats: dict):
-        """Import PBCs."""
+        """Import PBCs and their COMPOSES relationships to ABBs."""
         for pbc in pbcs:
             try:
+                abb_ids = pbc.get("abb_ids", [])
                 pbc_data = {
                     "id": pbc["id"],
                     "name": pbc.get("name", ""),
                     "description": pbc.get("description", ""),
                     "status": pbc.get("status", "Draft"),
                     "api_endpoint": pbc.get("api_endpoint", ""),
-                    "abb_ids": pbc.get("abb_ids", []),
                 }
                 existing = self.db.get_pbc(pbc_data["id"])
                 if existing:
@@ -788,6 +788,11 @@ class ImportService:
                 else:
                     self.db.create_pbc(pbc_data)
                 stats["pbcs_imported"] += 1
+
+                # Create COMPOSES relationships (PBC → ABBs)
+                if abb_ids:
+                    self.db._replace_pbc_composes(pbc_data["id"], abb_ids)
+                    stats["relationships_imported"] += len(abb_ids)
             except Exception as e:
                 stats["errors"].append(f"PBC '{pbc.get('id', '?')}': {e}")
 

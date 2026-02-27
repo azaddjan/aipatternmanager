@@ -405,6 +405,16 @@ export function restoreBackup(filename) {
   return request(`/admin/backups/${encodeURIComponent(filename)}/restore`, { method: 'POST' })
 }
 
+// --- Database Reset ---
+
+export function resetSampleData() {
+  return request('/admin/reset-sample-data?confirm=true', { method: 'POST' })
+}
+
+export function resetEmpty() {
+  return request('/admin/reset-empty?confirm=true', { method: 'POST' })
+}
+
 // --- System Status ---
 
 export function fetchSystemStatus() {

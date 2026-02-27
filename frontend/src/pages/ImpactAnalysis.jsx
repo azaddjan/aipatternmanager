@@ -100,7 +100,7 @@ function SearchableSelect({ items, value, onChange, placeholder, renderItem, ren
 const CAT_LABELS = {
   core: 'Core AI/LLM', intg: 'Integration', agt: 'Agents',
   kr: 'Knowledge & Retrieval', xcut: 'Cross-Cutting',
-  pip: 'Platform Integration', blueprint: 'Architecture Topology',
+  pip: 'Platform Integration', blueprint: 'Architecture Blueprint',
 }
 
 /* ── Risk level helper ── */

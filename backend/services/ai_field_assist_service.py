@@ -295,6 +295,7 @@ async def smart_action(
     pattern_type: str,
     pattern_id: Optional[str],
     db: Neo4jService,
+    custom_prompt: Optional[str] = None,
     provider_name: Optional[str] = None,
     model: Optional[str] = None,
 ) -> dict:
@@ -356,6 +357,19 @@ async def smart_action(
             relationship_context=relationship_context,
         )
 
+    elif action == "custom":
+        if not custom_prompt:
+            raise ValueError("custom_prompt is required for the custom action")
+        user_prompt = (
+            f"You are an expert TOGAF architecture assistant. "
+            f"The user is working on a {pattern_type} pattern.\n\n"
+            f"## Current Pattern Context\n{pattern_summary}\n\n"
+            f"{relationship_context}\n\n"
+            f"## User Question\n{custom_prompt}\n\n"
+            f"Provide a helpful, detailed answer in Markdown format. "
+            f"Reference specific fields, relationships, and TOGAF best practices where relevant."
+        )
+
     else:
         raise ValueError(f"Unknown smart action: {action}")
 
@@ -365,7 +379,10 @@ async def smart_action(
     raw_content = result.get("content", "").strip()
 
     # Parse response based on action type
-    if action == "generate_description":
+    if action == "custom":
+        # Return markdown text directly
+        parsed = {"text": raw_content}
+    elif action == "generate_description":
         # Plain text response
         content = raw_content
         # Strip markdown fences

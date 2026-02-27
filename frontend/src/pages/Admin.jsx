@@ -5,6 +5,7 @@ import {
   exportHtmlUrl, exportPptxUrl, exportDocxUrl,
   importPreview, importBackup,
   createBackup, fetchBackups, downloadBackupUrl, deleteBackup, restoreBackup,
+  resetSampleData, resetEmpty,
   fetchSystemStatus, embedMissingNodes, embedAllNodes,
   fetchAdvisorReports, updateAdvisorReport,
   deleteAdvisorReport, deleteAllAdvisorReports, cleanupAdvisorReports,
@@ -68,6 +69,9 @@ export default function Admin() {
   const [backupName, setBackupName] = useState('')
   const [creatingBackup, setCreatingBackup] = useState(false)
   const [restoringBackup, setRestoringBackup] = useState(null)
+
+  // Database reset
+  const [resetting, setResetting] = useState(null) // 'sample' | 'empty' | null
 
   // System status
   const [systemStatus, setSystemStatus] = useState(null)
@@ -469,6 +473,63 @@ export default function Admin() {
           setMsg(`Restore failed: ${err.message}`)
         }
         setRestoringBackup(null)
+      },
+    })
+  }
+
+  /* ---------- Database Reset handlers ---------- */
+
+  const handleResetSampleData = () => {
+    setConfirmAction({
+      title: 'Reset & Reload Sample Data',
+      message: 'This will DELETE ALL current data and reload sample Content Intelligence patterns (1 PBC, 5 ABBs, 15 SBBs, 13 technologies). The admin user and system config will be recreated. This CANNOT be undone.',
+      confirmLabel: 'Reset & Reload',
+      variant: 'danger',
+      onConfirm: async () => {
+        setConfirmAction(null)
+        setResetting('sample')
+        setMsg('')
+        try {
+          const result = await resetSampleData()
+          // Save new tokens (old user ID was wiped during reset)
+          if (result.access_token) {
+            localStorage.setItem('pm_access_token', result.access_token)
+            localStorage.setItem('pm_refresh_token', result.refresh_token)
+          }
+          const d = result.details || {}
+          setMsg(`Reset complete — ${d.patterns_imported || 0} patterns, ${d.technologies_imported || 0} technologies, ${d.pbcs_imported || 0} PBCs loaded`)
+          loadBackups()
+        } catch (err) {
+          setMsg(`Reset failed: ${err.message}`)
+        }
+        setResetting(null)
+      },
+    })
+  }
+
+  const handleDeleteAll = () => {
+    setConfirmAction({
+      title: 'Delete All Data',
+      message: 'This will permanently DELETE ALL data — patterns, technologies, PBCs, reports, teams, and users. Only the admin user and system config will remain. The database will be completely empty. This CANNOT be undone.',
+      confirmLabel: 'Delete Everything',
+      variant: 'danger',
+      onConfirm: async () => {
+        setConfirmAction(null)
+        setResetting('empty')
+        setMsg('')
+        try {
+          const result = await resetEmpty()
+          // Save new tokens (old user ID was wiped during reset)
+          if (result.access_token) {
+            localStorage.setItem('pm_access_token', result.access_token)
+            localStorage.setItem('pm_refresh_token', result.refresh_token)
+          }
+          setMsg('All data deleted — only admin user and system config remain')
+          loadBackups()
+        } catch (err) {
+          setMsg(`Delete failed: ${err.message}`)
+        }
+        setResetting(null)
       },
     })
   }
@@ -1854,6 +1915,40 @@ export default function Admin() {
                 ))}
               </div>
             )}
+          </div>
+
+          {/* --- Database Reset Section --- */}
+          <div className="card">
+            <h2 className="text-lg font-semibold text-white mb-1">Database Reset</h2>
+            <p className="text-gray-500 text-xs mb-4">
+              The admin user and system configuration will be recreated automatically after either action.
+            </p>
+            <div className="flex flex-wrap gap-3">
+              <button
+                onClick={handleResetSampleData}
+                disabled={!!resetting}
+                className="px-4 py-2 text-sm rounded-lg bg-purple-600/20 text-purple-300 hover:bg-purple-600/40 border border-purple-500/30 disabled:opacity-50 transition-colors"
+              >
+                {resetting === 'sample' ? (
+                  <span className="flex items-center gap-2">
+                    <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z" /></svg>
+                    Resetting...
+                  </span>
+                ) : '🔄 Reset & Reload Sample Data'}
+              </button>
+              <button
+                onClick={handleDeleteAll}
+                disabled={!!resetting}
+                className="px-4 py-2 text-sm rounded-lg bg-red-600/20 text-red-400 hover:bg-red-600/30 border border-red-500/30 disabled:opacity-50 transition-colors"
+              >
+                {resetting === 'empty' ? (
+                  <span className="flex items-center gap-2">
+                    <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z" /></svg>
+                    Deleting...
+                  </span>
+                ) : '🗑 Delete All'}
+              </button>
+            </div>
           </div>
         </div>
       )}

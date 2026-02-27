@@ -8,7 +8,7 @@ const TYPE_BADGE = {
 }
 
 const CATEGORY_LABELS = {
-  blueprint: 'Architecture Topology',
+  blueprint: 'Architecture Blueprint',
   core: 'Core AI/LLM',
   intg: 'Integration',
   agt: 'Agents',
