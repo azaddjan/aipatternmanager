@@ -184,4 +184,69 @@
   .quality-grade-C { @apply text-amber-400; }
   .quality-grade-D { @apply text-orange-400; }
   .quality-grade-F { @apply text-red-400; }
+
+  /* --- Typography Utilities --- */
+
+  .page-title {
+    @apply text-2xl font-bold text-white;
+  }
+  .page-subtitle {
+    @apply text-gray-500 text-sm mt-1;
+  }
+  .section-title {
+    @apply text-sm font-semibold text-gray-400;
+  }
+  .card-value {
+    @apply text-2xl font-bold text-white;
+  }
+  .card-label {
+    @apply text-xs text-gray-500;
+  }
+
+  /* --- Banners --- */
+
+  .banner-error {
+    @apply bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg px-4 py-3 text-sm;
+  }
+  .banner-success {
+    @apply bg-green-500/10 border border-green-500/30 text-green-400 rounded-lg px-4 py-3 text-sm;
+  }
+  .banner-warning {
+    @apply bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 rounded-lg px-4 py-3 text-sm;
+  }
+  .banner-info {
+    @apply bg-blue-500/10 border border-blue-500/30 text-blue-400 rounded-lg px-4 py-3 text-sm;
+  }
+
+  /* --- Skeleton Shimmer --- */
+
+  .skeleton {
+    @apply bg-gray-800;
+    background: linear-gradient(90deg, rgb(31 41 55) 25%, rgb(55 65 81) 50%, rgb(31 41 55) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s ease-in-out infinite;
+  }
+
+  @keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+
+  /* --- Toast Animations --- */
+
+  .toast-enter {
+    animation: toast-slide-in 0.3s ease-out forwards;
+  }
+  .toast-exit {
+    animation: toast-slide-out 0.3s ease-in forwards;
+  }
+
+  @keyframes toast-slide-in {
+    from { opacity: 0; transform: translateX(100%) scale(0.95); }
+    to { opacity: 1; transform: translateX(0) scale(1); }
+  }
+  @keyframes toast-slide-out {
+    from { opacity: 1; transform: translateX(0) scale(1); }
+    to { opacity: 0; transform: translateX(100%) scale(0.95); }
+  }
 }

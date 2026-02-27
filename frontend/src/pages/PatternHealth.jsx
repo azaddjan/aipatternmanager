@@ -9,6 +9,8 @@ import {
 } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
 import ConfirmModal from '../components/ConfirmModal'
+import { useToast } from '../components/Toast'
+import { SkeletonStatCard, SkeletonText } from '../components/Skeleton'
 
 const HEALTH_SECTIONS = [
   { key: 'overview', label: 'Overview' },
@@ -45,6 +47,7 @@ const TYPE_BADGE = {
 
 export default function PatternHealth() {
   const { user, isAdmin } = useAuth()
+  const { toast } = useToast()
   const [healthData, setHealthData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [section, setSection] = useState('overview')
@@ -129,6 +132,7 @@ export default function PatternHealth() {
         setSavedAnalysisTime(new Date().toISOString())
         setSection('ai')
         fetchHealthAnalyses(20).then(r => setAnalyses(r?.analyses || [])).catch(() => {})
+        toast.success('AI analysis complete')
       }
     } catch (err) {
       setError(`AI analysis failed: ${err.message}`)
@@ -168,6 +172,7 @@ export default function PatternHealth() {
             setSavedAnalysisTime(null)
             setAiAnalysis(null)
           }
+          toast.success('Analysis deleted')
         } catch (err) {
           setError(`Failed to delete: ${err.message}`)
         }
@@ -177,8 +182,18 @@ export default function PatternHealth() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-gray-500">Loading pattern health data...</div>
+      <div className="space-y-6">
+        <div>
+          <h1 className="page-title">Pattern Health</h1>
+          <p className="page-subtitle">Quality, completeness, and coverage of your pattern library</p>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <SkeletonStatCard />
+          <SkeletonStatCard />
+          <SkeletonStatCard />
+          <SkeletonStatCard />
+        </div>
+        <SkeletonText lines={3} />
       </div>
     )
   }
@@ -209,10 +224,10 @@ export default function PatternHealth() {
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+          <h1 className="page-title flex items-center gap-2">
             Pattern Health
           </h1>
-          <p className="text-gray-500 text-sm mt-1">
+          <p className="page-subtitle">
             Quality, completeness, and coverage of your pattern library
             {selectedTeam !== 'all' && (
               <span className="ml-2 text-xs bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded border border-blue-500/30">

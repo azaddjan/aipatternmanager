@@ -3,8 +3,12 @@ import { fetchPBCs, createPBC, fetchPatterns } from '../api/client'
 import { Link } from 'react-router-dom'
 import Pagination from '../components/Pagination'
 import SortableHeader, { sortItems } from '../components/SortableHeader'
+import { useToast } from '../components/Toast'
+import { SkeletonTableRow, SkeletonCard } from '../components/Skeleton'
+import EmptyState from '../components/EmptyState'
 
 export default function PBCManager() {
+  const { toast } = useToast()
   const [pbcs, setPbcs] = useState([])
   const [abbs, setAbbs] = useState([])
   const [loading, setLoading] = useState(true)
@@ -63,9 +67,11 @@ export default function PBCManager() {
     try {
       await createPBC(form)
       resetForm()
+      toast.success('Business capability created')
       loadData()
     } catch (err) {
       setError(err.message)
+      toast.error('Failed to create business capability')
     }
   }
 
@@ -99,16 +105,12 @@ export default function PBCManager() {
   const totalPages = Math.ceil(sorted.length / PAGE_SIZE)
   const paginated = sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
-  if (loading) {
-    return <div className="flex items-center justify-center h-64 text-gray-500">Loading...</div>
-  }
-
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Business Capabilities (PBCs)</h1>
-          <p className="text-gray-500 text-sm mt-1">{filtered.length}{filtered.length !== pbcs.length ? ` of ${pbcs.length}` : ''} business capabilities</p>
+          <h1 className="page-title">Business Capabilities (PBCs)</h1>
+          <p className="page-subtitle">{loading ? 'Loading...' : `${filtered.length}${filtered.length !== pbcs.length ? ` of ${pbcs.length}` : ''} business capabilities`}</p>
         </div>
         <div className="flex gap-2">
           {/* View Toggle */}
@@ -225,10 +227,45 @@ export default function PBCManager() {
       )}
 
       {/* Content */}
-      {filtered.length === 0 ? (
-        <div className="text-center text-gray-500 py-12">
-          {pbcs.length === 0 ? 'No PBCs yet. Click "+ New PBC" to create one.' : 'No PBCs match your search.'}
-        </div>
+      {loading ? (
+        view === 'table' ? (
+          <div className="card overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-gray-500 text-left border-b border-gray-800">
+                  <th className="text-left text-xs text-gray-500 pb-3 font-medium">ID</th>
+                  <th className="text-left text-xs text-gray-500 pb-3 font-medium">Name</th>
+                  <th className="text-left text-xs text-gray-500 pb-3 font-medium">Status</th>
+                  <th className="text-left text-xs text-gray-500 pb-3 font-medium">Description</th>
+                  <th className="text-left text-xs text-gray-500 pb-3 font-medium">ABBs</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Array.from({ length: 5 }).map((_, i) => <SkeletonTableRow key={i} cols={5} />)}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-4">
+            {Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}
+          </div>
+        )
+      ) : filtered.length === 0 ? (
+        pbcs.length === 0 ? (
+          <EmptyState
+            icon="📦"
+            title="No business capabilities yet"
+            description="Create PBCs to group patterns into business capabilities"
+            actionLabel="Create PBC"
+            onAction={() => { resetForm(); setShowForm(true) }}
+          />
+        ) : (
+          <EmptyState
+            icon="🔍"
+            title="No results found"
+            description="No PBCs match your current search or filters"
+          />
+        )
       ) : view === 'table' ? (
         /* Table View (Default) */
         <div className="card overflow-x-auto">

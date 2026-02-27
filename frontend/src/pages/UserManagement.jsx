@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { fetchUsers, createUser, updateUser, deleteUser, fetchTeams } from '../api/client'
 import ConfirmModal from '../components/ConfirmModal'
+import { useToast } from '../components/Toast'
+import { SkeletonTableRow } from '../components/Skeleton'
 
 const ROLE_OPTIONS = [
   { value: 'admin', label: 'Admin' },
@@ -16,6 +18,7 @@ const ROLE_COLORS = {
 }
 
 export default function UserManagement() {
+  const { toast } = useToast()
   const [users, setUsers] = useState([])
   const [teams, setTeams] = useState([])
   const [loading, setLoading] = useState(true)
@@ -81,8 +84,10 @@ export default function UserManagement() {
         const updates = { name: form.name, role: form.role, team_id: form.team_id || null }
         if (form.password) updates.password = form.password
         await updateUser(editingId, updates)
+        toast.success('User updated')
       } else {
         await createUser(form)
+        toast.success('User created')
       }
       setShowCreate(false)
       setEditingId(null)
@@ -103,6 +108,7 @@ export default function UserManagement() {
     setError('')
     try {
       await deleteUser(deleteTarget.id)
+      toast.success('User deleted')
       await load()
     } catch (err) {
       setError(err.message)
@@ -114,6 +120,7 @@ export default function UserManagement() {
     setError('')
     try {
       await updateUser(user.id, { is_active: !user.is_active })
+      toast.success('User status updated')
       await load()
     } catch (err) {
       setError(err.message)
@@ -122,8 +129,26 @@ export default function UserManagement() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <p className="text-gray-400">Loading users...</p>
+      <div className="max-w-5xl mx-auto space-y-6">
+        <div className="card overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-800">
+                <th className="text-left py-3 px-4 text-gray-500 font-medium">Name</th>
+                <th className="text-left py-3 px-4 text-gray-500 font-medium">Email</th>
+                <th className="text-left py-3 px-4 text-gray-500 font-medium">Role</th>
+                <th className="text-left py-3 px-4 text-gray-500 font-medium">Team</th>
+                <th className="text-left py-3 px-4 text-gray-500 font-medium">Status</th>
+                <th className="text-right py-3 px-4 text-gray-500 font-medium">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Array.from({ length: 5 }).map((_, i) => (
+                <SkeletonTableRow key={i} cols={6} />
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     )
   }
@@ -137,8 +162,8 @@ export default function UserManagement() {
       </div>
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">User Management</h1>
-          <p className="text-sm text-gray-500 mt-1">{users.length} user{users.length !== 1 ? 's' : ''}</p>
+          <h1 className="page-title">User Management</h1>
+          <p className="page-subtitle">{users.length} user{users.length !== 1 ? 's' : ''}</p>
         </div>
         <button onClick={startCreate} className="btn-primary">
           + New User

@@ -4,11 +4,14 @@ import { fetchPBC, updatePBC, deletePBC, fetchPBCGraph, fetchPatterns, aiPBCAssi
 import GraphView from '../components/GraphView'
 import MarkdownContent from '../components/MarkdownContent'
 import ConfirmModal from '../components/ConfirmModal'
+import { useToast } from '../components/Toast'
+import { SkeletonText } from '../components/Skeleton'
 
 export default function PBCDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
   const location = useLocation()
+  const { toast } = useToast()
   const [pbc, setPbc] = useState(null)
   const [graphData, setGraphData] = useState(null)
   const [tab, setTab] = useState('overview') // overview | relationships | graph
@@ -48,9 +51,11 @@ export default function PBCDetail() {
     setDeleteConfirm(false)
     try {
       await deletePBC(id)
+      toast.success('PBC deleted')
       navigate('/pbcs')
     } catch (err) {
       setError(err.message)
+      toast.error('Failed to delete PBC')
     }
   }
 
@@ -79,9 +84,11 @@ export default function PBCDetail() {
     try {
       await updatePBC(id, form)
       setEditing(false)
+      toast.success('PBC updated')
       loadPBC()
     } catch (err) {
       setError(err.message)
+      toast.error('Failed to update PBC')
     }
   }
 
@@ -94,7 +101,14 @@ export default function PBCDetail() {
     }))
   }
 
-  if (loading) return <div className="text-gray-500 text-center py-12">Loading PBC...</div>
+  if (loading) return (
+    <div className="space-y-6">
+      <div className="flex items-center gap-2 text-sm">
+        <Link to="/pbcs" className="text-gray-500 hover:text-gray-300 transition-colors">&larr; Business Capabilities</Link>
+      </div>
+      <SkeletonText lines={5} />
+    </div>
+  )
   if (!pbc) return <div className="text-red-400 text-center py-12">PBC {id} not found</div>
 
   const abbIds = pbc.abb_ids || []
@@ -119,7 +133,7 @@ export default function PBCDetail() {
               'bg-yellow-500/20 text-yellow-400'
             }`}>{pbc.status}</span>
           </div>
-          <h1 className="text-2xl font-bold text-white">{pbc.name}</h1>
+          <h1 className="page-title">{pbc.name}</h1>
         </div>
         <div className="flex gap-2">
           <button onClick={startEdit} className="btn-secondary">Edit</button>

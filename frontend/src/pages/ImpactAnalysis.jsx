@@ -4,6 +4,7 @@ import { fetchPatterns, fetchTechnologies, fetchImpactAnalysis, fetchTechnologyI
 import GraphView from '../components/GraphView'
 import Pagination from '../components/Pagination'
 import { TypeBadge } from '../components/PatternCard'
+import { SkeletonStatCard, SkeletonText } from '../components/Skeleton'
 
 /* ── Searchable Autocomplete Dropdown ── */
 function SearchableSelect({ items, value, onChange, placeholder, renderItem, renderSelected, idKey = 'id' }) {
@@ -489,8 +490,8 @@ export default function ImpactAnalysis() {
         <span className="text-gray-400">Impact Analysis</span>
       </div>
       <div>
-        <h1 className="text-2xl font-bold text-white">Impact Analysis</h1>
-        <p className="text-gray-500 text-sm mt-1">
+        <h1 className="page-title">Impact Analysis</h1>
+        <p className="page-subtitle">
           What depends on a pattern? What breaks if a technology changes?
         </p>
       </div>
@@ -560,7 +561,16 @@ export default function ImpactAnalysis() {
         )}
       </div>
 
-      {loading && <div className="text-gray-500 text-center py-12">Analyzing impact...</div>}
+      {loading && (
+        <div className="card space-y-4">
+          <div className="grid grid-cols-4 gap-3">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <SkeletonStatCard key={i} />
+            ))}
+          </div>
+          <SkeletonText lines={3} />
+        </div>
+      )}
 
       {/* Pattern Impact Results */}
       {impacts && !loading && (

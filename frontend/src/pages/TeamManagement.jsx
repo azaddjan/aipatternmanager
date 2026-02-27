@@ -2,8 +2,11 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { fetchTeams, createTeam, updateTeam, deleteTeam, fetchTeam } from '../api/client'
 import ConfirmModal from '../components/ConfirmModal'
+import { useToast } from '../components/Toast'
+import { SkeletonTableRow } from '../components/Skeleton'
 
 export default function TeamManagement() {
+  const { toast } = useToast()
   const [teams, setTeams] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -60,8 +63,10 @@ export default function TeamManagement() {
     try {
       if (editingId) {
         await updateTeam(editingId, form)
+        toast.success('Team updated')
       } else {
         await createTeam(form)
+        toast.success('Team created')
       }
       setShowCreate(false)
       setEditingId(null)
@@ -81,6 +86,7 @@ export default function TeamManagement() {
     setError('')
     try {
       await deleteTeam(deleteTarget.id)
+      toast.success('Team deleted')
       if (selectedTeam?.id === deleteTarget.id) setSelectedTeam(null)
       await load()
     } catch (err) {
@@ -91,8 +97,24 @@ export default function TeamManagement() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <p className="text-gray-400">Loading teams...</p>
+      <div className="max-w-5xl mx-auto space-y-6">
+        <div className="card overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-800">
+                <th className="text-left py-3 px-4 text-gray-500 font-medium">Team</th>
+                <th className="text-center py-3 px-4 text-gray-500 font-medium">Members</th>
+                <th className="text-center py-3 px-4 text-gray-500 font-medium">Patterns</th>
+                <th className="text-right py-3 px-4 text-gray-500 font-medium">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Array.from({ length: 4 }).map((_, i) => (
+                <SkeletonTableRow key={i} cols={4} />
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     )
   }
@@ -106,8 +128,8 @@ export default function TeamManagement() {
       </div>
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Team Management</h1>
-          <p className="text-sm text-gray-500 mt-1">{teams.length} team{teams.length !== 1 ? 's' : ''}</p>
+          <h1 className="page-title">Team Management</h1>
+          <p className="page-subtitle">{teams.length} team{teams.length !== 1 ? 's' : ''}</p>
         </div>
         <button onClick={startCreate} className="btn-primary">
           + New Team

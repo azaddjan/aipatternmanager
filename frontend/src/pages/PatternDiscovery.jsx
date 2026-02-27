@@ -1,6 +1,13 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
-import { fetchInventory, discoverPatterns, fetchProviders } from '../api/client'
+import {
+  fetchInventory, discoverPatterns, fetchProviders,
+  fetchLatestDiscoveryAnalysis, fetchDiscoveryAnalyses,
+  fetchDiscoveryAnalysis, deleteDiscoveryAnalysis,
+} from '../api/client'
+import ConfirmModal from '../components/ConfirmModal'
+import { useToast } from '../components/Toast'
+import { SkeletonStatCard } from '../components/Skeleton'
 
 const PRIORITY_COLORS = {
   HIGH: 'bg-red-500/20 text-red-400',
@@ -26,6 +33,7 @@ const CAT_LABELS = {
 
 export default function PatternDiscovery() {
   const navigate = useNavigate()
+  const { toast } = useToast()
   const [inventory, setInventory] = useState(null)
   const [suggestions, setSuggestions] = useState([])
   const [loading, setLoading] = useState(true)
@@ -37,12 +45,21 @@ export default function PatternDiscovery() {
   const [model, setModel] = useState('')
   const [discoveryMeta, setDiscoveryMeta] = useState(null)
 
-  // Load inventory and providers on mount
+  // History state
+  const [savedAnalysisId, setSavedAnalysisId] = useState(null)
+  const [savedAnalysisTime, setSavedAnalysisTime] = useState(null)
+  const [analyses, setAnalyses] = useState([])
+  const [analysesExpanded, setAnalysesExpanded] = useState(false)
+  const [confirmAction, setConfirmAction] = useState(null)
+
+  // Load inventory, providers, and latest analysis on mount
   useEffect(() => {
     Promise.all([
       fetchInventory().catch(() => null),
       fetchProviders().catch(() => ({ providers: [] })),
-    ]).then(([inv, prov]) => {
+      fetchLatestDiscoveryAnalysis().catch(() => null),
+      fetchDiscoveryAnalyses(20).catch(() => ({ analyses: [] })),
+    ]).then(([inv, prov, latestAnalysis, historyData]) => {
       setInventory(inv)
       const provList = prov?.providers || []
       setProviders(provList)
@@ -51,6 +68,19 @@ export default function PatternDiscovery() {
         setProvider(def.name)
         setModel(def.default_model)
       }
+      // Load latest discovery results
+      if (latestAnalysis && latestAnalysis.suggestions_json) {
+        const sug = Array.isArray(latestAnalysis.suggestions_json) ? latestAnalysis.suggestions_json : []
+        setSuggestions(sug)
+        setSavedAnalysisId(latestAnalysis.id)
+        setSavedAnalysisTime(latestAnalysis.created_at || null)
+        setDiscoveryMeta({
+          provider: latestAnalysis.provider,
+          model: latestAnalysis.model,
+        })
+        if (latestAnalysis.focus_area) setFocus(latestAnalysis.focus_area)
+      }
+      setAnalyses(historyData?.analyses || [])
       setLoading(false)
     })
   }, [])
@@ -66,16 +96,67 @@ export default function PatternDiscovery() {
         model || null,
         focus || null,
       )
-      setSuggestions(result.suggestions || [])
+      const discoveredSuggestions = result.suggestions || []
+      setSuggestions(discoveredSuggestions)
       setDiscoveryMeta({
         provider: result.provider,
         model: result.model,
         summary: result.inventory_summary,
       })
+      setSavedAnalysisId(result.saved_analysis_id || null)
+      setSavedAnalysisTime(new Date().toISOString())
+      // Refresh history list
+      fetchDiscoveryAnalyses(20).then(r => setAnalyses(r?.analyses || [])).catch(() => {})
+      toast.success(`Discovery complete — ${discoveredSuggestions.length} suggestions found`)
     } catch (err) {
       setError(err.message)
     }
     setDiscovering(false)
+  }
+
+  const handleLoadAnalysis = async (analysis) => {
+    try {
+      const full = await fetchDiscoveryAnalysis(analysis.id)
+      if (full?.suggestions_json) {
+        const sug = Array.isArray(full.suggestions_json) ? full.suggestions_json : []
+        setSuggestions(sug)
+        setSavedAnalysisId(full.id)
+        setSavedAnalysisTime(full.created_at || analysis.created_at || null)
+        setDiscoveryMeta({
+          provider: full.provider,
+          model: full.model,
+        })
+        if (full.focus_area) setFocus(full.focus_area)
+        window.scrollTo({ top: 0, behavior: 'smooth' })
+      }
+    } catch (err) {
+      setError(`Failed to load analysis: ${err.message}`)
+    }
+  }
+
+  const handleDeleteAnalysis = (id) => {
+    setConfirmAction({
+      title: 'Delete Discovery',
+      message: `Are you sure you want to delete discovery "${id}"?`,
+      confirmLabel: 'Delete',
+      variant: 'danger',
+      onConfirm: async () => {
+        setConfirmAction(null)
+        try {
+          await deleteDiscoveryAnalysis(id)
+          setAnalyses(prev => prev.filter(a => a.id !== id))
+          if (savedAnalysisId === id) {
+            setSavedAnalysisId(null)
+            setSavedAnalysisTime(null)
+            setSuggestions([])
+            setDiscoveryMeta(null)
+          }
+          toast.success('Discovery deleted')
+        } catch (err) {
+          setError(`Failed to delete: ${err.message}`)
+        }
+      },
+    })
   }
 
   const handleCreatePattern = (suggestion) => {
@@ -92,7 +173,20 @@ export default function PatternDiscovery() {
   }
 
   if (loading) {
-    return <div className="text-gray-500 text-center py-12">Loading inventory...</div>
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="page-title">Pattern Discovery</h1>
+          <p className="page-subtitle">AI-powered analysis of your technology inventory to suggest new architecture patterns</p>
+        </div>
+        <div className="grid grid-cols-4 gap-4">
+          <SkeletonStatCard />
+          <SkeletonStatCard />
+          <SkeletonStatCard />
+          <SkeletonStatCard />
+        </div>
+      </div>
+    )
   }
 
   const summary = inventory?.summary || {}
@@ -106,8 +200,8 @@ export default function PatternDiscovery() {
       </div>
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-white">Pattern Discovery</h1>
-        <p className="text-gray-500 text-sm mt-1">
+        <h1 className="page-title">Pattern Discovery</h1>
+        <p className="page-subtitle">
           AI-powered analysis of your technology inventory to suggest new architecture patterns
         </p>
       </div>
@@ -268,6 +362,22 @@ export default function PatternDiscovery() {
         </div>
       )}
 
+      {/* Saved banner */}
+      {savedAnalysisId && suggestions.length > 0 && (
+        <div className="bg-green-500/10 border border-green-500/30 rounded-lg px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-3 text-sm">
+            <span className="text-green-400">Discovery saved as</span>
+            <span className="text-green-300 font-mono text-sm font-medium">{savedAnalysisId}</span>
+            {savedAnalysisTime && (
+              <span className="text-green-500/60 text-xs">
+                saved at {new Date(savedAnalysisTime).toLocaleDateString('en-CA')}{' '}
+                {new Date(savedAnalysisTime).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Suggestions */}
       {suggestions.length > 0 && (
         <div className="space-y-4">
@@ -356,6 +466,78 @@ export default function PatternDiscovery() {
           No new patterns suggested. Your pattern library appears comprehensive!
         </div>
       )}
+
+      {/* Discovery History */}
+      {analyses.length > 0 && (
+        <div className="space-y-3">
+          <button
+            onClick={() => setAnalysesExpanded(!analysesExpanded)}
+            className="flex items-center gap-2 text-sm font-semibold text-gray-400 hover:text-white transition-colors"
+          >
+            <span className={`text-xs transition-transform ${analysesExpanded ? 'rotate-90' : ''}`}>&#9654;</span>
+            Previous Discoveries
+            <span className="text-xs bg-gray-700 text-gray-300 px-2 py-0.5 rounded-full">
+              {analyses.length}
+            </span>
+          </button>
+
+          {analysesExpanded && (
+            <div className="space-y-2">
+              {analyses.map(a => (
+                <div
+                  key={a.id}
+                  className={`card hover:bg-gray-800/60 transition-colors ${
+                    savedAnalysisId === a.id ? 'ring-1 ring-green-500/30' : ''
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-white text-sm font-medium">{a.title || 'Pattern Discovery'}</span>
+                        <span className="text-xs font-mono text-blue-400/60">{a.id}</span>
+                        {a.suggestion_count != null && (
+                          <span className="text-xs px-1.5 py-0.5 rounded bg-gray-800 text-cyan-400">
+                            {a.suggestion_count} suggestions
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3 mt-1 text-xs text-gray-500">
+                        <span>{a.created_at ? new Date(a.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}</span>
+                        {a.provider && <span>{a.provider} / {a.model}</span>}
+                        {a.focus_area && <span>Focus: {a.focus_area}</span>}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      <button
+                        onClick={() => handleLoadAnalysis(a)}
+                        className="text-xs px-2.5 py-1 rounded bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 transition-colors"
+                      >
+                        Load
+                      </button>
+                      <button
+                        onClick={() => handleDeleteAnalysis(a.id)}
+                        className="text-xs px-2 py-1 rounded text-red-500/50 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                      >
+                        x
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      <ConfirmModal
+        open={!!confirmAction}
+        title={confirmAction?.title || 'Confirm Action'}
+        message={confirmAction?.message || 'Are you sure?'}
+        confirmLabel={confirmAction?.confirmLabel || 'Confirm'}
+        variant={confirmAction?.variant || 'danger'}
+        onConfirm={() => confirmAction?.onConfirm?.()}
+        onCancel={() => setConfirmAction(null)}
+      />
     </div>
   )
 }

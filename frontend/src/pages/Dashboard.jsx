@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { fetchPatterns, fetchHealth, fetchCoverage, fetchCategories, fetchAuditLogs } from '../api/client'
 import { TypeBadge } from '../components/PatternCard'
+import { SkeletonStatCard, SkeletonText } from '../components/Skeleton'
+import EmptyState from '../components/EmptyState'
 
 const ACTION_COLORS = {
   CREATE: 'text-green-400',
@@ -69,7 +71,20 @@ export default function Dashboard() {
   }, [])
 
   if (loading) {
-    return <div className="flex items-center justify-center h-64 text-gray-500">Loading dashboard...</div>
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="page-title">Dashboard</h1>
+          <p className="page-subtitle">AI Pattern Management System Overview</p>
+        </div>
+        <div className="grid grid-cols-5 gap-4">
+          {Array.from({ length: 5 }).map((_, i) => <SkeletonStatCard key={i} />)}
+        </div>
+        <div className="card">
+          <SkeletonText lines={6} />
+        </div>
+      </div>
+    )
   }
 
   const abCount  = patterns.filter(p => p.type === 'AB').length
@@ -84,8 +99,8 @@ export default function Dashboard() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-white">Dashboard</h1>
-        <p className="text-gray-500 text-sm mt-1">AI Pattern Management System Overview</p>
+        <h1 className="page-title">Dashboard</h1>
+        <p className="page-subtitle">AI Pattern Management System Overview</p>
       </div>
 
       {/* Status Bar */}
@@ -173,7 +188,13 @@ export default function Dashboard() {
           <span className="text-gray-600 text-xs">{auditLogs.length} recent changes</span>
         </div>
         {auditLogs.length === 0 ? (
-          <p className="text-gray-500 text-sm py-4 text-center">No activity recorded yet</p>
+          <EmptyState
+            icon="📊"
+            title="No activity recorded yet"
+            description="Activity will appear here as you create and edit patterns"
+            actionLabel="Create a Pattern"
+            actionLink="/patterns/new"
+          />
         ) : (
           <div className="space-y-0">
             {auditLogs.map((log, i) => {

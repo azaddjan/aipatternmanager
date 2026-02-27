@@ -15,6 +15,7 @@ import {
   fetchTeams,
 } from '../api/client'
 import ConfirmModal from '../components/ConfirmModal'
+import { useToast } from '../components/Toast'
 
 const PROVIDER_LABELS = {
   anthropic: { label: 'Anthropic (Claude)', icon: '🟣' },
@@ -39,6 +40,7 @@ const TABS = [
 ]
 
 export default function Admin() {
+  const { toast } = useToast()
   const [tab, setTab] = useState('config')
   const [settings, setSettings] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -211,7 +213,7 @@ export default function Admin() {
     setSavingPrompt(true)
     try {
       await updatePrompt(selectedPrompt.section, selectedPrompt.sub_prompt, editValue)
-      setMsg('Prompt saved successfully')
+      toast.success('Prompt updated')
       setPromptDirty(false)
       loadPrompts()
     } catch (err) {
@@ -300,7 +302,7 @@ export default function Admin() {
       setSettings(updated)
       setKeyForm({ provider: '', key: '', secret: '' })
       setShowKeyForm(false)
-      setMsg('API key saved successfully')
+      toast.success('API key saved')
     } catch (err) {
       setMsg(err.message)
     }
@@ -341,8 +343,14 @@ export default function Admin() {
     try {
       const result = await testProvider(provName)
       setTestResult({ provider: provName, ...result })
+      if (result.status === 'ok' || result.status === 'success') {
+        toast.success('Provider test passed')
+      } else {
+        toast.error('Provider test failed')
+      }
     } catch (err) {
       setTestResult({ provider: provName, status: 'error', message: err.message })
+      toast.error('Provider test failed')
     }
     setTesting('')
   }
@@ -423,7 +431,7 @@ export default function Admin() {
     try {
       const result = await createBackup(backupName)
       setBackupName('')
-      setMsg('Backup created — downloading...')
+      toast.success('Backup created')
       loadBackups()
       // Auto-download the backup file
       if (result?.filename) {
@@ -467,6 +475,7 @@ export default function Admin() {
         try {
           const result = await restoreBackup(filename)
           const d = result.details || result
+          toast.success('Backup restored successfully')
           setMsg(`Restore completed — ${d.patterns_imported || 0} patterns, ${d.technologies_imported || 0} technologies, ${d.pbcs_imported || 0} PBCs, ${d.categories_imported || 0} categories, ${d.relationships_imported || 0} relationships, ${d.teams_imported || 0} teams, ${d.users_imported || 0} users restored`)
           loadBackups()
         } catch (err) {
@@ -497,6 +506,7 @@ export default function Admin() {
             localStorage.setItem('pm_refresh_token', result.refresh_token)
           }
           const d = result.details || {}
+          toast.success('Database reset complete')
           setMsg(`Reset complete — ${d.patterns_imported || 0} patterns, ${d.technologies_imported || 0} technologies, ${d.pbcs_imported || 0} PBCs loaded`)
           loadBackups()
         } catch (err) {
@@ -524,6 +534,7 @@ export default function Admin() {
             localStorage.setItem('pm_access_token', result.access_token)
             localStorage.setItem('pm_refresh_token', result.refresh_token)
           }
+          toast.success('Database reset complete')
           setMsg('All data deleted — only admin user and system config remain')
           loadBackups()
         } catch (err) {
@@ -585,7 +596,7 @@ export default function Admin() {
       })
       setSettings(updated)
       setRetentionDirty(false)
-      setMsg('Retention policy saved successfully')
+      toast.success('Settings saved')
     } catch (err) {
       setMsg(err.message)
     }
@@ -687,8 +698,8 @@ export default function Admin() {
         <span className="text-gray-400">Administration</span>
       </div>
       <div>
-        <h1 className="text-2xl font-bold text-white">Administration</h1>
-        <p className="text-gray-500 text-sm mt-1">Manage providers, export data, and import backups</p>
+        <h1 className="page-title">Administration</h1>
+        <p className="page-subtitle">Manage providers, export data, and import backups</p>
       </div>
 
       {/* Tab Bar */}
@@ -1128,7 +1139,7 @@ export default function Admin() {
                   </p>
                 </div>
                 <button
-                  onClick={() => authenticatedDownload(exportHtmlUrl(selectedExportTeams), 'patterns-export.html')}
+                  onClick={() => { toast.info('Export downloading...'); authenticatedDownload(exportHtmlUrl(selectedExportTeams), 'patterns-export.html') }}
                   className="btn-primary text-sm ml-3 shrink-0"
                 >
                   Export
@@ -1148,7 +1159,7 @@ export default function Admin() {
                   </p>
                 </div>
                 <button
-                  onClick={() => authenticatedDownload(exportPptxUrl(selectedExportTeams), 'patterns-export.pptx')}
+                  onClick={() => { toast.info('Export downloading...'); authenticatedDownload(exportPptxUrl(selectedExportTeams), 'patterns-export.pptx') }}
                   className="btn-primary text-sm ml-3 shrink-0"
                 >
                   Export
@@ -1168,7 +1179,7 @@ export default function Admin() {
                   </p>
                 </div>
                 <button
-                  onClick={() => authenticatedDownload(exportDocxUrl(selectedExportTeams), 'patterns-export.docx')}
+                  onClick={() => { toast.info('Export downloading...'); authenticatedDownload(exportDocxUrl(selectedExportTeams), 'patterns-export.docx') }}
                   className="btn-primary text-sm ml-3 shrink-0"
                 >
                   Export
@@ -2407,14 +2418,14 @@ export default function Admin() {
                       <td className="py-2.5 px-3">
                         <div className="flex items-center gap-1">
                           <button
-                            onClick={() => authenticatedDownload(advisorReportExportHtmlUrl(rpt.id), `advisor-report-${rpt.id}.html`)}
+                            onClick={() => { toast.info('Export downloading...'); authenticatedDownload(advisorReportExportHtmlUrl(rpt.id), `advisor-report-${rpt.id}.html`) }}
                             className="text-xs px-2 py-1 rounded bg-gray-800 text-gray-400 hover:text-gray-300 hover:bg-gray-700 transition-colors"
                             title="Export HTML"
                           >
                             HTML
                           </button>
                           <button
-                            onClick={() => authenticatedDownload(advisorReportExportDocxUrl(rpt.id), `advisor-report-${rpt.id}.docx`)}
+                            onClick={() => { toast.info('Export downloading...'); authenticatedDownload(advisorReportExportDocxUrl(rpt.id), `advisor-report-${rpt.id}.docx`) }}
                             className="text-xs px-2 py-1 rounded bg-gray-800 text-gray-400 hover:text-gray-300 hover:bg-gray-700 transition-colors"
                             title="Export DOCX"
                           >

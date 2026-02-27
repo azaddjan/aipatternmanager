@@ -12,6 +12,7 @@ import AIFieldAssist from '../components/AIFieldAssist'
 import MarkdownContent from '../components/MarkdownContent'
 import { useAuth } from '../contexts/AuthContext'
 import ConfirmModal from '../components/ConfirmModal'
+import { useToast } from '../components/Toast'
 
 const TYPES = ['AB', 'ABB', 'SBB']
 
@@ -107,6 +108,7 @@ export default function PatternEditor() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const { canCreatePattern, canEditPattern, isAdmin } = useAuth()
+  const { toast } = useToast()
   const isNew = !id
 
   // Check for prefill from Pattern Discovery
@@ -436,8 +438,10 @@ export default function PatternEditor() {
       }
 
       setStep('editor')
+      toast.info('AI content generated')
     } catch (err) {
       setAiError(err.message)
+      toast.error('AI generation failed')
     }
     setAiLoading(false)
   }
@@ -510,6 +514,7 @@ export default function PatternEditor() {
         // Admin can assign team on create via query param
         const teamIdForCreate = isAdmin && form.team_id ? form.team_id : null
         const created = await createPattern(payload, teamIdForCreate)
+        toast.success('Pattern created successfully')
         navigate(`/patterns/${created.id}`, { state: { _refresh: Date.now() } })
       } else {
         const { id: _, team_id: _tid, ...updateData } = payload
@@ -521,6 +526,7 @@ export default function PatternEditor() {
         const teamChanged = isAdmin && form.team_id !== originalTeamId
         const teamIdParam = teamChanged ? (form.team_id || '') : null
         await updatePattern(id, updateData, 'none', teamIdParam)
+        toast.success('Pattern updated')
         navigate(`/patterns/${id}`, { state: { _refresh: Date.now() } })
       }
     } catch (err) {
@@ -790,7 +796,7 @@ export default function PatternEditor() {
       <div className="max-w-2xl mx-auto space-y-6">
         {/* Header */}
         <div>
-          <h1 className="text-2xl font-bold text-white">Create New Pattern</h1>
+          <h1 className="page-title">Create New Pattern</h1>
           <p className="text-gray-500 text-sm mt-1">Describe your pattern and let AI handle the rest</p>
         </div>
 
@@ -1083,7 +1089,7 @@ export default function PatternEditor() {
         <span className="text-gray-400">{isNew ? 'New Pattern' : `Edit ${id}`}</span>
       </div>
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-white">
+        <h1 className="page-title">
           {isNew ? 'New Pattern' : `Edit ${id}`}
         </h1>
         <div className="flex gap-2">

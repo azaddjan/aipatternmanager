@@ -5,12 +5,16 @@ import PatternCard from '../components/PatternCard'
 import Pagination from '../components/Pagination'
 import SortableHeader, { sortItems } from '../components/SortableHeader'
 import { useAuth } from '../contexts/AuthContext'
+import { useToast } from '../components/Toast'
+import { SkeletonTableRow, SkeletonCard } from '../components/Skeleton'
+import EmptyState from '../components/EmptyState'
 
 const TYPE_OPTIONS = ['', 'AB', 'ABB', 'SBB']
 const STATUS_OPTIONS = ['', 'DRAFT', 'ACTIVE', 'DEPRECATED']
 
 export default function PatternList() {
   const { canCreatePattern } = useAuth()
+  const { toast } = useToast()
   const [searchParams] = useSearchParams()
   const [patterns, setPatterns] = useState([])
   const [total, setTotal] = useState(0)
@@ -86,8 +90,8 @@ export default function PatternList() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Patterns</h1>
-          <p className="text-gray-500 text-sm mt-1">{filtered.length}{filtered.length !== total ? ` of ${total}` : ''} patterns</p>
+          <h1 className="page-title">Patterns</h1>
+          <p className="page-subtitle">{filtered.length}{filtered.length !== total ? ` of ${total}` : ''} patterns</p>
         </div>
         {canCreatePattern && (
           <Link to="/patterns/new" className="btn-primary">+ New Pattern</Link>
@@ -151,9 +155,42 @@ export default function PatternList() {
       </div>
 
       {loading ? (
-        <div className="text-gray-500 text-center py-12">Loading patterns...</div>
+        viewMode === 'table' ? (
+          <div className="card overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-gray-500 text-left border-b border-gray-800">
+                  <th className="py-2 px-2">ID</th><th className="py-2 px-2">Name</th><th className="py-2 px-2">Type</th><th className="py-2 px-2">Category</th><th className="py-2 px-2">Status</th><th className="py-2 px-2">Team</th><th className="py-2 px-2">Version</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Array.from({ length: 8 }).map((_, i) => <SkeletonTableRow key={i} cols={7} />)}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)}
+          </div>
+        )
       ) : filtered.length === 0 ? (
-        <div className="text-gray-500 text-center py-12">No patterns found</div>
+        search || filters.type || filters.category || filters.status || filters.team ? (
+          <div className="text-center py-12">
+            <p className="text-gray-500 mb-4">No patterns match your filters</p>
+            <button
+              onClick={() => { setSearch(''); setFilters({ type: '', category: '', status: '', team: '' }) }}
+              className="btn-secondary"
+            >Clear filters</button>
+          </div>
+        ) : (
+          <EmptyState
+            icon="🧩"
+            title="No patterns yet"
+            description="Create your first architecture pattern to get started"
+            actionLabel="Create Pattern"
+            actionLink="/patterns/new"
+          />
+        )
       ) : viewMode === 'grid' ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {paginated.map(p => <PatternCard key={p.id} pattern={p} />)}
@@ -194,6 +231,7 @@ export default function PatternList() {
                         setPatterns(prev => prev.map(x => x.id === p.id ? { ...x, status: newStatus } : x))
                         try {
                           await updatePattern(p.id, { status: newStatus }, 'none')
+                          toast.success('Status updated to ' + newStatus)
                         } catch {
                           setPatterns(prev => prev.map(x => x.id === p.id ? { ...x, status: oldStatus } : x))
                         }

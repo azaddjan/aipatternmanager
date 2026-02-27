@@ -9,6 +9,8 @@ import {
 import GraphView from '../components/GraphView'
 import MarkdownContent from '../components/MarkdownContent'
 import ConfirmModal from '../components/ConfirmModal'
+import { useToast } from '../components/Toast'
+import { SkeletonText } from '../components/Skeleton'
 
 const TECH_CATEGORIES = [
   'cloud-compute', 'cloud-ai', 'cloud-data', 'cloud-infra',
@@ -56,6 +58,7 @@ function cleanTechForAI(tech) {
 export default function TechnologyDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const { toast } = useToast()
   const [tech, setTech] = useState(null)
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState(false)
@@ -205,9 +208,11 @@ export default function TechnologyDetail() {
       setHealthData(null)
       setAiRecommendations(null)
       setAiResult(null)
+      toast.success('Technology updated')
       load()
     } catch (err) {
       setError(err.message)
+      toast.error('Failed to update technology')
     }
     setSaving(false)
   }
@@ -220,13 +225,22 @@ export default function TechnologyDetail() {
     setDeleteConfirm(false)
     try {
       await deleteTechnology(id)
+      toast.success('Technology deleted')
       navigate('/technologies')
     } catch (err) {
       setError(err.message)
+      toast.error('Failed to delete technology')
     }
   }
 
-  if (loading) return <div className="text-gray-500 text-center py-12">Loading technology...</div>
+  if (loading) return (
+    <div className="space-y-6">
+      <div className="flex items-center gap-2 text-sm">
+        <Link to="/technologies" className="text-gray-500 hover:text-gray-300 transition-colors">&larr; Technologies</Link>
+      </div>
+      <SkeletonText lines={5} />
+    </div>
+  )
   if (!tech) return <div className="text-red-400 text-center py-12">Technology {id} not found</div>
 
   const catColor = CATEGORY_COLORS[tech.category] || 'bg-gray-500/20 text-gray-400 border-gray-500/30'
@@ -254,7 +268,7 @@ export default function TechnologyDetail() {
               'bg-yellow-500/20 text-yellow-400'
             }`}>{tech.status}</span>
           </div>
-          <h1 className="text-2xl font-bold text-white">{tech.name}</h1>
+          <h1 className="page-title">{tech.name}</h1>
           <p className="text-gray-500 text-sm mt-1">Vendor: {tech.vendor}</p>
         </div>
         <div className="flex gap-2">

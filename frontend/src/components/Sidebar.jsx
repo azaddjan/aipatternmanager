@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { globalSearch } from '../api/client'
+import { useToast } from './Toast'
 
 const NAV_ITEMS = [
   { to: '/',             icon: '📊', label: 'Dashboard' },
@@ -30,6 +31,7 @@ const ROLE_LABELS = {
 /* ── Profile Modal ── */
 function ProfileModal({ onClose }) {
   const { user, updateProfile, changePassword } = useAuth()
+  const { toast } = useToast()
   const [tab, setTab] = useState('profile') // profile | password
   const [name, setName] = useState(user?.name || '')
   const [email, setEmail] = useState(user?.email || '')
@@ -49,8 +51,9 @@ function ProfileModal({ onClose }) {
     setSaving(true)
     try {
       await updateProfile(updates)
+      toast.success('Profile updated')
       setMsg('Profile updated')
-    } catch (e) { setError(e.message) }
+    } catch (e) { setError(e.message); toast.error('Failed to update: ' + e.message) }
     setSaving(false)
   }
 
@@ -61,9 +64,10 @@ function ProfileModal({ onClose }) {
     setSaving(true)
     try {
       await changePassword(currentPw, newPw)
+      toast.success('Password changed')
       setMsg('Password changed successfully')
       setCurrentPw(''); setNewPw(''); setConfirmPw('')
-    } catch (e) { setError(e.message) }
+    } catch (e) { setError(e.message); toast.error('Failed to update: ' + e.message) }
     setSaving(false)
   }
 

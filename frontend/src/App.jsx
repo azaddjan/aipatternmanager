@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from './contexts/AuthContext'
+import { ToastProvider } from './components/Toast'
 import Sidebar from './components/Sidebar'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
@@ -38,29 +39,31 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden">
-      <Sidebar />
-      <main className="flex-1 overflow-y-auto p-6">
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/patterns" element={<PatternList />} />
-          <Route path="/patterns/:id" element={<PatternDetail />} />
-          <Route path="/patterns/:id/edit" element={<PatternEditor />} />
-          <Route path="/patterns/new" element={<PatternEditor />} />
-          <Route path="/graph" element={<GraphExplorer />} />
-          <Route path="/technologies" element={<TechnologyRegistry />} />
-          <Route path="/technologies/:id" element={<TechnologyDetail />} />
-          <Route path="/pbcs" element={<PBCManager />} />
-          <Route path="/pbcs/:id" element={<PBCDetail />} />
-          <Route path="/discovery" element={<PatternDiscovery />} />
-          <Route path="/advisor" element={<PatternAdvisor />} />
-          <Route path="/admin" element={isAdmin ? <Admin /> : <Navigate to="/" />} />
-          <Route path="/admin/users" element={isAdmin ? <UserManagement /> : <Navigate to="/" />} />
-          <Route path="/admin/teams" element={isAdmin ? <TeamManagement /> : <Navigate to="/" />} />
-          <Route path="/health" element={<PatternHealth />} />
-          <Route path="/impact" element={<ImpactAnalysis />} />
-        </Routes>
-      </main>
-    </div>
+    <ToastProvider>
+      <div className="flex h-screen overflow-hidden">
+        <Sidebar />
+        <main className="flex-1 overflow-y-auto p-6">
+          <Routes>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/patterns" element={<PatternList />} />
+            <Route path="/patterns/:id" element={<PatternDetail />} />
+            <Route path="/patterns/:id/edit" element={<PatternEditor />} />
+            <Route path="/patterns/new" element={<PatternEditor />} />
+            <Route path="/graph" element={<GraphExplorer />} />
+            <Route path="/technologies" element={<TechnologyRegistry />} />
+            <Route path="/technologies/:id" element={<TechnologyDetail />} />
+            <Route path="/pbcs" element={<PBCManager />} />
+            <Route path="/pbcs/:id" element={<PBCDetail />} />
+            <Route path="/discovery" element={<PatternDiscovery />} />
+            <Route path="/advisor" element={<PatternAdvisor />} />
+            <Route path="/admin" element={isAdmin ? <Admin /> : <Navigate to="/" />} />
+            <Route path="/admin/users" element={isAdmin ? <UserManagement /> : <Navigate to="/" />} />
+            <Route path="/admin/teams" element={isAdmin ? <TeamManagement /> : <Navigate to="/" />} />
+            <Route path="/health" element={<PatternHealth />} />
+            <Route path="/impact" element={<ImpactAnalysis />} />
+          </Routes>
+        </main>
+      </div>
+    </ToastProvider>
   )
 }

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { fetchFullGraph, fetchTeams } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
 import GraphView from '../components/GraphView'
+import { SkeletonCard } from '../components/Skeleton'
 
 const FILTER_OPTIONS = [
   { value: '', label: 'All' },
@@ -83,8 +84,8 @@ export default function GraphExplorer() {
         <span className="text-gray-400">Graph Explorer</span>
       </div>
       <div>
-        <h1 className="text-2xl font-bold text-white">Graph Explorer</h1>
-        <p className="text-gray-500 text-sm mt-1">
+        <h1 className="page-title">Graph Explorer</h1>
+        <p className="page-subtitle">
           Interactive pattern relationship graph. Double-click a node to navigate.
           {selectedTeam !== 'all' && (
             <span className="ml-2 text-xs bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded border border-blue-500/30">
@@ -126,7 +127,9 @@ export default function GraphExplorer() {
       </div>
 
       {loading ? (
-        <div className="text-gray-500 text-center py-24">Loading graph...</div>
+        <div className="flex items-center justify-center" style={{ height: 'calc(100vh - 220px)' }}>
+          <SkeletonCard className="w-full h-full" />
+        </div>
       ) : (
         <GraphView
           data={filteredData}

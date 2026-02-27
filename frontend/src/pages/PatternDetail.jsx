@@ -7,12 +7,15 @@ import GraphView from '../components/GraphView'
 import { TypeBadge } from '../components/PatternCard'
 import { useAuth } from '../contexts/AuthContext'
 import ConfirmModal from '../components/ConfirmModal'
+import { useToast } from '../components/Toast'
+import { SkeletonText } from '../components/Skeleton'
 
 export default function PatternDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
   const location = useLocation()
   const { canEditPattern } = useAuth()
+  const { toast } = useToast()
   const [pattern, setPattern] = useState(null)
   const [graphData, setGraphData] = useState(null)
   const [impactData, setImpactData] = useState(null)
@@ -55,6 +58,7 @@ export default function PatternDetail() {
     setDeleteConfirm(false)
     try {
       await deletePattern(id)
+      toast.success('Pattern deleted')
       navigate('/patterns')
     } catch (err) {
       setError(err.message)
@@ -72,7 +76,19 @@ export default function PatternDetail() {
     return msg
   })()
 
-  if (loading) return <div className="text-gray-500 text-center py-12">Loading pattern...</div>
+  if (loading) return (
+    <div className="space-y-6">
+      <div className="flex items-center gap-2 text-sm">
+        <Link to="/patterns" className="text-gray-500 hover:text-gray-300 transition-colors">&larr; Patterns</Link>
+      </div>
+      <div>
+        <div className="h-6 w-48 bg-gray-800 rounded animate-pulse mb-2" />
+        <div className="h-8 w-96 bg-gray-800 rounded animate-pulse mb-2" />
+        <div className="h-4 w-64 bg-gray-800 rounded animate-pulse" />
+      </div>
+      <div className="card"><SkeletonText lines={8} /></div>
+    </div>
+  )
   if (!pattern) return <div className="text-red-400 text-center py-12">Pattern {id} not found</div>
 
   const relationships = pattern.relationships || []
@@ -93,7 +109,7 @@ export default function PatternDetail() {
       </div>
 
       {error && (
-        <div className="bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg px-4 py-3 text-sm flex items-center justify-between">
+        <div className="banner-error flex items-center justify-between">
           <span>{error}</span>
           <button onClick={() => setError('')} className="text-red-400 hover:text-red-300 ml-3">&times;</button>
         </div>
@@ -121,7 +137,7 @@ export default function PatternDetail() {
               'bg-yellow-500/20 text-yellow-400'
             }`}>{pattern.status}</span>
           </div>
-          <h1 className="text-2xl font-bold text-white">{pattern.name}</h1>
+          <h1 className="page-title">{pattern.name}</h1>
           <p className="text-gray-500 text-sm mt-1">
             Category: {pattern.category} &middot; Version: {pattern.version}
             {pattern.team_name && <> &middot; Team: <span className="text-purple-400">{pattern.team_name}</span></>}

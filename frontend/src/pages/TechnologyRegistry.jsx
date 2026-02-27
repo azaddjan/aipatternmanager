@@ -3,6 +3,9 @@ import { Link } from 'react-router-dom'
 import { fetchTechnologies, createTechnology, deleteTechnology, aiTechnologySuggest } from '../api/client'
 import Pagination from '../components/Pagination'
 import SortableHeader, { sortItems } from '../components/SortableHeader'
+import { useToast } from '../components/Toast'
+import { SkeletonTableRow, SkeletonCard } from '../components/Skeleton'
+import EmptyState from '../components/EmptyState'
 
 const VENDORS = ['', 'AWS', 'Microsoft', 'Open Source', 'Hugging Face', 'LangChain', 'Salesforce', 'Redis']
 
@@ -31,6 +34,7 @@ const CATEGORY_COLORS = {
 const CATEGORY_LABELS = Object.fromEntries(TECH_CATEGORIES.map(c => [c.value, c.label]))
 
 export default function TechnologyRegistry() {
+  const { toast } = useToast()
   const [technologies, setTechnologies] = useState([])
   const [loading, setLoading] = useState(true)
   const [filters, setFilters] = useState({ vendor: '', category: '', status: '' })
@@ -102,9 +106,11 @@ export default function TechnologyRegistry() {
       setForm({ id: '', name: '', vendor: '', category: 'framework', status: 'APPROVED', description: '', cost_tier: '' })
       setShowForm(false)
       setFieldErrors({})
+      toast.success('Technology created')
       load()
     } catch (err) {
       setError(err.message)
+      toast.error('Failed to create technology')
     }
   }
 
@@ -137,8 +143,8 @@ export default function TechnologyRegistry() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Technology Registry</h1>
-          <p className="text-gray-500 text-sm mt-1">{filtered.length}{filtered.length !== technologies.length ? ` of ${technologies.length}` : ''} technologies</p>
+          <h1 className="page-title">Technology Registry</h1>
+          <p className="page-subtitle">{filtered.length}{filtered.length !== technologies.length ? ` of ${technologies.length}` : ''} technologies</p>
         </div>
         <div className="flex gap-2">
           {/* View Toggle */}
@@ -268,9 +274,37 @@ export default function TechnologyRegistry() {
 
       {/* Content */}
       {loading ? (
-        <div className="text-gray-500 text-center py-12">Loading technologies...</div>
+        view === 'table' ? (
+          <div className="card overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-gray-500 text-left border-b border-gray-800">
+                  <th className="text-left text-xs text-gray-500 pb-3 font-medium">ID</th>
+                  <th className="text-left text-xs text-gray-500 pb-3 font-medium">Name</th>
+                  <th className="text-left text-xs text-gray-500 pb-3 font-medium">Vendor</th>
+                  <th className="text-left text-xs text-gray-500 pb-3 font-medium">Category</th>
+                  <th className="text-left text-xs text-gray-500 pb-3 font-medium">Status</th>
+                  <th className="text-left text-xs text-gray-500 pb-3 font-medium">Description</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Array.from({ length: 5 }).map((_, i) => <SkeletonTableRow key={i} cols={6} />)}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)}
+          </div>
+        )
       ) : filtered.length === 0 ? (
-        <div className="text-gray-500 text-center py-12">No technologies found</div>
+        <EmptyState
+          icon="⚙️"
+          title="No technologies yet"
+          description="Add technologies to track your tech stack"
+          actionLabel="Add Technology"
+          onAction={() => setShowForm(true)}
+        />
       ) : view === 'table' ? (
         /* Table View (Default) */
         <div className="card overflow-x-auto">

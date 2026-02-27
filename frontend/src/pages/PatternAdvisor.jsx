@@ -9,6 +9,8 @@ import {
 } from '../api/client'
 import MarkdownContent from '../components/MarkdownContent'
 import ConfirmModal from '../components/ConfirmModal'
+import { useToast } from '../components/Toast'
+import EmptyState from '../components/EmptyState'
 
 const CONFIDENCE_COLORS = {
   HIGH: 'bg-green-500/20 text-green-400 border-green-500/30',
@@ -31,6 +33,7 @@ const PROGRESS_STEPS = [
 ]
 
 export default function PatternAdvisor() {
+  const { toast } = useToast()
   // --- Form state ---
   const [problem, setProblem] = useState('')
   const [categoryFocus, setCategoryFocus] = useState('')
@@ -192,10 +195,12 @@ export default function PatternAdvisor() {
       setProgressStep(4)
       if (res.saved_report_id) {
         setSavedReportId(res.saved_report_id)
+        toast.success('Analysis saved')
       }
       fetchAdvisorReports(50).then(r => setReports(r?.reports || [])).catch(() => {})
     } catch (err) {
       setError(err.message)
+      toast.error('Analysis failed')
     }
     setAnalyzing(false)
   }
@@ -294,8 +299,10 @@ export default function PatternAdvisor() {
           await deleteAdvisorReport(id)
           setReports(prev => prev.filter(r => r.id !== id))
           if (savedReportId === id) setSavedReportId(null)
+          toast.success('Report deleted')
         } catch (err) {
           setError(`Failed to delete: ${err.message}`)
+          toast.error('Failed to delete report')
         }
       },
     })
@@ -361,10 +368,10 @@ export default function PatternAdvisor() {
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+          <h1 className="page-title flex items-center gap-2">
             <span className="text-2xl">🧠</span> Pattern Advisor
           </h1>
-          <p className="text-gray-500 text-sm mt-1">
+          <p className="page-subtitle">
             Describe your architecture problem and get AI-powered recommendations using GraphRAG
           </p>
         </div>
@@ -701,6 +708,13 @@ export default function PatternAdvisor() {
       )}
 
       {/* Report History */}
+      {reports.length === 0 && !result && !analyzing && (
+        <EmptyState
+          icon="🧠"
+          title="No analyses yet"
+          description="Describe a problem above to get started"
+        />
+      )}
       {reports.length > 0 && (
         <div className="space-y-3">
           {/* Header */}
