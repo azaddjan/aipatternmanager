@@ -540,6 +540,24 @@ export function discoverPatterns(provider = null, model = null, focus = null) {
   return request(`/discovery/suggest${query ? `?${query}` : ''}`, { method: 'POST' })
 }
 
+// --- Discovery Analysis Persistence ---
+
+export function fetchLatestDiscoveryAnalysis() {
+  return request('/discovery/analyses/latest')
+}
+
+export function fetchDiscoveryAnalyses(limit = 20) {
+  return request(`/discovery/analyses?limit=${limit}`)
+}
+
+export function fetchDiscoveryAnalysis(id) {
+  return request(`/discovery/analyses/${encodeURIComponent(id)}`)
+}
+
+export function deleteDiscoveryAnalysis(id) {
+  return request(`/discovery/analyses/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
 // --- Pattern Images ---
 
 export async function uploadPatternImage(patternId, file, title = '') {

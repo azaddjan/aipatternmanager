@@ -11,6 +11,22 @@ from docx.oxml.ns import qn, nsdecls
 from docx.oxml import parse_xml
 
 
+# The 9 analysis areas produced by the AI deep analysis prompt
+ANALYSIS_AREAS = [
+    ("Architecture Coherence", "architecture_coherence"),
+    ("ABB\u2013SBB Alignment", "abb_sbb_alignment"),
+    ("Interface Consistency", "interface_consistency"),
+    ("Business Capability Gaps", "business_capability_gaps"),
+    ("Vendor & Technology Risk", "vendor_technology_risk"),
+    ("Content Quality", "content_quality"),
+    ("Cross-Pattern Overlap", "cross_pattern_overlap"),
+    ("PBC Composition", "pbc_composition"),
+]
+
+# Keys that contain recommendation-like lists (excluded from "findings" aggregation)
+_RECOMMENDATION_KEYS = {"recommendations", "consolidation_suggestions"}
+
+
 class HealthAnalysisDocxExportService:
     """Generates a Word document for a single health analysis."""
 
@@ -31,8 +47,7 @@ class HealthAnalysisDocxExportService:
             self._add_executive_summary(doc, analysis, analysis_json)
             self._add_assessment_scores(doc, analysis_json)
             self._add_detailed_assessments(doc, analysis_json)
-            self._add_gap_analysis(doc, analysis_json)
-            self._add_top_recommendations(doc, analysis_json)
+            self._add_maturity_roadmap(doc, analysis_json)
         else:
             # Fallback: raw_text key present or analysis_json is a string
             self._add_raw_text_fallback(doc, analysis_json)
@@ -196,32 +211,25 @@ class HealthAnalysisDocxExportService:
 
             doc.add_paragraph("")  # spacer
 
-        # Overview text
-        overview = analysis_json.get("overview", "")
-        if overview:
+        # Executive summary text (AI deep analysis key)
+        summary = analysis_json.get("executive_summary", "") or analysis_json.get("overview", "")
+        if summary:
             overview_heading = doc.add_paragraph()
             run = overview_heading.add_run("Overview")
             run.bold = True
             run.font.size = Pt(12)
             run.font.color.rgb = RGBColor(0x1A, 0x1A, 0x2E)
 
-            self._add_structured_text(doc, overview)
+            self._add_structured_text(doc, summary)
 
     # ------------------------------------------------------------------
-    # Assessment Scores (summary table)
+    # Assessment Scores (summary table for all 9 areas)
     # ------------------------------------------------------------------
 
     def _add_assessment_scores(self, doc: Document, analysis_json: dict) -> None:
-        """Add a summary table of all assessment area scores, issues, and suggestions."""
-        assessment_areas = [
-            ("Naming Consistency", "naming_consistency"),
-            ("Category Assessment", "category_assessment"),
-            ("Relationship Quality", "relationship_quality"),
-            ("Design Quality", "design_quality"),
-        ]
-
+        """Add a summary table of all 9 assessment area ratings."""
         # Only add section if at least one area exists
-        has_any = any(analysis_json.get(key) for _, key in assessment_areas)
+        has_any = any(analysis_json.get(key) for _, key in ANALYSIS_AREAS)
         if not has_any:
             return
 
@@ -232,189 +240,221 @@ class HealthAnalysisDocxExportService:
         table.alignment = WD_TABLE_ALIGNMENT.LEFT
 
         hdr = table.rows[0].cells
-        for i, label in enumerate(["Area", "Score", "Issues", "Suggestions"]):
+        for i, label in enumerate(["Area", "Rating", "Findings", "Recommendations"]):
             hdr[i].text = label
             for paragraph in hdr[i].paragraphs:
                 for r in paragraph.runs:
                     r.bold = True
 
-        for area_name, area_key in assessment_areas:
+        for area_name, area_key in ANALYSIS_AREAS:
             area_data = analysis_json.get(area_key, {})
             if not isinstance(area_data, dict):
                 continue
 
             row = table.add_row()
             row.cells[0].text = area_name
-            row.cells[1].text = area_data.get("score", "N/A")
+            row.cells[1].text = area_data.get("rating", "N/A")
 
-            issues = area_data.get("issues", [])
-            if isinstance(issues, list):
-                row.cells[2].text = str(len(issues))
-            else:
-                row.cells[2].text = "0"
+            # Count all findings (all list values except recommendation keys)
+            finding_count = self._count_findings(area_data)
+            row.cells[2].text = str(finding_count)
 
-            suggestions = area_data.get("suggestions", [])
-            if isinstance(suggestions, list):
-                row.cells[3].text = str(len(suggestions))
-            else:
-                row.cells[3].text = "0"
+            # Count recommendations
+            rec_count = self._count_recommendations(area_data)
+            row.cells[3].text = str(rec_count)
 
         doc.add_paragraph("")  # spacer
 
     # ------------------------------------------------------------------
-    # Detailed Assessments
+    # Detailed Assessments (one section per area)
     # ------------------------------------------------------------------
 
     def _add_detailed_assessments(self, doc: Document, analysis_json: dict) -> None:
-        """Add detailed breakdown for each assessment area with issues and suggestions bullets."""
-        assessment_areas = [
-            ("Naming Consistency", "naming_consistency"),
-            ("Category Assessment", "category_assessment"),
-            ("Relationship Quality", "relationship_quality"),
-            ("Design Quality", "design_quality"),
-        ]
-
-        has_any = any(analysis_json.get(key) for _, key in assessment_areas)
+        """Add detailed breakdown for each of the 9 assessment areas."""
+        has_any = any(analysis_json.get(key) for _, key in ANALYSIS_AREAS)
         if not has_any:
             return
 
         doc.add_heading("Detailed Assessments", level=1)
 
-        for area_name, area_key in assessment_areas:
+        for area_name, area_key in ANALYSIS_AREAS:
             area_data = analysis_json.get(area_key, {})
             if not isinstance(area_data, dict):
                 continue
 
             doc.add_heading(area_name, level=2)
 
-            # Score line
-            score = area_data.get("score", "")
-            if score:
-                score_para = doc.add_paragraph()
-                run = score_para.add_run("Score: ")
+            # Rating line
+            rating = area_data.get("rating", "")
+            if rating:
+                rating_para = doc.add_paragraph()
+                run = rating_para.add_run("Rating: ")
                 run.bold = True
                 run.font.color.rgb = RGBColor(0x1A, 0x1A, 0x2E)
 
-                score_run = score_para.add_run(score)
-                score_run.bold = True
-                score_run.font.color.rgb = self._assessment_score_color(score)
+                rating_run = rating_para.add_run(rating)
+                rating_run.bold = True
+                rating_run.font.color.rgb = self._rating_color(rating)
 
-            # Balanced flag (specific to category_assessment)
-            if area_key == "category_assessment" and "balanced" in area_data:
-                balanced = area_data["balanced"]
-                balanced_para = doc.add_paragraph()
-                run = balanced_para.add_run("Balanced: ")
-                run.bold = True
-                balanced_para.add_run("Yes" if balanced else "No")
+            # Findings — all list/dict-list values except recommendations
+            findings_rendered = False
+            for fkey, fval in area_data.items():
+                if fkey in ("rating",) or fkey in _RECOMMENDATION_KEYS:
+                    continue
+                if isinstance(fval, list) and fval:
+                    if not findings_rendered:
+                        findings_heading = doc.add_paragraph()
+                        run = findings_heading.add_run("Findings")
+                        run.bold = True
+                        run.font.size = Pt(11)
+                        run.font.color.rgb = RGBColor(0xCC, 0x33, 0x33)
+                        findings_rendered = True
 
-            # Issues
-            issues = area_data.get("issues", [])
-            if isinstance(issues, list) and issues:
-                issues_heading = doc.add_paragraph()
-                run = issues_heading.add_run("Issues")
-                run.bold = True
-                run.font.size = Pt(11)
-                run.font.color.rgb = RGBColor(0xCC, 0x33, 0x33)
+                    # Sub-label for the finding category
+                    sublabel = doc.add_paragraph()
+                    run = sublabel.add_run(fkey.replace("_", " ").title())
+                    run.italic = True
+                    run.font.size = Pt(10)
+                    run.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
 
-                for issue in issues:
-                    doc.add_paragraph(str(issue), style="List Bullet")
+                    for item in fval:
+                        if isinstance(item, dict):
+                            # Render dict items as key-value summary
+                            parts = []
+                            for dk, dv in item.items():
+                                if isinstance(dv, list):
+                                    parts.append(f"{dk}: {', '.join(str(x) for x in dv)}")
+                                else:
+                                    parts.append(f"{dk}: {dv}")
+                            doc.add_paragraph(" | ".join(parts), style="List Bullet")
+                        else:
+                            doc.add_paragraph(str(item), style="List Bullet")
 
-            # Suggestions
-            suggestions = area_data.get("suggestions", [])
-            if isinstance(suggestions, list) and suggestions:
-                suggestions_heading = doc.add_paragraph()
-                run = suggestions_heading.add_run("Suggestions")
+            # Recommendations
+            recs = area_data.get("recommendations", []) or area_data.get("consolidation_suggestions", [])
+            if isinstance(recs, list) and recs:
+                recs_heading = doc.add_paragraph()
+                run = recs_heading.add_run("Recommendations")
                 run.bold = True
                 run.font.size = Pt(11)
                 run.font.color.rgb = RGBColor(0x22, 0x88, 0x22)
 
-                for suggestion in suggestions:
-                    doc.add_paragraph(str(suggestion), style="List Bullet")
+                for rec in recs:
+                    doc.add_paragraph(str(rec), style="List Bullet")
 
             doc.add_paragraph("")  # spacer between areas
 
     # ------------------------------------------------------------------
-    # Gap Analysis
+    # Maturity Roadmap
     # ------------------------------------------------------------------
 
-    def _add_gap_analysis(self, doc: Document, analysis_json: dict) -> None:
-        """Add Gap Analysis section with table of suggested patterns."""
-        gap_data = analysis_json.get("gap_analysis", {})
-        if not isinstance(gap_data, dict):
+    def _add_maturity_roadmap(self, doc: Document, analysis_json: dict) -> None:
+        """Add the Maturity & Actionable Roadmap section."""
+        roadmap = analysis_json.get("maturity_roadmap", {})
+        if not isinstance(roadmap, dict) or not roadmap:
             return
 
-        missing_patterns = gap_data.get("missing_patterns", [])
-        if not isinstance(missing_patterns, list) or not missing_patterns:
-            return
+        doc.add_heading("Maturity & Roadmap", level=1)
 
-        doc.add_heading("Gap Analysis", level=1)
+        # Overall maturity
+        overall = roadmap.get("overall_maturity", "")
+        if overall:
+            maturity_para = doc.add_paragraph()
+            run = maturity_para.add_run("Overall Maturity: ")
+            run.bold = True
+            run.font.size = Pt(14)
+            run.font.color.rgb = RGBColor(0x1A, 0x1A, 0x2E)
 
-        table = doc.add_table(rows=1, cols=4)
-        table.style = "Light Shading Accent 1"
-        table.alignment = WD_TABLE_ALIGNMENT.LEFT
+            maturity_run = maturity_para.add_run(overall)
+            maturity_run.bold = True
+            maturity_run.font.size = Pt(14)
+            maturity_run.font.color.rgb = self._maturity_color(overall)
 
-        hdr = table.rows[0].cells
-        for i, label in enumerate(["Suggested Pattern", "Type", "Category", "Rationale"]):
-            hdr[i].text = label
-            for paragraph in hdr[i].paragraphs:
-                for r in paragraph.runs:
-                    r.bold = True
+        # Area maturity table
+        area_maturity = roadmap.get("area_maturity", {})
+        if isinstance(area_maturity, dict) and area_maturity:
+            doc.add_paragraph("")
+            area_heading = doc.add_paragraph()
+            run = area_heading.add_run("Area Maturity Levels")
+            run.bold = True
+            run.font.size = Pt(12)
+            run.font.color.rgb = RGBColor(0x1A, 0x1A, 0x2E)
 
-        for pattern in missing_patterns:
-            if not isinstance(pattern, dict):
-                continue
-            row = table.add_row()
-            row.cells[0].text = pattern.get("name", "")
-            row.cells[1].text = pattern.get("type", "")
-            row.cells[2].text = pattern.get("category", "")
-            row.cells[3].text = pattern.get("why", "")
+            table = doc.add_table(rows=1, cols=2)
+            table.style = "Light Shading Accent 1"
+            table.alignment = WD_TABLE_ALIGNMENT.LEFT
 
-        doc.add_paragraph("")  # spacer
+            hdr = table.rows[0].cells
+            hdr[0].text = "Area"
+            hdr[1].text = "Maturity"
+            for cell in hdr:
+                for paragraph in cell.paragraphs:
+                    for r in paragraph.runs:
+                        r.bold = True
 
-    # ------------------------------------------------------------------
-    # Top Recommendations
-    # ------------------------------------------------------------------
+            for area, level in area_maturity.items():
+                row = table.add_row()
+                row.cells[0].text = area.replace("_", " ").title()
+                row.cells[1].text = str(level)
 
-    def _add_top_recommendations(self, doc: Document, analysis_json: dict) -> None:
-        """Add Top Recommendations as a numbered list with priority, title, description, and effort."""
-        recommendations = analysis_json.get("top_recommendations", [])
-        if not isinstance(recommendations, list) or not recommendations:
-            return
+            doc.add_paragraph("")
 
-        doc.add_heading("Top Recommendations", level=1)
+        # Prioritized actions
+        actions = roadmap.get("prioritized_actions", [])
+        if isinstance(actions, list) and actions:
+            actions_heading = doc.add_paragraph()
+            run = actions_heading.add_run("Prioritized Actions")
+            run.bold = True
+            run.font.size = Pt(12)
+            run.font.color.rgb = RGBColor(0x1A, 0x1A, 0x2E)
 
-        for rec in recommendations:
-            if not isinstance(rec, dict):
-                continue
+            for act in actions:
+                if not isinstance(act, dict):
+                    continue
 
-            priority = rec.get("priority", "")
-            title = rec.get("title", "")
-            description = rec.get("description", "")
-            effort = rec.get("effort", "")
+                priority = act.get("priority", "")
+                action_text = act.get("action", "")
+                impact = act.get("impact", "")
+                effort = act.get("effort", "")
+                affected = act.get("affected_patterns", [])
 
-            # Numbered heading line: "1. Title"
-            rec_para = doc.add_paragraph()
-            header_run = rec_para.add_run(f"{priority}. {title}")
-            header_run.bold = True
-            header_run.font.size = Pt(12)
-            header_run.font.color.rgb = RGBColor(0x1A, 0x1A, 0x2E)
+                # Header line
+                rec_para = doc.add_paragraph()
+                header_run = rec_para.add_run(f"{priority}. {action_text}")
+                header_run.bold = True
+                header_run.font.size = Pt(12)
+                header_run.font.color.rgb = RGBColor(0x1A, 0x1A, 0x2E)
 
-            # Description
-            if description:
-                doc.add_paragraph(description)
+                # Impact + effort
+                if impact or effort:
+                    meta_para = doc.add_paragraph()
+                    if impact:
+                        run = meta_para.add_run("Impact: ")
+                        run.bold = True
+                        run.font.color.rgb = RGBColor(0x1A, 0x1A, 0x2E)
+                        impact_run = meta_para.add_run(impact)
+                        impact_run.font.color.rgb = self._effort_color(impact)
+                        impact_run.bold = True
+                    if impact and effort:
+                        meta_para.add_run("  |  ")
+                    if effort:
+                        run = meta_para.add_run("Effort: ")
+                        run.bold = True
+                        run.font.color.rgb = RGBColor(0x1A, 0x1A, 0x2E)
+                        effort_run = meta_para.add_run(effort)
+                        effort_run.font.color.rgb = self._effort_color(effort)
+                        effort_run.bold = True
 
-            # Effort level
-            if effort:
-                effort_para = doc.add_paragraph()
-                run = effort_para.add_run("Effort: ")
-                run.bold = True
-                run.font.color.rgb = RGBColor(0x1A, 0x1A, 0x2E)
+                # Affected patterns
+                if isinstance(affected, list) and affected:
+                    affected_para = doc.add_paragraph()
+                    run = affected_para.add_run("Affected: ")
+                    run.bold = True
+                    run.font.size = Pt(10)
+                    run.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
+                    affected_para.add_run(", ".join(str(p) for p in affected)).font.size = Pt(10)
 
-                effort_run = effort_para.add_run(effort)
-                effort_run.bold = True
-                effort_run.font.color.rgb = self._effort_color(effort)
-
-            doc.add_paragraph("")  # spacer between recommendations
+                doc.add_paragraph("")  # spacer between actions
 
     # ------------------------------------------------------------------
     # Raw text fallback
@@ -469,6 +509,25 @@ class HealthAnalysisDocxExportService:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _count_findings(self, area_data: dict) -> int:
+        """Count all finding items in an area (all lists except recommendations)."""
+        count = 0
+        for key, val in area_data.items():
+            if key in ("rating",) or key in _RECOMMENDATION_KEYS:
+                continue
+            if isinstance(val, list):
+                count += len(val)
+        return count
+
+    def _count_recommendations(self, area_data: dict) -> int:
+        """Count recommendation items in an area."""
+        count = 0
+        for key in _RECOMMENDATION_KEYS:
+            val = area_data.get(key, [])
+            if isinstance(val, list):
+                count += len(val)
+        return count
 
     def _add_structured_text(self, doc: Document, text: str) -> None:
         """Add text to the document, handling markdown lists, bold, and tables."""
@@ -583,20 +642,32 @@ class HealthAnalysisDocxExportService:
         else:
             return RGBColor(0xCC, 0x33, 0x33)  # red
 
-    def _assessment_score_color(self, score_label: str) -> RGBColor:
-        """Return a colour based on a GOOD/FAIR/POOR label."""
-        label = str(score_label).upper()
-        if label == "GOOD":
+    def _rating_color(self, rating: str) -> RGBColor:
+        """Return a colour based on a rating label (STRONG/ADEQUATE/WEAK etc)."""
+        label = str(rating).upper()
+        if label in ("STRONG", "LOW_RISK", "CLEAN"):
             return RGBColor(0x22, 0x88, 0x22)  # green
-        elif label == "FAIR":
+        elif label in ("ADEQUATE", "MODERATE_RISK", "SOME_OVERLAP"):
             return RGBColor(0xDD, 0x99, 0x00)  # amber
-        elif label == "POOR":
+        elif label in ("WEAK", "HIGH_RISK", "SIGNIFICANT_OVERLAP"):
             return RGBColor(0xCC, 0x33, 0x33)  # red
         else:
             return RGBColor(0x88, 0x88, 0x88)  # grey
 
+    def _maturity_color(self, maturity: str) -> RGBColor:
+        """Return a colour based on maturity level."""
+        label = str(maturity).upper()
+        if label in ("MANAGED", "OPTIMIZING"):
+            return RGBColor(0x22, 0x88, 0x22)  # green
+        elif label in ("DEFINED", "DEVELOPING"):
+            return RGBColor(0xDD, 0x99, 0x00)  # amber
+        elif label == "INITIAL":
+            return RGBColor(0xCC, 0x33, 0x33)  # red
+        else:
+            return RGBColor(0x88, 0x88, 0x88)
+
     def _effort_color(self, effort_label: str) -> RGBColor:
-        """Return a colour based on a LOW/MEDIUM/HIGH effort label."""
+        """Return a colour based on a LOW/MEDIUM/HIGH label."""
         label = str(effort_label).upper()
         if label == "LOW":
             return RGBColor(0x22, 0x88, 0x22)  # green

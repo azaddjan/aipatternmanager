@@ -7,6 +7,22 @@ import re
 from datetime import datetime
 
 
+# The 9 analysis areas produced by the AI deep analysis prompt
+ANALYSIS_AREAS = [
+    ("architecture_coherence", "Architecture Coherence"),
+    ("abb_sbb_alignment", "ABB\u2013SBB Alignment"),
+    ("interface_consistency", "Interface Consistency"),
+    ("business_capability_gaps", "Business Capability Gaps"),
+    ("vendor_technology_risk", "Vendor & Technology Risk"),
+    ("content_quality", "Content Quality"),
+    ("cross_pattern_overlap", "Cross-Pattern Overlap"),
+    ("pbc_composition", "PBC Composition"),
+]
+
+# Keys that contain recommendation-like lists
+_RECOMMENDATION_KEYS = {"recommendations", "consolidation_suggestions"}
+
+
 class HealthAnalysisHtmlExportService:
     """Generates a self-contained HTML health analysis file with inline dark-theme CSS."""
 
@@ -32,8 +48,7 @@ class HealthAnalysisHtmlExportService:
             parts.append(self._overview_section(analysis_json))
             parts.append(self._score_cards_section(analysis_json))
             parts.append(self._detailed_assessments_section(analysis_json))
-            parts.append(self._gap_analysis_section(analysis_json))
-            parts.append(self._recommendations_section(analysis_json))
+            parts.append(self._maturity_roadmap_section(analysis_json))
 
         parts.extend([
             self._footer(analysis),
@@ -333,24 +348,24 @@ body {{
     font-weight: 600;
     color: var(--text-heading);
 }}
-.issues-list, .suggestions-list {{
+.findings-list, .recommendations-list {{
     margin: 0 0 0 18px;
     padding: 0;
     font-size: 13px;
     line-height: 1.6;
 }}
-.issues-list li {{
+.findings-list li {{
     color: var(--orange);
     margin-bottom: 4px;
 }}
-.issues-list li span {{
+.findings-list li span {{
     color: var(--text);
 }}
-.suggestions-list li {{
+.recommendations-list li {{
     color: var(--cyan);
     margin-bottom: 4px;
 }}
-.suggestions-list li span {{
+.recommendations-list li span {{
     color: var(--text);
 }}
 .detail-label {{
@@ -360,8 +375,38 @@ body {{
     letter-spacing: 0.5px;
     margin: 12px 0 6px;
 }}
-.detail-label-issues {{ color: var(--orange); }}
-.detail-label-suggestions {{ color: var(--cyan); }}
+.detail-label-findings {{ color: var(--orange); }}
+.detail-label-recommendations {{ color: var(--cyan); }}
+.finding-sublabel {{
+    font-size: 11px;
+    color: var(--text-muted);
+    font-style: italic;
+    margin: 8px 0 4px;
+}}
+
+/* ---- Maturity ---- */
+.maturity-badge {{
+    display: inline-block;
+    font-size: 16px;
+    font-weight: 800;
+    padding: 6px 18px;
+    border-radius: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 16px;
+}}
+.maturity-managed, .maturity-optimizing {{
+    background: rgba(63, 185, 80, 0.15);
+    color: var(--green);
+}}
+.maturity-defined, .maturity-developing {{
+    background: rgba(210, 153, 34, 0.15);
+    color: var(--yellow);
+}}
+.maturity-initial {{
+    background: rgba(248, 81, 73, 0.15);
+    color: var(--red);
+}}
 
 /* ---- Tables ---- */
 .table-wrapper {{
@@ -392,17 +437,12 @@ td {{
 tr:hover td {{
     background: var(--bg-card-hover);
 }}
-.table-gap th {{
-    background: rgba(188, 140, 255, 0.08);
-    color: var(--purple);
-}}
 
-/* ---- Recommendations ---- */
+/* ---- Recommendations / Actions ---- */
 .rec-list {{
     list-style: none;
     margin: 0;
     padding: 0;
-    counter-reset: rec-counter;
 }}
 .rec-item {{
     background: var(--bg-card);
@@ -451,23 +491,26 @@ tr:hover td {{
     color: var(--text-muted);
     line-height: 1.55;
 }}
-.badge-effort-low {{
-    background: rgba(63, 185, 80, 0.12);
-    color: var(--green);
-    font-size: 10px;
-    padding: 2px 8px;
-}}
-.badge-effort-medium {{
-    background: rgba(210, 153, 34, 0.12);
-    color: var(--yellow);
-    font-size: 10px;
-    padding: 2px 8px;
-}}
-.badge-effort-high {{
+.badge-impact-high, .badge-effort-high {{
     background: rgba(248, 81, 73, 0.12);
     color: var(--red);
     font-size: 10px;
     padding: 2px 8px;
+    border-radius: 12px;
+}}
+.badge-impact-medium, .badge-effort-medium {{
+    background: rgba(210, 153, 34, 0.12);
+    color: var(--yellow);
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 12px;
+}}
+.badge-impact-low, .badge-effort-low {{
+    background: rgba(63, 185, 80, 0.12);
+    color: var(--green);
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 12px;
 }}
 
 /* ---- Raw text fallback ---- */
@@ -509,19 +552,6 @@ code {{
     font-style: italic;
     padding: 8px 0;
 }}
-.type-badge {{
-    display: inline-block;
-    font-size: 10px;
-    font-weight: 700;
-    padding: 2px 8px;
-    border-radius: 4px;
-    text-transform: uppercase;
-    letter-spacing: 0.3px;
-    font-family: 'SF Mono', Menlo, monospace;
-}}
-.type-ab  {{ background: rgba(88, 166, 255, 0.12);  color: var(--accent); }}
-.type-abb {{ background: rgba(188, 140, 255, 0.12); color: var(--purple); }}
-.type-sbb {{ background: rgba(57, 210, 192, 0.12);  color: var(--cyan); }}
 
 @media (max-width: 640px) {{
     .container {{ padding: 20px 16px 40px; }}
@@ -555,7 +585,7 @@ code {{
         score_color_class = self._score_color_class(health_score)
         stroke_class = self._score_stroke_class(health_score)
 
-        # SVG ring calculation (radius 52, circumference = 2*pi*52 ≈ 326.73)
+        # SVG ring calculation (radius 52, circumference = 2*pi*52 ~ 326.73)
         circumference = 326.73
         score_clamped = max(0, min(100, health_score))
         dash_offset = circumference - (circumference * score_clamped / 100)
@@ -651,52 +681,44 @@ code {{
         return "\n".join(parts)
 
     # ------------------------------------------------------------------
-    # Library Overview
+    # Executive Summary / Overview
     # ------------------------------------------------------------------
 
     def _overview_section(self, analysis_json: dict) -> str:
-        overview = analysis_json.get("overview", "")
-        if not overview:
+        summary = analysis_json.get("executive_summary", "") or analysis_json.get("overview", "")
+        if not summary:
             return ""
         parts = [
             '<div class="section">',
-            '<h2 class="section-title">Library Overview</h2>',
-            f'<div class="rendered-text">{self._render_text(overview)}</div>',
+            '<h2 class="section-title">Executive Summary</h2>',
+            f'<div class="rendered-text">{self._render_text(summary)}</div>',
             '</div>',
         ]
         return "\n".join(parts)
 
     # ------------------------------------------------------------------
-    # Assessment Score Cards (grid of 4)
+    # Assessment Score Cards (grid of 8 areas)
     # ------------------------------------------------------------------
 
     def _score_cards_section(self, analysis_json: dict) -> str:
-        cards_config = [
-            ("naming_consistency", "Naming Consistency"),
-            ("category_assessment", "Categories"),
-            ("relationship_quality", "Relationships"),
-            ("design_quality", "Design Quality"),
-        ]
-
-        # Only render if at least one section exists
-        has_any = any(analysis_json.get(key) for key, _ in cards_config)
+        has_any = any(analysis_json.get(key) for key, _ in ANALYSIS_AREAS)
         if not has_any:
             return ""
 
         parts = [
             '<div class="section">',
-            '<h2 class="section-title">Assessment Scores</h2>',
+            '<h2 class="section-title">Assessment Ratings</h2>',
             '<div class="score-cards">',
         ]
 
-        for key, label in cards_config:
+        for key, label in ANALYSIS_AREAS:
             section_data = analysis_json.get(key, {}) or {}
-            score = (section_data.get("score") or "N/A").upper()
-            badge_cls = self._assessment_badge_class(score)
+            rating = (section_data.get("rating") or "N/A").upper()
+            badge_cls = self._rating_badge_class(rating)
             parts.append(
                 f'<div class="score-card">'
                 f'<div class="card-title">{self._escape(label)}</div>'
-                f'<span class="card-badge {badge_cls}">{self._escape(score)}</span>'
+                f'<span class="card-badge {badge_cls}">{self._escape(rating)}</span>'
                 f'</div>'
             )
 
@@ -705,19 +727,12 @@ code {{
         return "\n".join(parts)
 
     # ------------------------------------------------------------------
-    # Detailed Assessment Sections
+    # Detailed Assessment Sections (9 areas)
     # ------------------------------------------------------------------
 
     def _detailed_assessments_section(self, analysis_json: dict) -> str:
-        sections_config = [
-            ("naming_consistency", "Naming Consistency"),
-            ("category_assessment", "Category Assessment"),
-            ("relationship_quality", "Relationship Quality"),
-            ("design_quality", "Design Quality"),
-        ]
-
         rendered_sections = []
-        for key, label in sections_config:
+        for key, label in ANALYSIS_AREAS:
             section_html = self._single_assessment(analysis_json.get(key, {}), label)
             if section_html:
                 rendered_sections.append(section_html)
@@ -737,149 +752,129 @@ code {{
         if not section_data:
             return ""
 
-        score = (section_data.get("score") or "N/A").upper()
-        badge_cls = self._assessment_badge_class(score)
-        issues = section_data.get("issues", []) or []
-        suggestions = section_data.get("suggestions", []) or []
-        balanced = section_data.get("balanced")
-
-        if not issues and not suggestions:
-            return ""
+        rating = (section_data.get("rating") or "N/A").upper()
+        badge_cls = self._rating_badge_class(rating)
 
         parts = ['<div class="assessment-card">']
 
         # Card header
         parts.append('<div class="card-header">')
         parts.append(f'<h3>{self._escape(label)}</h3>')
-        badge_parts = f'<span class="card-badge {badge_cls}">{self._escape(score)}</span>'
-        if balanced is not None:
-            balanced_text = "Balanced" if balanced else "Imbalanced"
-            balanced_color = "var(--green)" if balanced else "var(--orange)"
-            badge_parts += (
-                f' <span style="font-size:11px;color:{balanced_color};'
-                f'margin-left:8px;font-weight:600;">{balanced_text}</span>'
-            )
-        parts.append(f'<div>{badge_parts}</div>')
+        parts.append(f'<span class="card-badge {badge_cls}">{self._escape(rating)}</span>')
         parts.append('</div>')
 
-        # Issues
-        if issues:
-            parts.append('<div class="detail-label detail-label-issues">Issues</div>')
-            parts.append('<ul class="issues-list">')
-            for issue in issues:
-                parts.append(f'<li><span>{self._escape(issue)}</span></li>')
+        # Findings — all list fields except recommendations
+        has_findings = False
+        for fkey, fval in section_data.items():
+            if fkey in ("rating",) or fkey in _RECOMMENDATION_KEYS:
+                continue
+            if isinstance(fval, list) and fval:
+                if not has_findings:
+                    parts.append('<div class="detail-label detail-label-findings">Findings</div>')
+                    has_findings = True
+
+                sublabel = fkey.replace("_", " ").title()
+                parts.append(f'<div class="finding-sublabel">{self._escape(sublabel)}</div>')
+                parts.append('<ul class="findings-list">')
+                for item in fval:
+                    if isinstance(item, dict):
+                        item_parts = []
+                        for dk, dv in item.items():
+                            if isinstance(dv, list):
+                                item_parts.append(f"<strong>{self._escape(dk)}</strong>: {self._escape(', '.join(str(x) for x in dv))}")
+                            else:
+                                item_parts.append(f"<strong>{self._escape(dk)}</strong>: {self._escape(str(dv))}")
+                        parts.append(f'<li><span>{" &middot; ".join(item_parts)}</span></li>')
+                    else:
+                        parts.append(f'<li><span>{self._escape(str(item))}</span></li>')
+                parts.append('</ul>')
+
+        # Recommendations
+        recs = section_data.get("recommendations", []) or section_data.get("consolidation_suggestions", [])
+        if isinstance(recs, list) and recs:
+            parts.append('<div class="detail-label detail-label-recommendations">Recommendations</div>')
+            parts.append('<ul class="recommendations-list">')
+            for rec in recs:
+                parts.append(f'<li><span>{self._escape(str(rec))}</span></li>')
             parts.append('</ul>')
 
-        # Suggestions
-        if suggestions:
-            parts.append(
-                '<div class="detail-label detail-label-suggestions">Suggestions</div>'
-            )
-            parts.append('<ul class="suggestions-list">')
-            for suggestion in suggestions:
-                parts.append(f'<li><span>{self._escape(suggestion)}</span></li>')
-            parts.append('</ul>')
-
-        parts.append('</div>')
-        return "\n".join(parts)
-
-    # ------------------------------------------------------------------
-    # Gap Analysis Table
-    # ------------------------------------------------------------------
-
-    def _gap_analysis_section(self, analysis_json: dict) -> str:
-        gap_data = analysis_json.get("gap_analysis", {}) or {}
-        missing = gap_data.get("missing_patterns", []) or []
-
-        if not missing:
-            return ""
-
-        parts = [
-            '<div class="section">',
-            '<h2 class="section-title">Gap Analysis</h2>',
-            '<div class="table-wrapper">',
-            '<table class="table-gap">',
-            '<thead><tr>'
-            '<th>Suggested Pattern</th>'
-            '<th>Type</th>'
-            '<th>Category</th>'
-            '<th>Rationale</th>'
-            '</tr></thead>',
-            '<tbody>',
-        ]
-
-        for pattern in missing:
-            name = self._escape(pattern.get("name", ""))
-            p_type = (pattern.get("type") or "").upper()
-            type_cls = self._type_badge_class(p_type)
-            category = self._escape(pattern.get("category", ""))
-            why = self._escape(pattern.get("why", ""))
-
-            parts.append(
-                f'<tr>'
-                f'<td><strong>{name}</strong></td>'
-                f'<td><span class="type-badge {type_cls}">{self._escape(p_type)}</span></td>'
-                f'<td>{category}</td>'
-                f'<td>{why}</td>'
-                f'</tr>'
-            )
-
-        parts.extend([
-            '</tbody>',
-            '</table>',
-            '</div>',
-            '</div>',
-        ])
-        return "\n".join(parts)
-
-    # ------------------------------------------------------------------
-    # Top Recommendations
-    # ------------------------------------------------------------------
-
-    def _recommendations_section(self, analysis_json: dict) -> str:
-        recs = analysis_json.get("top_recommendations", []) or []
-        if not recs:
-            return ""
-
-        # Sort by priority
-        recs_sorted = sorted(recs, key=lambda r: r.get("priority", 99))
-
-        parts = [
-            '<div class="section">',
-            '<h2 class="section-title">Top Recommendations</h2>',
-            '<ol class="rec-list">',
-        ]
-
-        for rec in recs_sorted:
-            priority = rec.get("priority", "")
-            title = self._escape(rec.get("title", ""))
-            desc = self._escape(rec.get("description", ""))
-            effort = (rec.get("effort") or "").upper()
-            effort_cls = self._effort_badge_class(effort)
-
-            parts.append('<li class="rec-item">')
-            parts.append(f'<div class="rec-number">{self._escape(str(priority))}</div>')
-            parts.append('<div class="rec-body">')
-
-            # Title + effort badge
-            parts.append('<div class="rec-title">')
-            parts.append(f'<span>{title}</span>')
-            if effort:
-                parts.append(
-                    f'<span class="badge {effort_cls}">{self._escape(effort)} effort</span>'
-                )
+        if not has_findings and not recs:
             parts.append('</div>')
+            return ""
 
-            if desc:
-                parts.append(f'<div class="rec-desc">{desc}</div>')
+        parts.append('</div>')
+        return "\n".join(parts)
 
-            parts.append('</div>')  # .rec-body
-            parts.append('</li>')
+    # ------------------------------------------------------------------
+    # Maturity Roadmap Section
+    # ------------------------------------------------------------------
 
-        parts.extend([
-            '</ol>',
-            '</div>',
-        ])
+    def _maturity_roadmap_section(self, analysis_json: dict) -> str:
+        roadmap = analysis_json.get("maturity_roadmap", {})
+        if not isinstance(roadmap, dict) or not roadmap:
+            return ""
+
+        parts = [
+            '<div class="section">',
+            '<h2 class="section-title">Maturity &amp; Roadmap</h2>',
+        ]
+
+        # Overall maturity badge
+        overall = roadmap.get("overall_maturity", "")
+        if overall:
+            maturity_cls = self._maturity_badge_class(overall)
+            parts.append(f'<span class="maturity-badge {maturity_cls}">{self._escape(overall)}</span>')
+
+        # Area maturity table
+        area_maturity = roadmap.get("area_maturity", {})
+        if isinstance(area_maturity, dict) and area_maturity:
+            parts.append('<div class="table-wrapper">')
+            parts.append('<table><thead><tr><th>Area</th><th>Maturity</th></tr></thead><tbody>')
+            for area, level in area_maturity.items():
+                display_name = self._escape(area.replace("_", " ").title())
+                parts.append(f'<tr><td>{display_name}</td><td>{self._escape(str(level))}</td></tr>')
+            parts.append('</tbody></table></div>')
+
+        # Prioritized actions
+        actions = roadmap.get("prioritized_actions", [])
+        if isinstance(actions, list) and actions:
+            parts.append('<h3 style="font-size:16px;color:var(--text-heading);margin:20px 0 12px;">Prioritized Actions</h3>')
+            parts.append('<ol class="rec-list">')
+
+            for act in actions:
+                if not isinstance(act, dict):
+                    continue
+                priority = act.get("priority", "")
+                action_text = self._escape(act.get("action", ""))
+                impact = (act.get("impact") or "").upper()
+                effort = (act.get("effort") or "").upper()
+                affected = act.get("affected_patterns", [])
+
+                parts.append('<li class="rec-item">')
+                parts.append(f'<div class="rec-number">{self._escape(str(priority))}</div>')
+                parts.append('<div class="rec-body">')
+
+                # Title + badges
+                parts.append('<div class="rec-title">')
+                parts.append(f'<span>{action_text}</span>')
+                if impact:
+                    impact_cls = f"badge-impact-{impact.lower()}" if impact in ("HIGH", "MEDIUM", "LOW") else "badge-impact-medium"
+                    parts.append(f'<span class="badge {impact_cls}">{self._escape(impact)} impact</span>')
+                if effort:
+                    effort_cls = f"badge-effort-{effort.lower()}" if effort in ("HIGH", "MEDIUM", "LOW") else "badge-effort-medium"
+                    parts.append(f'<span class="badge {effort_cls}">{self._escape(effort)} effort</span>')
+                parts.append('</div>')
+
+                # Affected patterns
+                if isinstance(affected, list) and affected:
+                    parts.append(f'<div class="rec-desc">Affected: {self._escape(", ".join(str(p) for p in affected))}</div>')
+
+                parts.append('</div>')  # .rec-body
+                parts.append('</li>')
+
+            parts.append('</ol>')
+
+        parts.append('</div>')
         return "\n".join(parts)
 
     # ------------------------------------------------------------------
@@ -993,7 +988,6 @@ code {{
 
     @staticmethod
     def _score_color_class(score: float) -> str:
-        """Return CSS class for the health score number color."""
         if score >= 80:
             return "score-green"
         if score >= 60:
@@ -1002,7 +996,6 @@ code {{
 
     @staticmethod
     def _score_stroke_class(score: float) -> str:
-        """Return CSS class for the SVG ring stroke color."""
         if score >= 80:
             return "stroke-green"
         if score >= 60:
@@ -1011,7 +1004,6 @@ code {{
 
     @staticmethod
     def _bar_fill_class(value: float) -> str:
-        """Return CSS class for a breakdown bar fill color."""
         if value >= 70:
             return "bar-fill-green"
         if value >= 40:
@@ -1019,44 +1011,30 @@ code {{
         return "bar-fill-red"
 
     @staticmethod
-    def _assessment_badge_class(score: str) -> str:
-        """Return CSS class for GOOD/FAIR/POOR assessment badges."""
-        s = (score or "").upper()
-        if s == "GOOD":
+    def _rating_badge_class(rating: str) -> str:
+        """Return CSS class for rating badges (maps various rating scales to good/fair/poor)."""
+        s = (rating or "").upper()
+        if s in ("STRONG", "LOW_RISK", "CLEAN"):
             return "badge-good"
-        if s == "FAIR":
+        if s in ("ADEQUATE", "MODERATE_RISK", "SOME_OVERLAP"):
             return "badge-fair"
-        if s == "POOR":
+        if s in ("WEAK", "HIGH_RISK", "SIGNIFICANT_OVERLAP"):
             return "badge-poor"
         return "badge-fair"
 
     @staticmethod
-    def _effort_badge_class(effort: str) -> str:
-        """Return CSS class for effort level badges."""
-        e = (effort or "").upper()
-        if e == "LOW":
-            return "badge-effort-low"
-        if e == "MEDIUM":
-            return "badge-effort-medium"
-        if e == "HIGH":
-            return "badge-effort-high"
-        return "badge-effort-medium"
-
-    @staticmethod
-    def _type_badge_class(p_type: str) -> str:
-        """Return CSS class for pattern type badges (AB, ABB, SBB)."""
-        t = (p_type or "").upper()
-        if t == "AB":
-            return "type-ab"
-        if t == "ABB":
-            return "type-abb"
-        if t == "SBB":
-            return "type-sbb"
-        return "type-ab"
+    def _maturity_badge_class(maturity: str) -> str:
+        label = (maturity or "").lower().replace(" ", "-")
+        if label in ("managed", "optimizing"):
+            return f"maturity-{label}"
+        if label in ("defined", "developing"):
+            return f"maturity-{label}"
+        if label == "initial":
+            return "maturity-initial"
+        return "maturity-initial"
 
     @staticmethod
     def _format_date(date_str) -> str:
-        """Best-effort formatting of an ISO date string to a readable display."""
         if not date_str:
             return ""
         try:

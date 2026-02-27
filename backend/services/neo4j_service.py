@@ -46,6 +46,7 @@ class Neo4jService:
             "CREATE CONSTRAINT pbc_id IF NOT EXISTS FOR (p:PBC) REQUIRE p.id IS UNIQUE",
             "CREATE CONSTRAINT advisor_report_id IF NOT EXISTS FOR (r:AdvisorReport) REQUIRE r.id IS UNIQUE",
             "CREATE CONSTRAINT health_analysis_id IF NOT EXISTS FOR (h:HealthAnalysis) REQUIRE h.id IS UNIQUE",
+            "CREATE CONSTRAINT discovery_analysis_id IF NOT EXISTS FOR (d:DiscoveryAnalysis) REQUIRE d.id IS UNIQUE",
             # Auth & config
             "CREATE CONSTRAINT user_id IF NOT EXISTS FOR (u:User) REQUIRE u.id IS UNIQUE",
             "CREATE CONSTRAINT user_email IF NOT EXISTS FOR (u:User) REQUIRE u.email IS UNIQUE",
@@ -1426,6 +1427,90 @@ class Neo4jService:
                     data[key] = json.loads(val)
                 except (json.JSONDecodeError, TypeError):
                     data[key] = {}
+        return data
+
+    # ── Discovery Analysis Persistence ──────────────────────────────────
+
+    def generate_discovery_analysis_id(self) -> str:
+        """Generate next sequential discovery analysis ID (DA-001, DA-002, ...)."""
+        query = "MATCH (d:DiscoveryAnalysis) RETURN d.id AS id ORDER BY d.id DESC LIMIT 1"
+        with self.session() as session:
+            record = session.run(query).single()
+        if record and record["id"]:
+            try:
+                num = int(record["id"].split("-")[-1]) + 1
+            except (ValueError, IndexError):
+                num = 1
+        else:
+            num = 1
+        return f"DA-{num:03d}"
+
+    def save_discovery_analysis(self, data: dict) -> dict:
+        """Persist a DiscoveryAnalysis node."""
+        analysis_id = self.generate_discovery_analysis_id()
+        now = datetime.now(timezone.utc).isoformat()
+        from datetime import datetime as dt
+        date_str = dt.now().strftime("%b %d, %Y %H:%M")
+        title = data.get("title") or f"Discovery — {date_str}"
+
+        props = {
+            "id": analysis_id,
+            "title": title,
+            "suggestions_json": json.dumps(data.get("suggestions", [])),
+            "provider": data.get("provider", ""),
+            "model": data.get("model", ""),
+            "focus_area": data.get("focus_area", ""),
+            "suggestion_count": data.get("suggestion_count", 0),
+            "created_at": now,
+        }
+        props = {k: v for k, v in props.items() if v is not None}
+        prop_str = ", ".join(f"{k}: ${k}" for k in props)
+        query = f"CREATE (d:DiscoveryAnalysis {{{prop_str}}}) RETURN d"
+
+        with self.session() as session:
+            result = session.run(query, **props)
+            return self._deserialize_discovery_analysis(dict(result.single()["d"]))
+
+    def get_discovery_analysis(self, analysis_id: str) -> Optional[dict]:
+        """Get a single discovery analysis by ID (full data)."""
+        query = "MATCH (d:DiscoveryAnalysis {id: $id}) RETURN d"
+        with self.session() as session:
+            result = session.run(query, id=analysis_id)
+            record = result.single()
+            if not record:
+                return None
+            return self._deserialize_discovery_analysis(dict(record["d"]))
+
+    def list_discovery_analyses(self, limit: int = 20) -> list:
+        """List discovery analyses (without suggestions_json), newest first."""
+        query = """
+        MATCH (d:DiscoveryAnalysis)
+        RETURN d.id AS id, d.title AS title,
+               d.provider AS provider, d.model AS model,
+               d.focus_area AS focus_area, d.suggestion_count AS suggestion_count,
+               d.created_at AS created_at
+        ORDER BY d.created_at DESC
+        LIMIT $limit
+        """
+        with self.session() as session:
+            records = session.run(query, limit=limit)
+            return [dict(r) for r in records]
+
+    def delete_discovery_analysis(self, analysis_id: str) -> bool:
+        """Delete a single discovery analysis."""
+        query = "MATCH (d:DiscoveryAnalysis {id: $id}) DELETE d RETURN count(d) as deleted"
+        with self.session() as session:
+            result = session.run(query, id=analysis_id)
+            return result.single()["deleted"] > 0
+
+    def _deserialize_discovery_analysis(self, data: dict) -> dict:
+        """Deserialize JSON string fields back to dicts/lists."""
+        val = data.get("suggestions_json")
+        if isinstance(val, str):
+            try:
+                data["suggestions_json"] = json.loads(val)
+            except (json.JSONDecodeError, TypeError):
+                data["suggestions_json"] = []
         return data
 
     # --- Pattern Health Analysis ---

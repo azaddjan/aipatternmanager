@@ -379,7 +379,8 @@ class PptxExportService:
         abb_count = sum(1 for p in patterns if p.get("type") == "ABB")
         sbb_count = sum(1 for p in patterns if p.get("type") == "SBB")
         tech_count = len(data["technologies"])
-        stats_text = f"{ab_count} Blueprints  |  {abb_count} ABBs  |  {sbb_count} SBBs  |  {tech_count} Technologies"
+        pbc_count = len(data.get("pbcs", []))
+        stats_text = f"{ab_count} Blueprints  |  {abb_count} ABBs  |  {sbb_count} SBBs  |  {pbc_count} PBCs  |  {tech_count} Technologies"
         self._tb(slide, Inches(0.7), Inches(4.0), Inches(8.0), Inches(0.3),
                  stats_text, size=11, color=MUTED)
 
@@ -1121,13 +1122,15 @@ class PptxExportService:
         ab_count = sum(1 for p in patterns if p.get("type") == "AB")
         abb_count = sum(1 for p in patterns if p.get("type") == "ABB")
         sbb_count = sum(1 for p in patterns if p.get("type") == "SBB")
+        pbc_count = len(data.get("pbcs", []))
         total = ab_count + abb_count + sbb_count
 
         stats = [
-            (0.7, str(ab_count), "Architecture\nBlueprint"),
-            (3.0, str(abb_count), "Architecture\nBuilding Blocks"),
-            (5.3, str(sbb_count), "Solution\nBuilding Blocks"),
-            (7.6, str(total), "Total\nPatterns"),
+            (0.5, str(ab_count), "Architecture\nBlueprint"),
+            (2.4, str(abb_count), "Architecture\nBuilding Blocks"),
+            (4.3, str(sbb_count), "Solution\nBuilding Blocks"),
+            (6.2, str(pbc_count), "Business\nCapabilities"),
+            (8.1, str(total), "Total\nPatterns"),
         ]
         for x, num, label in stats:
             self._tb(slide, Inches(x), Inches(2.8), Inches(2.0), Inches(0.7),
