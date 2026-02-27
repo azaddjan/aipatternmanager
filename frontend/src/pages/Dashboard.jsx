@@ -104,11 +104,11 @@ export default function Dashboard() {
 
       {/* Stat Cards */}
       <div className="grid grid-cols-5 gap-4">
-        <StatCard label="Total Patterns" value={patterns.length} color="blue" />
-        <StatCard label="AB (Conceptual)" value={abCount} color="orange" />
-        <StatCard label="ABB (Logical)" value={abbCount} color="blue" />
-        <StatCard label="SBB (Physical)" value={sbbCount} color="green" />
-        <StatCard label="PBCs" value={health?.pbc_count || 0} color="purple" />
+        <StatCard label="Total Patterns" value={patterns.length} color="blue" to="/patterns" />
+        <StatCard label="AB (Conceptual)" value={abCount} color="orange" to="/patterns?type=AB" />
+        <StatCard label="ABB (Logical)" value={abbCount} color="blue" to="/patterns?type=ABB" />
+        <StatCard label="SBB (Physical)" value={sbbCount} color="green" to="/patterns?type=SBB" />
+        <StatCard label="PBCs" value={health?.pbc_count || 0} color="purple" to="/pbcs" />
       </div>
 
       {/* Coverage + Categories */}
@@ -222,7 +222,7 @@ export default function Dashboard() {
   )
 }
 
-function StatCard({ label, value, color }) {
+function StatCard({ label, value, color, to }) {
   const colors = {
     blue: 'border-blue-500/30 text-blue-400',
     orange: 'border-orange-500/30 text-orange-400',
@@ -230,9 +230,9 @@ function StatCard({ label, value, color }) {
     purple: 'border-purple-500/30 text-purple-400',
   }
   return (
-    <div className={`card border-l-4 ${colors[color]}`}>
+    <Link to={to} className={`card border-l-4 ${colors[color]} hover:bg-gray-800/80 transition-colors cursor-pointer`}>
       <p className="text-3xl font-bold">{value}</p>
       <p className="text-sm text-gray-500 mt-1">{label}</p>
-    </div>
+    </Link>
   )
 }

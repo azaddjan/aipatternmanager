@@ -81,9 +81,40 @@ export default function PatternAdvisor() {
       }
       setCategories(cats?.categories || [])
       setEmbeddingStatus(embStatus)
-      setReports(rpts?.reports || [])
+      const reportList = rpts?.reports || []
+      setReports(reportList)
+      // Auto-load most recent report so state persists across navigation
+      if (reportList.length > 0) {
+        fetchAdvisorReport(reportList[0].id).then(report => {
+          if (report?.result_json) {
+            setResult(report.result_json)
+            setProblem(report.problem || '')
+            setCategoryFocus(report.category_focus || '')
+            setTechPrefs(
+              Array.isArray(report.technology_preferences)
+                ? report.technology_preferences.join(', ')
+                : ''
+            )
+            setSavedReportId(report.id)
+            setResultTab('overview')
+          }
+        }).catch(() => {})
+      }
     })
   }, [])
+
+  const handleClear = () => {
+    setProblem('')
+    setCategoryFocus('')
+    setTechPrefs('')
+    setIncludeGaps(true)
+    setResult(null)
+    setError('')
+    setSavedReportId(null)
+    setResultTab('overview')
+    setClarificationQuestions(null)
+    setClarificationAnswers({})
+  }
 
   // Animated progress during analysis
   useEffect(() => {
@@ -437,25 +468,36 @@ export default function PatternAdvisor() {
           </label>
         </div>
 
-        <button
-          onClick={handleAnalyze}
-          disabled={analyzing || clarifying || problem.trim().length < 10}
-          className="btn-primary w-full py-3 text-base"
-        >
-          {clarifying ? (
-            <span className="flex items-center justify-center gap-2">
-              <span className="animate-spin text-lg">&#9696;</span>
-              Checking...
-            </span>
-          ) : analyzing ? (
-            <span className="flex items-center justify-center gap-2">
-              <span className="animate-spin text-lg">&#9696;</span>
-              Analyzing...
-            </span>
-          ) : (
-            '🧠 Analyze Problem'
+        <div className="flex gap-3">
+          <button
+            onClick={handleAnalyze}
+            disabled={analyzing || clarifying || problem.trim().length < 10}
+            className="btn-primary flex-1 py-3 text-base"
+          >
+            {clarifying ? (
+              <span className="flex items-center justify-center gap-2">
+                <span className="animate-spin text-lg">&#9696;</span>
+                Checking...
+              </span>
+            ) : analyzing ? (
+              <span className="flex items-center justify-center gap-2">
+                <span className="animate-spin text-lg">&#9696;</span>
+                Analyzing...
+              </span>
+            ) : (
+              '🧠 Analyze Problem'
+            )}
+          </button>
+          {(problem || result) && (
+            <button
+              onClick={handleClear}
+              disabled={analyzing || clarifying}
+              className="px-6 py-3 text-base rounded-lg border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 transition-colors"
+            >
+              New Analysis
+            </button>
           )}
-        </button>
+        </div>
       </div>
 
       {/* Progress Steps */}

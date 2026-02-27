@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { fetchPatterns, fetchCategories, updatePattern } from '../api/client'
 import PatternCard from '../components/PatternCard'
 import Pagination from '../components/Pagination'
@@ -11,10 +11,11 @@ const STATUS_OPTIONS = ['', 'DRAFT', 'ACTIVE', 'DEPRECATED']
 
 export default function PatternList() {
   const { canCreatePattern } = useAuth()
+  const [searchParams] = useSearchParams()
   const [patterns, setPatterns] = useState([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
-  const [filters, setFilters] = useState({ type: '', category: '', status: '', team: '' })
+  const [filters, setFilters] = useState({ type: searchParams.get('type') || '', category: '', status: '', team: '' })
   const [search, setSearch] = useState('')
   const [viewMode, setViewMode] = useState('table') // grid | table
   const [categoryOptions, setCategoryOptions] = useState([])
