@@ -308,6 +308,10 @@ export function aiDocumentSectionAssist(data) {
   return request('/documents/section-assist', { method: 'POST', body: JSON.stringify(data) })
 }
 
+export function clarifyDocumentPrompt(data) {
+  return request('/documents/draft-clarify', { method: 'POST', body: JSON.stringify(data) })
+}
+
 export async function draftDocumentStream(data, onProgress) {
   const url = `${BASE_URL}/documents/draft-stream`
   const res = await fetch(url, {

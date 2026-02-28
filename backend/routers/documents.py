@@ -19,6 +19,7 @@ from models.schemas import (
     DocumentSectionReorder,
     DocumentLinkCreate,
     DocumentSectionAssistRequest,
+    DocumentDraftClarifyRequest,
     DocumentDraftRequest,
     DocumentDraftDiscussRequest,
 )
@@ -283,6 +284,26 @@ async def section_assist(
 
 # --- AI Document Drafter ---
 
+@router.post("/draft-clarify")
+async def draft_clarify(
+    body: DocumentDraftClarifyRequest,
+    _user=Depends(get_current_user_or_anonymous),
+):
+    """Pre-flight: assess if document prompt needs clarification before drafting."""
+    from services import document_draft_service
+
+    db = get_db()
+    result = await document_draft_service.clarify_document_prompt(
+        prompt=body.prompt,
+        doc_type=body.doc_type,
+        target_audience=body.target_audience,
+        db=db,
+        provider_name=body.provider.value if body.provider else None,
+        model=body.model,
+    )
+    return result
+
+
 @router.post("/draft-stream")
 def draft_document_stream(
     body: DocumentDraftRequest,
@@ -316,6 +337,7 @@ def draft_document_stream(
                     progress_cb=progress_cb,
                     provider_name=body.provider.value if body.provider else None,
                     model=body.model,
+                    clarifications=body.clarifications,
                 )
             )
             loop.close()

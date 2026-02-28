@@ -440,11 +440,22 @@ class DocumentSectionAssistRequest(BaseModel):
     provider: Optional[LLMProvider] = None
     model: Optional[str] = None
 
+class DocumentDraftClarifyRequest(BaseModel):
+    """Pre-flight check: assess if document prompt needs clarification before drafting."""
+    prompt: str = Field(..., min_length=10, max_length=5000)
+    doc_type: str = "guide"
+    target_audience: str = "Software Engineers and Architects"
+    provider: Optional[LLMProvider] = None
+    model: Optional[str] = None
+
 class DocumentDraftRequest(BaseModel):
     """Request to auto-draft a complete document from a user prompt."""
     prompt: str = Field(..., min_length=10, max_length=5000)
     doc_type: str = "guide"
     target_audience: str = "Software Engineers and Architects"
+    clarifications: Optional[dict[str, str]] = Field(
+        None, description="Answers from the clarify pre-flight: {question_id: answer}"
+    )
     provider: Optional[LLMProvider] = None
     model: Optional[str] = None
 

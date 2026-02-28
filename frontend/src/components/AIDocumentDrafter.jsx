@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { draftDocumentStream, draftDiscussStream } from '../api/client'
+import { clarifyDocumentPrompt, draftDocumentStream, draftDiscussStream } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
 import MarkdownContent from './MarkdownContent'
 
@@ -50,6 +50,11 @@ export default function AIDocumentDrafter({
   const [draftError, setDraftError] = useState(null)
   const [applying, setApplying] = useState(false)
 
+  // Clarification state
+  const [clarifying, setClarifying] = useState(false)
+  const [clarificationQuestions, setClarificationQuestions] = useState(null)
+  const [clarificationAnswers, setClarificationAnswers] = useState({})
+
   // Progress bar state
   const [progressPercent, setProgressPercent] = useState(0)
   const [progressStage, setProgressStage] = useState('')
@@ -71,8 +76,45 @@ export default function AIDocumentDrafter({
   }, [messages, streamingText])
 
   // --- Auto Draft ---
-  const handleAutoDraft = async () => {
+  const handleAutoDraft = async (clarifications = null) => {
     if (!prompt.trim()) return
+
+    // If we already have clarification answers, skip to full draft
+    if (clarifications || (clarificationQuestions && Object.keys(clarificationAnswers).length > 0)) {
+      const answers = clarifications || clarificationAnswers
+      setClarificationQuestions(null)
+      setClarificationAnswers({})
+      await runFullDraft(answers)
+      return
+    }
+
+    // Step 1: Pre-flight clarification check
+    setClarifying(true)
+    setDraftError(null)
+    try {
+      const clarifyRes = await clarifyDocumentPrompt({
+        prompt: prompt.trim(),
+        doc_type: draftType,
+        target_audience: targetAudience,
+      })
+
+      if (clarifyRes.needs_clarification && clarifyRes.questions?.length > 0) {
+        setClarificationQuestions(clarifyRes.questions)
+        setClarificationAnswers({})
+        setClarifying(false)
+        return
+      }
+    } catch (err) {
+      // Clarification failed — proceed to draft anyway (graceful degradation)
+      console.warn('Clarification check failed, proceeding to draft:', err.message)
+    }
+    setClarifying(false)
+
+    // Step 2: No clarification needed — proceed directly
+    await runFullDraft(null)
+  }
+
+  const runFullDraft = async (clarifications) => {
     setDrafting(true)
     setDraftError(null)
     setDraftResult(null)
@@ -82,9 +124,16 @@ export default function AIDocumentDrafter({
     setProgressComplete(false)
 
     try {
-      const result = await draftDocumentStream(
-        { prompt: prompt.trim(), doc_type: draftType, target_audience: targetAudience },
-        (event) => {
+      const data = {
+        prompt: prompt.trim(),
+        doc_type: draftType,
+        target_audience: targetAudience,
+      }
+      if (clarifications) {
+        data.clarifications = clarifications
+      }
+
+      const result = await draftDocumentStream(data, (event) => {
           // Update checkmark step list
           setProgressSteps(prev => {
             // Replace if same stage, otherwise append
@@ -122,6 +171,22 @@ export default function AIDocumentDrafter({
       setDraftError(err.message)
     }
     setDrafting(false)
+  }
+
+  const handleSubmitClarifications = () => {
+    const answered = Object.values(clarificationAnswers).filter(v => v.trim()).length
+    if (answered === 0) {
+      setDraftError('Please answer at least one question before continuing.')
+      return
+    }
+    setDraftError(null)
+    handleAutoDraft(clarificationAnswers)
+  }
+
+  const handleSkipClarification = () => {
+    setClarificationQuestions(null)
+    setClarificationAnswers({})
+    runFullDraft(null)
   }
 
   const handleApplyDraft = async () => {
@@ -376,11 +441,16 @@ export default function AIDocumentDrafter({
                 </select>
               </div>
               <button
-                onClick={handleAutoDraft}
-                disabled={drafting || !prompt.trim()}
+                onClick={() => handleAutoDraft()}
+                disabled={drafting || clarifying || !prompt.trim()}
                 className="btn-primary text-xs px-4 py-1.5 flex items-center gap-1.5"
               >
-                {drafting ? (
+                {clarifying ? (
+                  <>
+                    <span className="inline-block w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Checking...
+                  </>
+                ) : drafting ? (
                   <>
                     <span className="inline-block w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                     Drafting...
@@ -390,6 +460,90 @@ export default function AIDocumentDrafter({
                 )}
               </button>
             </div>
+
+            {/* Clarification loading */}
+            {clarifying && (
+              <div className="flex items-center gap-2 text-xs text-gray-400 py-1">
+                <span className="inline-block w-3 h-3 border-2 border-purple-400/30 border-t-purple-400 rounded-full animate-spin" />
+                Evaluating your request...
+              </div>
+            )}
+
+            {/* Clarification questions */}
+            {clarificationQuestions && !drafting && (
+              <div className="border border-blue-500/30 rounded-lg p-3 space-y-3 bg-blue-500/5">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-semibold text-blue-400 flex items-center gap-1.5">
+                    <span>&#10067;</span>
+                    A few questions to improve your document
+                  </h4>
+                  <button
+                    onClick={handleSkipClarification}
+                    className="text-[11px] text-gray-500 hover:text-gray-300 transition-colors"
+                  >
+                    Skip and draft anyway →
+                  </button>
+                </div>
+
+                <div className="space-y-3">
+                  {clarificationQuestions.map(q => (
+                    <div key={q.id} className="space-y-1.5">
+                      <label className="block text-xs text-white font-medium">
+                        {q.question}
+                      </label>
+                      {q.context && (
+                        <p className="text-[11px] text-gray-500">{q.context}</p>
+                      )}
+                      {q.suggested_options?.length > 0 && (
+                        <div className="flex gap-1.5 flex-wrap">
+                          {q.suggested_options.map(opt => (
+                            <button
+                              key={opt}
+                              onClick={() => setClarificationAnswers(prev => ({
+                                ...prev,
+                                [q.id]: opt
+                              }))}
+                              className={`text-[11px] px-2.5 py-1 rounded-lg border transition-colors ${
+                                clarificationAnswers[q.id] === opt
+                                  ? 'bg-blue-600/20 border-blue-500/50 text-blue-400'
+                                  : 'bg-gray-800 border-gray-700 text-gray-300 hover:border-gray-600'
+                              }`}
+                            >
+                              {opt}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      <input
+                        type="text"
+                        value={clarificationAnswers[q.id] || ''}
+                        onChange={e => setClarificationAnswers(prev => ({
+                          ...prev,
+                          [q.id]: e.target.value
+                        }))}
+                        placeholder="Type your answer or select an option above..."
+                        className="input w-full text-xs"
+                      />
+                    </div>
+                  ))}
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleSubmitClarifications}
+                    className="btn-primary flex-1 text-xs py-1.5"
+                  >
+                    Continue Drafting →
+                  </button>
+                  <button
+                    onClick={handleSkipClarification}
+                    className="px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 hover:text-gray-300 hover:bg-gray-700 transition-colors text-xs"
+                  >
+                    Skip
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Progress bar + steps */}
             {(drafting || progressSteps.length > 0) && (

@@ -1225,6 +1225,63 @@ document_drafter:
     Use Mermaid diagrams when visual representation adds value.
     Write in professional markdown with clear headings, lists, tables, and code blocks.
 
+  clarify: |
+    Assess whether the following document request is clear and specific enough
+    to produce a high-quality {doc_type} document for the target audience.
+
+    ## Document Request
+    {prompt}
+
+    ## Document Type: {doc_type}
+    ## Target Audience: {target_audience}
+
+    ## Existing Catalog Items (patterns, technologies)
+    {catalog_summary}
+
+    ---
+
+    Evaluate the request above. Determine if it provides enough specificity
+    to plan and draft a useful {doc_type} document.
+
+    A request is CLEAR ENOUGH if it:
+    - Describes a concrete documentation need or architectural topic
+    - Gives enough context to identify relevant patterns, technologies, or decisions
+    - Does not require guessing about fundamental scope, purpose, or key constraints
+
+    A request NEEDS CLARIFICATION if it is:
+    - Too vague or generic (e.g., "write about security" or "document our architecture")
+    - Missing critical scope (e.g., which systems, which decision, which technology)
+    - Ambiguous about primary purpose or could mean very different things
+
+    If the request is clear enough, return:
+    {{
+      "needs_clarification": false,
+      "questions": []
+    }}
+
+    If clarification is needed, return 2-4 focused questions:
+    {{
+      "needs_clarification": true,
+      "questions": [
+        {{
+          "id": "q1",
+          "question": "Specific clarification question",
+          "context": "Brief explanation of why this matters for the document",
+          "suggested_options": ["Option A", "Option B", "Option C"]
+        }}
+      ]
+    }}
+
+    IMPORTANT RULES:
+    - Do NOT ask for clarification if the request is reasonably clear
+    - Keep questions focused — each should materially impact the document quality
+    - Suggested options should be common answers, but the user can provide their own
+    - Maximum 4 questions. Prefer 2-3.
+    - Questions should be about document-relevant aspects: scope, specific systems/patterns,
+      key decisions, constraints, depth level, or which catalog items to focus on
+    - Do NOT ask obvious questions whose answers are implied by the request
+    - Return ONLY the JSON object, nothing else
+
   plan: |
     Create a structured document outline that will guide the drafting of a {doc_type} document.
 
@@ -1261,7 +1318,7 @@ document_drafter:
 
     Recommended sections per document type:
     - guide: Introduction, Prerequisites, Implementation Guide, Integration Points, Applicability Guide, Security
-    - adr: Introduction, Decision Analysis, Tradeoffs, Risk and Cost Profile, Key Takeaways
+    - adr: Status, Context, Decision, Consequences (keep it concise — 4-5 sections max)
     - reference: Introduction, Technology Standards, Non-Functional Requirements, Integration Points, Security
     - overview: Introduction, Decision Analysis, Tradeoffs, Key Takeaways, Related Patterns
 
@@ -1354,15 +1411,15 @@ document_drafter:
     - Title should be concise and descriptive
     - Summary should capture the document's purpose in 1-2 sentences
     - Tags should include relevant cross-cutting labels (3-6 tags)
-    - Sections must be 400-500+ words minimum with substantive, definitive content
     - Each section should include at least one callout block (> **Key Decision:** or > **Best Practice:** or > **Anti-Pattern:**)
     - 75% of sections must reference at least one catalog item by exact ID
     - Reference existing catalog items by ID where relevant
-    - For ADRs: include Status, Context, Decision, Consequences sections
-    - For guides: include clear step-by-step instructions with prerequisites
-    - For references: include comprehensive specifications, tables, and NFRs
-    - For overviews: include executive summary, scope, key takeaways
-    - Aim for 4-8 sections with meaningful content (not thin placeholders)
+
+    Section length and count by document type:
+    - guide: 400-500+ words per section, 5-8 sections. Include clear step-by-step instructions with prerequisites.
+    - reference: 400-500+ words per section, 5-8 sections. Include comprehensive specifications, tables, and NFRs.
+    - adr: 100-200 words per section, 4-5 sections MAXIMUM. ADRs are concise decision records — be brief and direct. Use the standard ADR structure: Status, Context, Decision, Consequences, and optionally a short Related Patterns section. Do NOT pad sections with filler. Every sentence must add decision-relevant information.
+    - overview: 200-300 words per section, 4-6 sections. Include executive summary, scope, key takeaways.
 
     ## Writing Style — Be Definitive
 
@@ -1413,7 +1470,7 @@ document_drafter:
     Before returning the document, self-check against these criteria:
 
     - relevance (7+): Every key point from the outline is substantively addressed. Re-read the user's request — can you find explicit coverage of each element?
-    - completeness (7+): No section is under 400 words. All key points from outline are covered with specific detail, not just mentioned in passing.
+    - completeness (7+): All key points from outline are covered with specific detail, not just mentioned in passing. Section length must match the doc type requirements above (ADRs: 100-200 words; guides/references: 400-500+ words).
     - catalog_usage (7+): At least 3-5 catalog items referenced with exact IDs (e.g., ABB-CORE-001). 75%+ of sections include at least one catalog reference. Both patterns AND technologies are referenced.
     - structure (7+): Clear H2 section headings with H3 subsections where needed. At least 2 Mermaid diagrams placed strategically. Logical narrative flow between sections.
     - quality (7+): Professional writing, active voice. 2-3 callout blocks (> **Key Decision:** or > **Best Practice:** or > **Anti-Pattern:**). No vague "consider"/"might" language — all recommendations are definitive.
@@ -1567,7 +1624,10 @@ document_drafter:
        - Solution Architects: NFRs with specific targets, scalability limits, implementation tradeoffs
        - Software Engineers: practical guidance, prerequisites, gotchas, anti-patterns, migration steps
     10. **Tables** — use only when genuinely needed for comparison or structured data
-    11. **Minimum 400 words** — ensure definitive depth with clear positions, not vague overviews
+    11. **Word targets by doc type**:
+        - guide / reference: minimum 400 words — ensure definitive depth
+        - adr: 100-200 words — ADRs must be concise; do NOT pad with filler or generic advice
+        - overview: 200-300 words — keep it high-level but specific
 
     Return ONLY the enriched markdown content for this section (no JSON wrapper, no title prefix).
     Do NOT include the section title as a heading — just the body content.

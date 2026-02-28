@@ -225,7 +225,7 @@ def _build_filtered_catalog_context(db, ref_ids: list[str]) -> str:
     return filtered
 
 
-def _should_enrich_section(section: dict) -> tuple[bool, str]:
+def _should_enrich_section(section: dict, doc_type: str = "guide") -> tuple[bool, str]:
     """Fast, LLM-free heuristic check if a section needs enrichment.
 
     Returns:
@@ -234,9 +234,12 @@ def _should_enrich_section(section: dict) -> tuple[bool, str]:
     content = section.get("content", "")
     word_count = len(content.split())
 
+    # Doc-type-aware minimum word thresholds
+    min_words = {"adr": 80, "overview": 150}.get(doc_type, 250)
+
     # Too short
-    if word_count < 250:
-        return True, f"short ({word_count} words)"
+    if word_count < min_words:
+        return True, f"short ({word_count} words, min {min_words} for {doc_type})"
 
     # No catalog references (pattern/tech IDs like ABB-CORE-001, SBB-INTG-002, etc.)
     id_pattern = r'\b(?:AB|ABB|SBB|PBC|TECH)[-_][A-Z]+-?\d*'
@@ -261,6 +264,95 @@ def _should_enrich_section(section: dict) -> tuple[bool, str]:
 
     # Section looks complete
     return False, "passes heuristic checks"
+
+
+# ---------------------------------------------------------------------------
+# Clarification Pre-flight — Assess if prompt needs clarification
+# ---------------------------------------------------------------------------
+
+
+def _build_catalog_summary(db) -> str:
+    """Build a lightweight catalog summary (names + IDs only) for the clarify prompt."""
+    lines = []
+    try:
+        patterns, _ = db.list_patterns(limit=200)
+        if patterns:
+            names = [f"{p['id']}: {p['name']}" for p in patterns[:60]]
+            lines.append(f"Patterns ({len(patterns)}): " + "; ".join(names))
+    except Exception:
+        pass
+    try:
+        techs, _ = db.list_technologies(limit=200)
+        if techs:
+            names = [f"{t['id']}: {t['name']}" for t in techs[:40]]
+            lines.append(f"Technologies ({len(techs)}): " + "; ".join(names))
+    except Exception:
+        pass
+    return "\n".join(lines) if lines else "(empty catalog)"
+
+
+async def clarify_document_prompt(
+    prompt: str,
+    doc_type: str,
+    target_audience: str,
+    db,
+    provider_name: Optional[str] = None,
+    model: Optional[str] = None,
+) -> dict:
+    """Pre-flight check: assess if the document prompt needs clarification.
+
+    Returns {needs_clarification: bool, questions: [...], provider, model}.
+    Graceful fallback: on any error → proceed without clarification.
+    """
+    from services.prompt_service import get_merged_prompts
+    from services.llm.provider_factory import get_provider
+
+    try:
+        prompts = get_merged_prompts()
+        dd_prompts = prompts.get("document_drafter", {})
+        clarify_template = dd_prompts.get("clarify", "")
+        if not clarify_template:
+            return {"needs_clarification": False, "questions": []}
+
+        system_prompt = dd_prompts.get("system", "")
+        catalog_summary = _build_catalog_summary(db)
+
+        user_prompt = (
+            clarify_template
+            .replace("{prompt}", prompt)
+            .replace("{doc_type}", doc_type)
+            .replace("{target_audience}", target_audience)
+            .replace("{catalog_summary}", catalog_summary)
+        )
+
+        provider = get_provider(provider_name)
+        used_model = model or provider.default_model
+        result = await provider.generate(system_prompt, user_prompt, used_model)
+
+        parsed = _parse_json_response(result.get("content", ""), default={
+            "needs_clarification": False,
+            "questions": [],
+        })
+
+        # Normalize question structure
+        questions = []
+        for q in parsed.get("questions", []):
+            questions.append({
+                "id": q.get("id", f"q{len(questions) + 1}"),
+                "question": q.get("question", ""),
+                "context": q.get("context", ""),
+                "suggested_options": q.get("suggested_options", []),
+            })
+
+        return {
+            "needs_clarification": bool(parsed.get("needs_clarification", False)),
+            "questions": questions,
+            "provider": result.get("provider", ""),
+            "model": result.get("model", ""),
+        }
+    except Exception as e:
+        logger.warning(f"Document clarification check failed, proceeding without: {e}")
+        return {"needs_clarification": False, "questions": []}
 
 
 # ---------------------------------------------------------------------------
@@ -593,6 +685,7 @@ async def draft_document(
     progress_cb: ProgressCallback = None,
     provider_name: Optional[str] = None,
     model: Optional[str] = None,
+    clarifications: Optional[dict] = None,
 ) -> dict:
     """Draft a complete document with planning, enrichment, and quality gate.
 
@@ -619,6 +712,13 @@ async def draft_document(
     def _progress(stage, step, total, message):
         if progress_cb:
             progress_cb(stage, step, total, message)
+
+    # Enrich prompt with clarification answers if provided
+    if clarifications:
+        clarification_text = "\n\n## Additional Context from User Clarifications:\n"
+        for qid, answer in clarifications.items():
+            clarification_text += f"- {qid}: {answer}\n"
+        prompt = prompt + clarification_text
 
     # Step 1: Build context
     _progress("context", 1, TOTAL_STEPS, "Loading catalog context...")
@@ -709,7 +809,7 @@ async def draft_document(
         # Run heuristic checks to decide which sections actually need enrichment
         sections_to_enrich = set()
         for section in draft_sections:
-            should_enrich, reason = _should_enrich_section(section)
+            should_enrich, reason = _should_enrich_section(section, doc_type=doc_type)
             title = section.get("title", "Untitled")
             if should_enrich:
                 sections_to_enrich.add(title)
