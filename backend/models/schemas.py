@@ -393,6 +393,7 @@ class DocumentCreate(BaseModel):
     doc_type: str = "guide"  # guide | reference | adr | overview | other
     status: str = "draft"  # draft | published | archived
     summary: str = ""
+    target_audience: str = ""
     tags: list[str] = []
     team_id: Optional[str] = None
     source_analysis_id: Optional[str] = None
@@ -403,6 +404,7 @@ class DocumentUpdate(BaseModel):
     doc_type: Optional[str] = None
     status: Optional[str] = None
     summary: Optional[str] = None
+    target_audience: Optional[str] = None
     tags: Optional[list[str]] = None
     team_id: Optional[str] = None
 
@@ -439,6 +441,7 @@ class DocumentDraftRequest(BaseModel):
     """Request to auto-draft a complete document from a user prompt."""
     prompt: str = Field(..., min_length=10, max_length=5000)
     doc_type: str = "guide"
+    target_audience: str = "Software Engineers and Architects"
     provider: Optional[LLMProvider] = None
     model: Optional[str] = None
 

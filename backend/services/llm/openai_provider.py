@@ -39,7 +39,7 @@ class OpenAIProvider(BaseLLMProvider):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            max_tokens=4096,
+            max_tokens=8192,
         )
         content = response.choices[0].message.content
         return {"content": content, "provider": self.name, "model": model}
@@ -57,7 +57,7 @@ class OpenAIProvider(BaseLLMProvider):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            max_tokens=4096,
+            max_tokens=8192,
             stream=True,
         )
         async for chunk in stream:

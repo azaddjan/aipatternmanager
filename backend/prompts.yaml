@@ -1225,11 +1225,93 @@ document_drafter:
     Use Mermaid diagrams when visual representation adds value.
     Write in professional markdown with clear headings, lists, tables, and code blocks.
 
+  plan: |
+    Create a structured document outline that will guide the drafting of a {doc_type} document.
+
+    ## User Request
+    {prompt}
+
+    ## Target Audience
+    {target_audience}
+
+    ## Existing Catalog (patterns, technologies, PBCs, categories)
+    {catalog_context}
+
+    ## Existing Documents
+    {existing_docs}
+
+    ## Section Template Library
+    Choose 4-8 sections from this library based on document type and audience. Always include
+    an Introduction. Not all sections are needed for every document — pick what fits.
+
+    Core sections:
+    - Introduction — overview and purpose of the document
+    - Prerequisites and Dependencies — what must be in place before adoption
+    - Technology Standards and Approved Stack — approved technologies and versions
+    - Decision Analysis — architectural decisions, rationale, and alternatives considered
+    - Tradeoffs and Considerations — advantages, limitations, and tradeoff matrices
+    - Applicability Guide — when to use and when NOT to use this pattern/approach
+    - Risk and Cost Profile — risk assessment, complexity, and cost considerations
+    - Integration Points — how this connects to other catalog items and systems
+    - Implementation Guide — step-by-step guidance including common pitfalls and anti-patterns
+    - Security and Compliance Considerations — security implications, compliance requirements
+    - Non-Functional Requirements — performance, scalability, availability, reliability targets
+    - Key Takeaways and Action Items — executive summary of decisions and next steps
+    - Related Patterns and Documents — cross-references to existing catalog items and docs
+
+    Recommended sections per document type:
+    - guide: Introduction, Prerequisites, Implementation Guide, Integration Points, Applicability Guide, Security
+    - adr: Introduction, Decision Analysis, Tradeoffs, Risk and Cost Profile, Key Takeaways
+    - reference: Introduction, Technology Standards, Non-Functional Requirements, Integration Points, Security
+    - overview: Introduction, Decision Analysis, Tradeoffs, Key Takeaways, Related Patterns
+
+    Adjust for target audience:
+    - Enterprise Architects: emphasize Decision Analysis, Tradeoffs, Key Takeaways — strategic focus
+    - Domain Architects: emphasize domain-specific patterns, Security, Integration Points
+    - Solution Architects: emphasize NFRs, Integration Points, Implementation Guide — tactical focus
+    - Software Engineers: emphasize Prerequisites, Implementation Guide, Integration Points — hands-on focus
+
+    ## Instructions
+    Return a JSON object:
+    {
+      "title": "Proposed Document Title",
+      "sections": [
+        {
+          "title": "Section Name",
+          "key_points": ["key point 1", "key point 2", "key point 3"],
+          "catalog_refs": ["ABB-CORE-001", "aws-bedrock"],
+          "diagram": "Architecture overview (Mermaid flowchart)"
+        }
+      ],
+      "diagrams": [
+        "System architecture (Mermaid flowchart)",
+        "Data flow (Mermaid sequence diagram)"
+      ],
+      "target_entities": ["ABB-CORE-001", "aws-bedrock"]
+    }
+
+    Requirements:
+    - title: concise, descriptive title
+    - sections: 4-8 planned sections with 2-5 key_points each
+    - catalog_refs: use EXACT IDs from the catalog context — only reference items that exist
+    - diagram: optional per section — describe the Mermaid diagram type (flowchart, sequence, class, C4)
+    - diagrams: master list of all diagrams to include (minimum 2 for guides and references)
+    - target_entities: all catalog items the document should reference
+    - Each section's key_points should be specific and actionable, not vague
+
+    Return ONLY the JSON object, no additional text.
+
   draft: |
     Create a complete {doc_type} document based on the user's request.
 
     ## User Request
     {prompt}
+
+    ## Target Audience
+    {target_audience}
+
+    ## Document Plan/Outline
+    {outline}
 
     ## Existing Catalog (patterns, technologies, PBCs, categories)
     {catalog_context}
@@ -1258,16 +1340,25 @@ document_drafter:
     }
 
     Requirements:
+    - Target audience: software engineers and enterprise architects. Write for technical leaders.
+    - Follow the Document Plan/Outline above — each planned section MUST become a real section
+      with substantive content addressing all listed key_points.
+    - Include all diagrams specified in the outline. Use Mermaid diagrams (flowchart, sequence,
+      class, C4) — minimum 2 diagrams per guide or reference document.
+    - Prefer architecture diagrams, decision matrices, and pattern descriptions
+      over code examples. Include code ONLY when directly relevant to implementation specifics.
+    - Use summary callout blocks (> **Key Decision:** ...) at the top of important sections.
+    - Use tables only when they genuinely aid comparison or structured data (e.g. tradeoff matrices,
+      NFR targets, technology evaluation). Do NOT use tables for content better expressed as prose or lists.
     - Title should be concise and descriptive
     - Summary should capture the document's purpose in 1-2 sentences
     - Tags should include relevant cross-cutting labels (3-6 tags)
-    - Sections should be well-organized with substantive markdown content
+    - Sections should be well-organized with substantive markdown content (200+ words each)
     - Reference existing catalog items by ID where relevant
-    - Include Mermaid diagrams where visual representation helps
     - For ADRs: include Status, Context, Decision, Consequences sections
-    - For guides: include clear step-by-step instructions
-    - For references: include comprehensive specifications and tables
-    - For overviews: include executive summary, scope, key points
+    - For guides: include clear step-by-step instructions with prerequisites
+    - For references: include comprehensive specifications, tables, and NFRs
+    - For overviews: include executive summary, scope, key takeaways
     - Aim for 4-8 sections with meaningful content (not thin placeholders)
     - linked_entities: Reference existing catalog items that this document discusses or relates to.
       Use EXACT IDs from the catalog context above. Set label to "Pattern" for AB/ABB/SBB items,
@@ -1281,7 +1372,7 @@ document_drafter:
 
   judge: |
     You are a quality reviewer for enterprise architecture documents.
-    Score this draft on 5 dimensions (1-10 scale):
+    Score this draft on 5 dimensions (1-10 scale).
 
     ## User's Original Request
     {prompt}
@@ -1299,24 +1390,36 @@ document_drafter:
     4. **structure**: Is the document well-organized with clear headings, logical flow?
     5. **quality**: Is the writing clear, professional, with good markdown formatting?
 
-    Return a JSON object:
+    ## Scoring Guide
+    - 9-10: Exceptional — exceeds expectations, comprehensive, production-ready
+    - 7-8: Good — meets requirements well, minor improvements possible
+    - 5-6: Adequate — covers basics but has notable gaps or weaknesses
+    - 3-4: Below average — significant issues that need addressing
+    - 1-2: Poor — fundamentally flawed, missing critical content
+
+    Be fair and calibrated. A well-structured document that addresses the user's request
+    with relevant content should score 7+ on most dimensions. Reserve scores below 5 for
+    genuinely problematic drafts. If the catalog has few items, do not penalize catalog_usage
+    heavily — score based on how well the document uses what IS available.
+
+    Return a JSON object with this structure (example with realistic scores):
     {
       "scores": {
-        "relevance": <1-10>,
-        "completeness": <1-10>,
-        "catalog_usage": <1-10>,
-        "structure": <1-10>,
-        "quality": <1-10>
+        "relevance": 8,
+        "completeness": 7,
+        "catalog_usage": 6,
+        "structure": 8,
+        "quality": 7
       },
-      "overall": <average score>,
-      "pass": <true if all scores >= 7>,
+      "overall": 7.2,
+      "pass": true,
       "critiques": [
-        {"dimension": "<name>", "score": <1-10>, "issue": "<what's wrong>", "suggestion": "<how to fix>"}
+        {"dimension": "catalog_usage", "score": 6, "issue": "Only 2 catalog items referenced", "suggestion": "Reference more relevant ABBs and technologies from the catalog"}
       ]
     }
 
     Only include critiques for dimensions scoring below 7.
-    Return ONLY the JSON object.
+    Return ONLY the JSON object, no additional text.
 
   critic: |
     You are a document refinement specialist. Fix the quality issues identified in the critiques
@@ -1357,6 +1460,49 @@ document_drafter:
     - Return the COMPLETE document, not just changed parts
 
     Return ONLY the JSON object.
+
+  enrich_section: |
+    You are an expert Enterprise Architect enriching a single section of a {doc_type} document.
+
+    ## Section to Enrich
+    Title: {section_title}
+    Current content:
+    {section_content}
+
+    ## Outline Key Points for This Section
+    {key_points}
+
+    ## Target Audience
+    {target_audience}
+
+    ## Full Document Context
+    Title: {doc_title}
+    Sections: {all_section_titles}
+
+    ## Catalog Context
+    {catalog_context}
+
+    ## Instructions
+    Enrich this section to make it more valuable for {target_audience}. Your task:
+
+    1. **Deepen technical detail** — add specific architecture patterns, catalog references (by ID),
+       and concrete guidance that the initial draft may have left vague
+    2. **Add diagrams** — if the section's topic benefits from a visual, include a Mermaid diagram
+       (flowchart, sequence, C4, class). Prefer diagrams over code blocks.
+    3. **Cover all key points** — ensure every key point from the outline is substantively addressed
+    4. **Add callouts** — use `> **Key Decision:** ...` or `> **Best Practice:** ...` blocks
+       for important insights
+    5. **Cross-reference** — reference other sections of this document or catalog items where relevant
+    6. **Audience targeting**:
+       - Enterprise Architects: emphasize strategic decisions, business alignment, governance
+       - Domain Architects: emphasize domain-specific depth, security implications, integration patterns
+       - Solution Architects: emphasize NFRs, scalability, implementation tradeoffs
+       - Software Engineers: emphasize practical guidance, prerequisites, gotchas, anti-patterns
+    7. **Tables** — use only when genuinely needed for comparison or structured data
+    8. **Minimum 300 words** — ensure substantive depth, not thin placeholders
+
+    Return ONLY the enriched markdown content for this section (no JSON wrapper, no title prefix).
+    Do NOT include the section title as a heading — just the body content.
 
   discuss: |
     You are helping the user refine a document through conversation.

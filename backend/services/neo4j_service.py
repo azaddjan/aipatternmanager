@@ -2461,6 +2461,7 @@ class Neo4jService:
             "doc_type": data.get("doc_type", "guide"),
             "status": data.get("status", "draft"),
             "summary": data.get("summary", ""),
+            "target_audience": data.get("target_audience", ""),
             "tags": tags,
             "created_by": data.get("created_by", ""),
             "updated_by": "",
@@ -2554,6 +2555,7 @@ class Neo4jService:
         doc_type: Optional[str] = None,
         search: Optional[str] = None,
         team_id: Optional[str] = None,
+        target_audience: Optional[str] = None,
         skip: int = 0,
         limit: int = 50,
     ) -> tuple[list[dict], int]:
@@ -2573,6 +2575,9 @@ class Neo4jService:
         if team_id:
             where_clauses.append("EXISTS { (d)-[:OWNED_BY]->(t:Team) WHERE t.id = $team_id }")
             params["team_id"] = team_id
+        if target_audience:
+            where_clauses.append("toLower(d.target_audience) CONTAINS toLower($target_audience)")
+            params["target_audience"] = target_audience
 
         where = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 

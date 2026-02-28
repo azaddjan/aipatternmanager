@@ -101,6 +101,7 @@ export default function DocumentDetail() {
   const [docType, setDocType] = useState('guide')
   const [status, setStatus] = useState('draft')
   const [summary, setSummary] = useState('')
+  const [targetAudience, setTargetAudience] = useState('')
   const [tagsInput, setTagsInput] = useState('')
   const [teamId, setTeamId] = useState('')
 
@@ -140,6 +141,7 @@ export default function DocumentDetail() {
         setDocType(d.doc_type || 'guide')
         setStatus(d.status || 'draft')
         setSummary(d.summary || '')
+        setTargetAudience(d.target_audience || '')
         setTagsInput((d.tags || []).join(', '))
         setTeamId(d.team_id || '')
         setSections(d.sections || [])
@@ -152,14 +154,56 @@ export default function DocumentDetail() {
       .finally(() => setLoading(false))
   }, [id, isNew])
 
-  // Save document (create or update)
-  const handleApplyDraft = (draft) => {
+  // Apply AI draft — auto-save for new documents, state update for existing
+  const handleApplyDraft = async (draft) => {
+    // Always update local state
     setTitle(draft.title || 'Untitled Document')
     if (draft.doc_type) setDocType(draft.doc_type)
     if (draft.summary !== undefined) setSummary(draft.summary)
+    if (draft.target_audience) setTargetAudience(draft.target_audience)
     if (draft.tags !== undefined) setTagsInput(typeof draft.tags === 'string' ? draft.tags : '')
     if (draft.sections) setSections(draft.sections)
     if (draft.linked_entities?.length) setPendingLinks(draft.linked_entities)
+
+    // Auto-save for new documents — build payload from draft arg (not state, avoids race condition)
+    if (isNew) {
+      setSaving(true)
+      const draftTags = typeof draft.tags === 'string'
+        ? draft.tags.split(',').map(t => t.trim()).filter(Boolean)
+        : Array.isArray(draft.tags) ? draft.tags : []
+      try {
+        const data = {
+          title: draft.title || 'Untitled Document',
+          doc_type: draft.doc_type || docType,
+          status,
+          summary: draft.summary || '',
+          target_audience: draft.target_audience || '',
+          tags: draftTags,
+          team_id: teamId || undefined,
+          source_analysis_id: fromAnalysis || undefined,
+          sections: (draft.sections || []).map((s, i) => ({
+            title: s.title,
+            content: s.content || '',
+            order_index: i,
+          })),
+        }
+        const created = await createDocument(data)
+        // Auto-link entities from AI draft
+        const entities = draft.linked_entities || []
+        for (const entity of entities) {
+          try {
+            await linkDocumentEntity(created.id, entity.id, entity.label)
+          } catch (linkErr) {
+            console.warn(`Failed to link ${entity.id}:`, linkErr)
+          }
+        }
+        toast.success(`Created ${created.id}`)
+        navigate(`/documents/${created.id}`, { replace: true })
+      } catch (err) {
+        toast.error(err.message)
+      }
+      setSaving(false)
+    }
   }
 
   const handleSave = async () => {
@@ -168,7 +212,7 @@ export default function DocumentDetail() {
     try {
       if (isNew) {
         const data = {
-          title, doc_type: docType, status, summary, tags,
+          title, doc_type: docType, status, summary, target_audience: targetAudience, tags,
           team_id: teamId || undefined,
           source_analysis_id: fromAnalysis || undefined,
           sections: sections.map((s, i) => ({ title: s.title, content: s.content || '', order_index: i })),
@@ -188,7 +232,7 @@ export default function DocumentDetail() {
         toast.success(`Created ${created.id}`)
         navigate(`/documents/${created.id}`, { replace: true })
       } else {
-        await updateDocument(id, { title, doc_type: docType, status, summary, tags, team_id: teamId || null })
+        await updateDocument(id, { title, doc_type: docType, status, summary, target_audience: targetAudience, tags, team_id: teamId || null })
         // Auto-link entities from AI draft (discuss mode on existing doc)
         if (pendingLinks.length > 0) {
           for (const entity of pendingLinks) {
@@ -480,6 +524,11 @@ export default function DocumentDetail() {
           {doc?.team_name && (
             <span className="text-[11px] px-2 py-0.5 rounded border bg-indigo-500/10 text-indigo-400 border-indigo-500/30">
               {doc.team_name}
+            </span>
+          )}
+          {(doc?.target_audience || targetAudience) && (
+            <span className="text-[11px] px-2 py-0.5 rounded border bg-cyan-500/10 text-cyan-400 border-cyan-500/30">
+              &#128101; {doc?.target_audience || targetAudience}
             </span>
           )}
           {doc?.tags?.map(t => (

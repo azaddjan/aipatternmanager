@@ -39,12 +39,13 @@ def list_documents(
     doc_type: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
     team_id: Optional[str] = Query(None),
+    target_audience: Optional[str] = Query(None),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     _user=Depends(get_current_user_or_anonymous),
 ):
     db = get_db()
-    docs, total = db.list_documents(status=status, doc_type=doc_type, search=search, team_id=team_id, skip=skip, limit=limit)
+    docs, total = db.list_documents(status=status, doc_type=doc_type, search=search, team_id=team_id, target_audience=target_audience, skip=skip, limit=limit)
     return {"documents": docs, "total": total}
 
 
@@ -283,6 +284,7 @@ def draft_document_stream(
                 document_draft_service.draft_document(
                     prompt=body.prompt,
                     doc_type=body.doc_type,
+                    target_audience=body.target_audience,
                     db=db,
                     progress_cb=progress_cb,
                     provider_name=body.provider.value if body.provider else None,

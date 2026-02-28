@@ -1,4 +1,5 @@
 """AI Document Drafter — auto-draft complete documents with quality gate + discuss."""
+import asyncio
 import json
 import logging
 from typing import AsyncIterator, Callable, Optional
@@ -125,6 +126,166 @@ def _build_existing_docs_context(db) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Planning Phase — Generate document outline
+# ---------------------------------------------------------------------------
+
+async def _plan_document(
+    prompt: str,
+    doc_type: str,
+    target_audience: str,
+    catalog_context: str,
+    existing_docs: str,
+    provider,
+    system_prompt: str,
+    plan_template: str,
+    model: str,
+) -> dict:
+    """Generate a document outline/plan to guide drafting.
+
+    Returns:
+        dict with {title, sections, diagrams, target_entities}
+    """
+    plan_prompt = (
+        plan_template
+        .replace("{prompt}", prompt)
+        .replace("{doc_type}", doc_type)
+        .replace("{target_audience}", target_audience)
+        .replace("{catalog_context}", catalog_context)
+        .replace("{existing_docs}", existing_docs)
+    )
+
+    result = await provider.generate(system_prompt, plan_prompt, model)
+    logger.info(f"Plan raw response (first 500 chars): {result['content'][:500]}")
+    plan = _parse_json_response(result["content"], default={
+        "title": "Untitled Document",
+        "sections": [
+            {"title": "Introduction", "key_points": ["Overview of the topic"], "catalog_refs": []}
+        ],
+        "diagrams": [],
+        "target_entities": [],
+    })
+
+    logger.info(f"Plan: {len(plan.get('sections', []))} sections, "
+                f"{len(plan.get('diagrams', []))} diagrams, "
+                f"{len(plan.get('target_entities', []))} target entities")
+    return plan
+
+
+# ---------------------------------------------------------------------------
+# Parallel Section Enrichment
+# ---------------------------------------------------------------------------
+
+async def _enrich_single_section(
+    section: dict,
+    outline_section: dict | None,
+    doc_title: str,
+    doc_type: str,
+    all_section_titles: str,
+    target_audience: str,
+    catalog_context: str,
+    provider,
+    system_prompt: str,
+    enrich_template: str,
+    model: str,
+) -> dict:
+    """Enrich a single section with deeper detail. Returns updated section dict."""
+    key_points = ""
+    if outline_section and outline_section.get("key_points"):
+        key_points = "\n".join(f"- {kp}" for kp in outline_section["key_points"])
+    else:
+        key_points = "(no specific key points from outline)"
+
+    enrich_prompt = (
+        enrich_template
+        .replace("{doc_type}", doc_type)
+        .replace("{section_title}", section.get("title", ""))
+        .replace("{section_content}", section.get("content", ""))
+        .replace("{key_points}", key_points)
+        .replace("{target_audience}", target_audience)
+        .replace("{doc_title}", doc_title)
+        .replace("{all_section_titles}", all_section_titles)
+        .replace("{catalog_context}", catalog_context)
+    )
+
+    try:
+        result = await provider.generate(system_prompt, enrich_prompt, model)
+        enriched_content = result["content"].strip()
+
+        # If response looks like JSON (edge case), try to extract content
+        if enriched_content.startswith("{"):
+            parsed = _parse_json_response(enriched_content, default=None)
+            if parsed and parsed.get("content"):
+                enriched_content = parsed["content"]
+
+        # Validate enrichment actually added content
+        if len(enriched_content) > len(section.get("content", "")) * 0.5:
+            return {**section, "content": enriched_content}
+        else:
+            logger.warning(f"Enrichment for '{section.get('title')}' too short, keeping original")
+            return section
+    except Exception as e:
+        logger.error(f"Failed to enrich section '{section.get('title')}': {e}")
+        return section
+
+
+async def _enrich_sections_parallel(
+    draft: dict,
+    outline: dict,
+    doc_type: str,
+    target_audience: str,
+    catalog_context: str,
+    provider,
+    system_prompt: str,
+    enrich_template: str,
+    model: str,
+) -> dict:
+    """Enrich all sections in parallel using asyncio.gather.
+
+    Returns:
+        Updated draft with enriched sections.
+    """
+    sections = draft.get("sections", [])
+    if not sections:
+        return draft
+
+    outline_sections = outline.get("sections", [])
+    doc_title = draft.get("title", "Untitled")
+    all_section_titles = ", ".join(s.get("title", "?") for s in sections)
+
+    # Build outline lookup by title (case-insensitive)
+    outline_lookup = {}
+    for os_item in outline_sections:
+        outline_lookup[os_item.get("title", "").lower().strip()] = os_item
+
+    # Create enrichment tasks for all sections
+    tasks = []
+    for section in sections:
+        section_title_lower = section.get("title", "").lower().strip()
+        outline_section = outline_lookup.get(section_title_lower)
+
+        tasks.append(
+            _enrich_single_section(
+                section=section,
+                outline_section=outline_section,
+                doc_title=doc_title,
+                doc_type=doc_type,
+                all_section_titles=all_section_titles,
+                target_audience=target_audience,
+                catalog_context=catalog_context,
+                provider=provider,
+                system_prompt=system_prompt,
+                enrich_template=enrich_template,
+                model=model,
+            )
+        )
+
+    # Run all enrichments in parallel
+    enriched_sections = await asyncio.gather(*tasks)
+
+    return {**draft, "sections": list(enriched_sections)}
+
+
+# ---------------------------------------------------------------------------
 # Quality Gate — Judge / Critic loop
 # ---------------------------------------------------------------------------
 
@@ -179,12 +340,14 @@ async def _quality_gate(
 
         try:
             judge_result = await provider.generate(system_prompt, judge_prompt, model)
+            logger.info(f"Judge raw response (first 500 chars): {judge_result['content'][:500]}")
             judge_data = _parse_json_response(judge_result["content"], default={
                 "scores": {},
                 "overall": 0,
                 "critiques": [],
                 "pass": False,
             })
+            logger.info(f"Judge parsed critiques: {judge_data.get('critiques', [])}")
         except Exception as e:
             logger.error(f"Quality gate judge failed (iteration {iteration}): {e}")
             quality_scores["error"] = str(e)
@@ -238,6 +401,7 @@ async def _quality_gate(
 
         try:
             critic_result = await provider.generate(system_prompt, critic_prompt, model)
+            logger.info(f"Critic raw response (first 500 chars): {critic_result['content'][:500]}")
             corrected = _parse_json_response(critic_result["content"], default=current_draft)
             # Validate basic structure
             if corrected.get("title") and corrected.get("sections"):
@@ -270,11 +434,14 @@ async def draft_document(
     prompt: str,
     doc_type: str,
     db,
+    target_audience: str = "Software Engineers and Architects",
     progress_cb: ProgressCallback = None,
     provider_name: Optional[str] = None,
     model: Optional[str] = None,
 ) -> dict:
-    """Draft a complete document with quality gate.
+    """Draft a complete document with planning, enrichment, and quality gate.
+
+    Pipeline: context → plan → draft → enrich → quality gate → complete (6 steps)
 
     Returns:
         {title, doc_type, summary, tags, sections, quality_scores, provider, model}
@@ -292,21 +459,60 @@ async def draft_document(
     system_prompt = dd_prompts.get("system", "")
     draft_template = dd_prompts.get("draft", "")
 
+    TOTAL_STEPS = 6
+
     def _progress(stage, step, total, message):
         if progress_cb:
             progress_cb(stage, step, total, message)
 
     # Step 1: Build context
-    _progress("context", 1, 4, "Loading catalog context...")
+    _progress("context", 1, TOTAL_STEPS, "Loading catalog context...")
     catalog_context = _build_catalog_context(db)
     existing_docs = _build_existing_docs_context(db)
 
-    # Step 2: Generate initial draft
-    _progress("drafting", 2, 4, "AI is drafting your document...")
+    # Count catalog items for rich progress
+    cat_lines = catalog_context.split("\n")
+    pattern_count = sum(1 for l in cat_lines if l.startswith("- ") and ":" in l)
+    _progress("context", 1, TOTAL_STEPS, f"Loaded {pattern_count} catalog items")
+
+    # Step 2: Plan document structure
+    plan_template = dd_prompts.get("plan", "")
+    outline = {}
+    if plan_template:
+        _progress("planning", 2, TOTAL_STEPS, "Planning document structure...")
+        outline = await _plan_document(
+            prompt=prompt,
+            doc_type=doc_type,
+            target_audience=target_audience,
+            catalog_context=catalog_context,
+            existing_docs=existing_docs,
+            provider=provider,
+            system_prompt=system_prompt,
+            plan_template=plan_template,
+            model=used_model,
+        )
+        # Rich progress: show planned sections
+        plan_sections = outline.get("sections", [])
+        plan_diagrams = outline.get("diagrams", [])
+        section_names = [s.get("title", "?") for s in plan_sections[:6]]
+        plan_summary = ", ".join(section_names)
+        if len(plan_sections) > 6:
+            plan_summary += f" +{len(plan_sections) - 6} more"
+        _progress("planning", 2, TOTAL_STEPS,
+                  f"Planned {len(plan_sections)} sections · {len(plan_diagrams)} diagrams: {plan_summary}")
+    else:
+        _progress("planning", 2, TOTAL_STEPS, "Planning step skipped")
+        logger.warning("No plan prompt configured — skipping planning phase")
+
+    # Step 3: Generate initial draft using outline
+    _progress("drafting", 3, TOTAL_STEPS, "AI is drafting your document...")
+    outline_text = json.dumps(outline, indent=2) if outline else "(no outline available)"
     draft_prompt = (
         draft_template
         .replace("{prompt}", prompt)
         .replace("{doc_type}", doc_type)
+        .replace("{target_audience}", target_audience)
+        .replace("{outline}", outline_text)
         .replace("{catalog_context}", catalog_context)
         .replace("{existing_docs}", existing_docs)
     )
@@ -326,8 +532,42 @@ async def draft_document(
     if not draft.get("doc_type"):
         draft["doc_type"] = doc_type
 
-    # Step 3: Quality gate
-    _progress("quality_gate", 3, 4, "Running quality review...")
+    # Rich progress: show draft stats
+    draft_sections = draft.get("sections", [])
+    total_words = sum(len(s.get("content", "").split()) for s in draft_sections)
+    entity_count = len(draft.get("linked_entities", []))
+    _progress("drafting", 3, TOTAL_STEPS,
+              f"Generated {len(draft_sections)} sections · ~{total_words:,} words · {entity_count} entities linked")
+
+    # Step 4: Parallel section enrichment
+    enrich_template = dd_prompts.get("enrich_section", "")
+    if enrich_template and draft_sections:
+        section_count = len(draft_sections)
+        _progress("enriching", 4, TOTAL_STEPS, f"Enriching {section_count} sections in parallel...")
+        draft = await _enrich_sections_parallel(
+            draft=draft,
+            outline=outline,
+            doc_type=doc_type,
+            target_audience=target_audience,
+            catalog_context=catalog_context,
+            provider=provider,
+            system_prompt=system_prompt,
+            enrich_template=enrich_template,
+            model=used_model,
+        )
+        # Rich progress: show enrichment stats
+        enriched_sections = draft.get("sections", [])
+        enriched_words = sum(len(s.get("content", "").split()) for s in enriched_sections)
+        word_increase = enriched_words - total_words
+        _progress("enriching", 4, TOTAL_STEPS,
+                  f"Enriched {len(enriched_sections)} sections · ~{enriched_words:,} words (+{word_increase:,})")
+    else:
+        _progress("enriching", 4, TOTAL_STEPS, "Enrichment step skipped")
+        if not enrich_template:
+            logger.warning("No enrich_section prompt configured — skipping enrichment phase")
+
+    # Step 5: Quality gate
+    _progress("quality_gate", 5, TOTAL_STEPS, "Running quality review...")
     refined_draft, quality_scores = await _quality_gate(
         draft=draft,
         prompt=prompt,
@@ -339,11 +579,12 @@ async def draft_document(
         progress_cb=progress_cb,
     )
 
-    _progress("complete", 4, 4, "Document draft complete!")
+    _progress("complete", 6, TOTAL_STEPS, "Document draft complete!")
 
     return {
         **refined_draft,
         "quality_scores": quality_scores,
+        "outline": outline,
         "provider": provider.name,
         "model": used_model,
     }

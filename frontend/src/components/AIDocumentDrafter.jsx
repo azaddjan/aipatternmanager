@@ -5,6 +5,16 @@ import MarkdownContent from './MarkdownContent'
 
 const DOC_TYPES = ['guide', 'reference', 'adr', 'overview', 'other']
 
+const AUDIENCES = [
+  'Software Engineers and Architects',
+  'Enterprise Architects',
+  'Domain Architects (AI)',
+  'Domain Architects (Security)',
+  'Domain Architects (Cloud)',
+  'Solution Architects',
+  'Software Engineers',
+]
+
 /**
  * AIDocumentDrafter — AI assistant box for auto-drafting and discussing documents.
  *
@@ -15,7 +25,7 @@ const DOC_TYPES = ['guide', 'reference', 'adr', 'overview', 'other']
  *   summary      — current summary
  *   tags         — current tags string
  *   sections     — current sections array
- *   onApplyDraft — (draft) => void — applies {title, doc_type, summary, tags, sections}
+ *   onApplyDraft — async (draft) => void — applies {title, doc_type, summary, tags, sections}
  */
 export default function AIDocumentDrafter({
   isNew,
@@ -31,12 +41,19 @@ export default function AIDocumentDrafter({
   const [mode, setMode] = useState('draft') // 'draft' | 'discuss'
   const [prompt, setPrompt] = useState('')
   const [draftType, setDraftType] = useState(docType || 'guide')
+  const [targetAudience, setTargetAudience] = useState(AUDIENCES[0])
 
   // Draft state
   const [drafting, setDrafting] = useState(false)
   const [progressSteps, setProgressSteps] = useState([])
   const [draftResult, setDraftResult] = useState(null)
   const [draftError, setDraftError] = useState(null)
+  const [applying, setApplying] = useState(false)
+
+  // Progress bar state
+  const [progressPercent, setProgressPercent] = useState(0)
+  const [progressStage, setProgressStage] = useState('')
+  const [progressComplete, setProgressComplete] = useState(false)
 
   // Discuss state
   const [messages, setMessages] = useState([])
@@ -60,11 +77,15 @@ export default function AIDocumentDrafter({
     setDraftError(null)
     setDraftResult(null)
     setProgressSteps([])
+    setProgressPercent(0)
+    setProgressStage('')
+    setProgressComplete(false)
 
     try {
       const result = await draftDocumentStream(
-        { prompt: prompt.trim(), doc_type: draftType },
+        { prompt: prompt.trim(), doc_type: draftType, target_audience: targetAudience },
         (event) => {
+          // Update checkmark step list
           setProgressSteps(prev => {
             // Replace if same stage, otherwise append
             const existing = prev.findIndex(s => s.stage === event.stage)
@@ -75,38 +96,73 @@ export default function AIDocumentDrafter({
             }
             return [...prev, event]
           })
+
+          // Update progress bar
+          const { step, total, stage } = event
+          setProgressStage(stage)
+          if (stage === 'quality_gate' && total <= 3) {
+            // Quality gate sub-iterations — interpolate within 75-90% range
+            const basePercent = 75
+            const range = 15
+            const subPercent = basePercent + ((step / total) * range)
+            setProgressPercent(Math.round(subPercent))
+          } else if (total > 0) {
+            setProgressPercent(Math.round((step / total) * 100))
+          }
+          if (stage === 'complete') {
+            setProgressComplete(true)
+            setProgressPercent(100)
+          }
         }
       )
       setDraftResult(result)
+      setProgressPercent(100)
+      setProgressComplete(true)
     } catch (err) {
       setDraftError(err.message)
     }
     setDrafting(false)
   }
 
-  const handleApplyDraft = () => {
+  const handleApplyDraft = async () => {
     if (!draftResult) return
-    onApplyDraft({
-      title: draftResult.title || 'Untitled',
-      doc_type: draftResult.doc_type || draftType,
-      summary: draftResult.summary || '',
-      tags: (draftResult.tags || []).join(', '),
-      sections: (draftResult.sections || []).map((s, i) => ({
-        id: `new-${Date.now()}-${i}`,
-        title: s.title,
-        content: s.content,
-        order_index: i,
-      })),
-      linked_entities: draftResult.linked_entities || [],
-    })
-    setDraftResult(null)
-    setProgressSteps([])
-    setPrompt('')
+    setApplying(true)
+    try {
+      await onApplyDraft({
+        title: draftResult.title || 'Untitled',
+        doc_type: draftResult.doc_type || draftType,
+        summary: draftResult.summary || '',
+        target_audience: targetAudience,
+        tags: (draftResult.tags || []).join(', '),
+        sections: (draftResult.sections || []).map((s, i) => ({
+          id: `new-${Date.now()}-${i}`,
+          title: s.title,
+          content: s.content,
+          order_index: i,
+        })),
+        linked_entities: draftResult.linked_entities || [],
+      })
+      // Only clear state if we didn't navigate away (existing docs)
+      if (!isNew) {
+        setDraftResult(null)
+        setProgressSteps([])
+        setProgressPercent(0)
+        setProgressStage('')
+        setProgressComplete(false)
+        setPrompt('')
+      }
+    } catch (err) {
+      setDraftError(err.message)
+    }
+    setApplying(false)
   }
 
   const handleDiscardDraft = () => {
     setDraftResult(null)
     setProgressSteps([])
+    setProgressPercent(0)
+    setProgressStage('')
+    setProgressComplete(false)
   }
 
   // --- Discuss ---
@@ -189,6 +245,19 @@ export default function AIDocumentDrafter({
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleDiscuss()
+    }
+  }
+
+  // Stage label for progress bar
+  const stageLabel = (stage) => {
+    switch (stage) {
+      case 'context': return 'Loading catalog...'
+      case 'planning': return 'Planning structure...'
+      case 'drafting': return 'Drafting document...'
+      case 'enriching': return 'Enriching sections...'
+      case 'quality_gate': return 'Quality review...'
+      case 'complete': return 'Complete'
+      default: return 'Starting...'
     }
   }
 
@@ -283,7 +352,7 @@ export default function AIDocumentDrafter({
               rows={3}
               disabled={drafting}
             />
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               <div className="flex items-center gap-2">
                 <label className="text-xs text-gray-500">Type:</label>
                 <select
@@ -293,6 +362,17 @@ export default function AIDocumentDrafter({
                   disabled={drafting}
                 >
                   {DOC_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-gray-500">Audience:</label>
+                <select
+                  value={targetAudience}
+                  onChange={e => setTargetAudience(e.target.value)}
+                  className="input text-xs py-1"
+                  disabled={drafting}
+                >
+                  {AUDIENCES.map(a => <option key={a} value={a}>{a}</option>)}
                 </select>
               </div>
               <button
@@ -311,23 +391,44 @@ export default function AIDocumentDrafter({
               </button>
             </div>
 
-            {/* Progress steps */}
-            {progressSteps.length > 0 && (
-              <div className="space-y-1 py-2">
-                {progressSteps.map((step, i) => (
-                  <div key={i} className="flex items-center gap-2 text-xs">
-                    {step.stage === 'complete' ? (
-                      <span className="text-green-400">&#10003;</span>
-                    ) : i === progressSteps.length - 1 && drafting ? (
-                      <span className="inline-block w-3 h-3 border-2 border-purple-400/30 border-t-purple-400 rounded-full animate-spin" />
-                    ) : (
-                      <span className="text-green-400">&#10003;</span>
-                    )}
-                    <span className={step.stage === 'complete' ? 'text-green-400' : 'text-gray-400'}>
-                      {step.message}
-                    </span>
+            {/* Progress bar + steps */}
+            {(drafting || progressSteps.length > 0) && (
+              <div className="space-y-2 py-2">
+                {/* Progress bar */}
+                <div className="space-y-1">
+                  <div className="w-full bg-gray-800 rounded-full h-1.5 overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ease-out ${
+                        progressComplete ? 'bg-green-500' : 'bg-blue-500'
+                      }`}
+                      style={{ width: `${progressPercent}%` }}
+                    />
                   </div>
-                ))}
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className={progressComplete ? 'text-green-400' : 'text-blue-400'}>
+                      {stageLabel(progressStage)}
+                    </span>
+                    <span className="text-gray-500">{progressPercent}%</span>
+                  </div>
+                </div>
+
+                {/* Checkmark steps */}
+                <div className="space-y-1">
+                  {progressSteps.map((step, i) => (
+                    <div key={i} className="flex items-center gap-2 text-xs">
+                      {step.stage === 'complete' ? (
+                        <span className="text-green-400">&#10003;</span>
+                      ) : i === progressSteps.length - 1 && drafting ? (
+                        <span className="inline-block w-3 h-3 border-2 border-purple-400/30 border-t-purple-400 rounded-full animate-spin" />
+                      ) : (
+                        <span className="text-green-400">&#10003;</span>
+                      )}
+                      <span className={step.stage === 'complete' ? 'text-green-400' : 'text-gray-400'}>
+                        {step.message}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -355,12 +456,23 @@ export default function AIDocumentDrafter({
                   <div className="flex items-center gap-2">
                     <button
                       onClick={handleApplyDraft}
+                      disabled={applying}
                       className="btn-primary text-xs px-3 py-1"
                     >
-                      &#10003; Apply Draft
+                      {applying ? (
+                        <span className="flex items-center gap-1">
+                          <span className="inline-block w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                          Saving...
+                        </span>
+                      ) : isNew ? (
+                        '✓ Create & Save'
+                      ) : (
+                        '✓ Apply Draft'
+                      )}
                     </button>
                     <button
                       onClick={handleDiscardDraft}
+                      disabled={applying}
                       className="btn-secondary text-xs px-3 py-1"
                     >
                       Discard

@@ -940,6 +940,7 @@ export function listDocuments(params = {}) {
   if (params.doc_type) qs.set('doc_type', params.doc_type)
   if (params.search) qs.set('search', params.search)
   if (params.team_id) qs.set('team_id', params.team_id)
+  if (params.target_audience) qs.set('target_audience', params.target_audience)
   if (params.skip != null) qs.set('skip', params.skip)
   if (params.limit != null) qs.set('limit', params.limit)
   const query = qs.toString()

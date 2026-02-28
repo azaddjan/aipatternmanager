@@ -25,6 +25,27 @@ const DOC_TYPE_COLORS = {
   other: 'bg-gray-500/10 text-gray-400 border-gray-500/30',
 }
 
+const AUDIENCE_OPTIONS = [
+  'Software Engineers and Architects',
+  'Enterprise Architects',
+  'Domain Architects (AI)',
+  'Domain Architects (Security)',
+  'Domain Architects (Cloud)',
+  'Solution Architects',
+  'Software Engineers',
+]
+
+// Short display labels for audience badges on cards
+const AUDIENCE_SHORT_LABELS = {
+  'Software Engineers and Architects': 'SWE & Architects',
+  'Enterprise Architects': 'Enterprise Arch.',
+  'Domain Architects (AI)': 'Domain AI',
+  'Domain Architects (Security)': 'Domain Security',
+  'Domain Architects (Cloud)': 'Domain Cloud',
+  'Solution Architects': 'Solution Arch.',
+  'Software Engineers': 'Software Eng.',
+}
+
 export default function Documents() {
   const navigate = useNavigate()
   const { toast } = useToast()
@@ -35,6 +56,7 @@ export default function Documents() {
   const [statusFilter, setStatusFilter] = useState('')
   const [docTypeFilter, setDocTypeFilter] = useState('')
   const [teamFilter, setTeamFilter] = useState('')
+  const [audienceFilter, setAudienceFilter] = useState('')
   const [teams, setTeams] = useState([])
   const [deleting, setDeleting] = useState(null)
 
@@ -48,6 +70,7 @@ export default function Documents() {
     if (statusFilter) params.status = statusFilter
     if (docTypeFilter) params.doc_type = docTypeFilter
     if (teamFilter) params.team_id = teamFilter
+    if (audienceFilter) params.target_audience = audienceFilter
     if (search.trim()) params.search = search.trim()
 
     listDocuments(params)
@@ -57,7 +80,7 @@ export default function Documents() {
       })
       .catch(() => setDocuments([]))
       .finally(() => setLoading(false))
-  }, [statusFilter, docTypeFilter, teamFilter, search])
+  }, [statusFilter, docTypeFilter, teamFilter, audienceFilter, search])
 
   const handleDelete = async (e, doc) => {
     e.stopPropagation()
@@ -132,6 +155,16 @@ export default function Documents() {
             ))}
           </select>
         )}
+        <select
+          value={audienceFilter}
+          onChange={e => setAudienceFilter(e.target.value)}
+          className="input"
+        >
+          <option value="">All Audiences</option>
+          {AUDIENCE_OPTIONS.map(a => (
+            <option key={a} value={a}>{a}</option>
+          ))}
+        </select>
       </div>
 
       {/* Documents Grid */}
@@ -198,6 +231,11 @@ export default function Documents() {
                 {doc.team_name && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded border bg-indigo-500/10 text-indigo-400 border-indigo-500/30">
                     {doc.team_name}
+                  </span>
+                )}
+                {doc.target_audience && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded border bg-teal-500/10 text-teal-400 border-teal-500/30">
+                    {AUDIENCE_SHORT_LABELS[doc.target_audience] || doc.target_audience}
                   </span>
                 )}
               </div>

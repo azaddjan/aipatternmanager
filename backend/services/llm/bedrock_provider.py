@@ -91,7 +91,7 @@ class BedrockProvider(BaseLLMProvider):
                 messages=[
                     {"role": "user", "content": [{"text": user_prompt}]}
                 ],
-                inferenceConfig={"maxTokens": 4096, "temperature": 0.7},
+                inferenceConfig={"maxTokens": 8192, "temperature": 0.7},
             )
             return response["output"]["message"]["content"][0]["text"]
 
@@ -109,7 +109,7 @@ class BedrockProvider(BaseLLMProvider):
                 messages=[
                     {"role": "user", "content": [{"text": user_prompt}]}
                 ],
-                inferenceConfig={"maxTokens": 4096, "temperature": 0.7},
+                inferenceConfig={"maxTokens": 8192, "temperature": 0.7},
             )
             return response["output"]["message"]["content"][0]["text"]
 
