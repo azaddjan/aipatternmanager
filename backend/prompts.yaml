@@ -1239,23 +1239,23 @@ document_drafter:
 
     ## Instructions
     Generate a complete document as a JSON object with this exact structure:
-    {{
+    {
       "title": "Document Title",
       "doc_type": "{doc_type}",
       "summary": "A 1-2 sentence summary of this document",
       "tags": ["tag1", "tag2"],
       "sections": [
-        {{"title": "Section Title", "content": "Markdown content..."}},
-        {{"title": "Another Section", "content": "More markdown..."}}
+        {"title": "Section Title", "content": "Markdown content..."},
+        {"title": "Another Section", "content": "More markdown..."}
       ],
       "linked_entities": [
-        {{"id": "ABB-CORE-001", "name": "Prompt Engineering", "label": "Pattern"}},
-        {{"id": "aws-bedrock", "name": "AWS Bedrock", "label": "Technology"}}
+        {"id": "ABB-CORE-001", "name": "Prompt Engineering", "label": "Pattern"},
+        {"id": "aws-bedrock", "name": "AWS Bedrock", "label": "Technology"}
       ],
       "suggested_patterns": [
-        {{"name": "Pattern Name", "type": "ABB", "description": "Why this pattern is needed"}}
+        {"name": "Pattern Name", "type": "ABB", "description": "Why this pattern is needed"}
       ]
-    }}
+    }
 
     Requirements:
     - Title should be concise and descriptive
@@ -1300,20 +1300,20 @@ document_drafter:
     5. **quality**: Is the writing clear, professional, with good markdown formatting?
 
     Return a JSON object:
-    {{
-      "scores": {{
+    {
+      "scores": {
         "relevance": <1-10>,
         "completeness": <1-10>,
         "catalog_usage": <1-10>,
         "structure": <1-10>,
         "quality": <1-10>
-      }},
+      },
       "overall": <average score>,
       "pass": <true if all scores >= 7>,
       "critiques": [
-        {{"dimension": "<name>", "score": <1-10>, "issue": "<what's wrong>", "suggestion": "<how to fix>"}}
+        {"dimension": "<name>", "score": <1-10>, "issue": "<what's wrong>", "suggestion": "<how to fix>"}
       ]
-    }}
+    }
 
     Only include critiques for dimensions scoring below 7.
     Return ONLY the JSON object.
@@ -1336,15 +1336,15 @@ document_drafter:
 
     ## Instructions
     Return the COMPLETE corrected document as a JSON object with the same structure:
-    {{
+    {
       "title": "...",
       "doc_type": "...",
       "summary": "...",
       "tags": [...],
-      "sections": [{{"title": "...", "content": "..."}}],
-      "linked_entities": [{{"id": "...", "name": "...", "label": "Pattern|Technology|PBC"}}],
-      "suggested_patterns": [{{"name": "...", "type": "ABB|SBB", "description": "..."}}]
-    }}
+      "sections": [{"title": "...", "content": "..."}],
+      "linked_entities": [{"id": "...", "name": "...", "label": "Pattern|Technology|PBC"}],
+      "suggested_patterns": [{"name": "...", "type": "ABB|SBB", "description": "..."}]
+    }
 
     Requirements:
     - Fix ONLY the areas identified in the critiques
@@ -1388,12 +1388,12 @@ document_drafter:
     2. If you modified the document, append exactly this separator on its own line:
        ---DRAFT_UPDATE---
     3. Then append the COMPLETE updated document JSON with this structure:
-       {{
+       {
          "title": "...", "doc_type": "...", "summary": "...", "tags": [...],
-         "sections": [{{"title": "...", "content": "..."}}],
-         "linked_entities": [{{"id": "...", "name": "...", "label": "Pattern|Technology|PBC"}}],
-         "suggested_patterns": [{{"name": "...", "type": "ABB|SBB", "description": "..."}}]
-       }}
+         "sections": [{"title": "...", "content": "..."}],
+         "linked_entities": [{"id": "...", "name": "...", "label": "Pattern|Technology|PBC"}],
+         "suggested_patterns": [{"name": "...", "type": "ABB|SBB", "description": "..."}]
+       }
 
     If no document changes are needed, just respond with the conversational text — no separator or JSON.
 
