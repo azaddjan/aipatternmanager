@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { draftDocumentStream, draftDiscussStream } from '../api/client'
+import { useAuth } from '../contexts/AuthContext'
 import MarkdownContent from './MarkdownContent'
 
 const DOC_TYPES = ['guide', 'reference', 'adr', 'overview', 'other']
@@ -25,6 +26,7 @@ export default function AIDocumentDrafter({
   sections,
   onApplyDraft,
 }) {
+  const { isAdmin } = useAuth()
   const [expanded, setExpanded] = useState(isNew)
   const [mode, setMode] = useState('draft') // 'draft' | 'discuss'
   const [prompt, setPrompt] = useState('')
@@ -95,6 +97,7 @@ export default function AIDocumentDrafter({
         content: s.content,
         order_index: i,
       })),
+      linked_entities: draftResult.linked_entities || [],
     })
     setDraftResult(null)
     setProgressSteps([])
@@ -177,6 +180,7 @@ export default function AIDocumentDrafter({
         content: s.content,
         order_index: i,
       })),
+      linked_entities: pendingDraft.linked_entities || [],
     })
     setPendingDraft(null)
   }
@@ -378,6 +382,40 @@ export default function AIDocumentDrafter({
                       </div>
                     </div>
                   ))}
+                  {/* Linked entities */}
+                  {draftResult.linked_entities?.length > 0 && (
+                    <div className="border-t border-gray-800 pt-2">
+                      <div className="text-xs font-medium text-gray-400 mb-1">Linked Entities</div>
+                      <div className="flex flex-wrap gap-1">
+                        {draftResult.linked_entities.map((e, i) => (
+                          <span key={i} className={`text-[10px] px-1.5 py-0.5 rounded border ${
+                            e.label === 'Pattern' ? 'bg-blue-500/10 text-blue-400 border-blue-500/30'
+                            : e.label === 'Technology' ? 'bg-purple-500/10 text-purple-400 border-purple-500/30'
+                            : 'bg-green-500/10 text-green-400 border-green-500/30'
+                          }`}>
+                            {e.name || e.id}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {/* Suggested patterns — admin only */}
+                  {isAdmin && draftResult.suggested_patterns?.length > 0 && (
+                    <div className="border-t border-gray-800 pt-2">
+                      <div className="text-xs font-medium text-amber-400 mb-1">Suggested New Patterns</div>
+                      <div className="space-y-1">
+                        {draftResult.suggested_patterns.map((sp, i) => (
+                          <div key={i} className="text-xs text-gray-400">
+                            <span className="text-amber-300 font-medium">{sp.name}</span>
+                            <span className="text-gray-600 ml-1">[{sp.type}]</span>
+                            {sp.description && (
+                              <span className="text-gray-500 ml-1">— {sp.description}</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -422,16 +460,24 @@ export default function AIDocumentDrafter({
 
             {/* Pending draft changes */}
             {pendingDraft && (
-              <div className="bg-green-500/10 border border-green-500/20 rounded-lg px-3 py-2 flex items-center justify-between">
-                <span className="text-xs text-green-300">
-                  &#10024; AI updated the document ({pendingDraft.sections?.length || 0} sections)
-                </span>
-                <button
-                  onClick={handleApplyDiscussChanges}
-                  className="btn-primary text-xs px-3 py-1"
-                >
-                  Apply Changes
-                </button>
+              <div className="bg-green-500/10 border border-green-500/20 rounded-lg px-3 py-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-green-300">
+                    &#10024; AI updated the document ({pendingDraft.sections?.length || 0} sections)
+                    {pendingDraft.linked_entities?.length > 0 && ` · ${pendingDraft.linked_entities.length} linked entities`}
+                  </span>
+                  <button
+                    onClick={handleApplyDiscussChanges}
+                    className="btn-primary text-xs px-3 py-1"
+                  >
+                    Apply Changes
+                  </button>
+                </div>
+                {isAdmin && pendingDraft.suggested_patterns?.length > 0 && (
+                  <div className="mt-1 text-xs text-amber-300">
+                    Suggested patterns: {pendingDraft.suggested_patterns.map(p => p.name).join(', ')}
+                  </div>
+                )}
               </div>
             )}
 

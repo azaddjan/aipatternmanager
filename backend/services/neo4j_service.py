@@ -2463,6 +2463,8 @@ class Neo4jService:
             "summary": data.get("summary", ""),
             "tags": tags,
             "created_by": data.get("created_by", ""),
+            "updated_by": "",
+            "edit_history": "[]",
             "source_analysis_id": data.get("source_analysis_id", ""),
             "created_date": now,
             "updated_date": now,
@@ -2612,10 +2614,34 @@ class Neo4jService:
 
     def update_document(self, doc_id: str, data: dict) -> Optional[dict]:
         """Update document metadata fields."""
-        data["updated_date"] = datetime.now(timezone.utc).isoformat()
+        import json as _json
+
+        now = datetime.now(timezone.utc).isoformat()
+        data["updated_date"] = now
         # Don't allow changing id
         data.pop("id", None)
         data.pop("created_date", None)
+
+        # Track who updated — append to edit_history
+        updated_by = data.pop("updated_by", "")
+        if updated_by:
+            data["updated_by"] = updated_by
+            # Append to edit_history (stored as JSON string)
+            with self.session() as session:
+                rec = session.run(
+                    "MATCH (d:Document {id: $id}) RETURN d.edit_history AS h",
+                    id=doc_id,
+                ).single()
+            history = []
+            if rec and rec["h"]:
+                try:
+                    history = _json.loads(rec["h"])
+                except Exception:
+                    history = []
+            history.append({"email": updated_by, "date": now})
+            # Keep last 20 entries
+            history = history[-20:]
+            data["edit_history"] = _json.dumps(history)
 
         # Handle team assignment separately
         team_id = data.pop("team_id", None)

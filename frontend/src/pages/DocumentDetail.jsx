@@ -110,6 +110,7 @@ export default function DocumentDetail() {
 
   // Linked entities
   const [linkedEntities, setLinkedEntities] = useState([])
+  const [pendingLinks, setPendingLinks] = useState([])
   const [linkSearch, setLinkSearch] = useState('')
   const [linkResults, setLinkResults] = useState([])
   const [linkSearching, setLinkSearching] = useState(false)
@@ -158,6 +159,7 @@ export default function DocumentDetail() {
     if (draft.summary !== undefined) setSummary(draft.summary)
     if (draft.tags !== undefined) setTagsInput(typeof draft.tags === 'string' ? draft.tags : '')
     if (draft.sections) setSections(draft.sections)
+    if (draft.linked_entities?.length) setPendingLinks(draft.linked_entities)
   }
 
   const handleSave = async () => {
@@ -172,15 +174,38 @@ export default function DocumentDetail() {
           sections: sections.map((s, i) => ({ title: s.title, content: s.content || '', order_index: i })),
         }
         const created = await createDocument(data)
+        // Auto-link entities from AI draft
+        if (pendingLinks.length > 0) {
+          for (const entity of pendingLinks) {
+            try {
+              await linkDocumentEntity(created.id, entity.id, entity.label)
+            } catch (linkErr) {
+              console.warn(`Failed to link ${entity.id}:`, linkErr)
+            }
+          }
+          setPendingLinks([])
+        }
         toast.success(`Created ${created.id}`)
         navigate(`/documents/${created.id}`, { replace: true })
       } else {
         await updateDocument(id, { title, doc_type: docType, status, summary, tags, team_id: teamId || null })
+        // Auto-link entities from AI draft (discuss mode on existing doc)
+        if (pendingLinks.length > 0) {
+          for (const entity of pendingLinks) {
+            try {
+              await linkDocumentEntity(id, entity.id, entity.label)
+            } catch (linkErr) {
+              console.warn(`Failed to link ${entity.id}:`, linkErr)
+            }
+          }
+          setPendingLinks([])
+        }
         toast.success('Document updated')
         setEditMode(false)
         // Refresh
         const updated = await getDocument(id)
         setDoc(updated)
+        setLinkedEntities(updated.linked_entities || [])
       }
     } catch (err) {
       toast.error(err.message)
@@ -460,6 +485,31 @@ export default function DocumentDetail() {
           {doc?.tags?.map(t => (
             <span key={t} className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500">{t}</span>
           ))}
+          {/* Dates and author info */}
+          <div className="w-full flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-[11px] text-gray-500">
+            {doc?.created_date && (
+              <span>
+                Created {new Date(doc.created_date).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
+                {doc.created_by && <> by <span className="text-gray-400">{doc.created_by}</span></>}
+              </span>
+            )}
+            {doc?.updated_date && doc.updated_date !== doc.created_date && (
+              <span>
+                &middot; Updated {new Date(doc.updated_date).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
+                {doc.updated_by && <> by <span className="text-gray-400">{doc.updated_by}</span></>}
+              </span>
+            )}
+            {(() => {
+              try {
+                const history = doc?.edit_history ? (typeof doc.edit_history === 'string' ? JSON.parse(doc.edit_history) : doc.edit_history) : []
+                const uniqueEditors = [...new Set(history.map(h => h.email).filter(Boolean))]
+                if (uniqueEditors.length > 1) {
+                  return <span>&middot; {uniqueEditors.length} contributors</span>
+                }
+              } catch { /* ignore */ }
+              return null
+            })()}
+          </div>
           {summary && <p className="text-sm text-gray-400 w-full mt-1">{summary}</p>}
         </div>
       )}

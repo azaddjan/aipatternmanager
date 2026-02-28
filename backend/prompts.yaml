@@ -1247,6 +1247,13 @@ document_drafter:
       "sections": [
         {{"title": "Section Title", "content": "Markdown content..."}},
         {{"title": "Another Section", "content": "More markdown..."}}
+      ],
+      "linked_entities": [
+        {{"id": "ABB-CORE-001", "name": "Prompt Engineering", "label": "Pattern"}},
+        {{"id": "aws-bedrock", "name": "AWS Bedrock", "label": "Technology"}}
+      ],
+      "suggested_patterns": [
+        {{"name": "Pattern Name", "type": "ABB", "description": "Why this pattern is needed"}}
       ]
     }}
 
@@ -1262,6 +1269,13 @@ document_drafter:
     - For references: include comprehensive specifications and tables
     - For overviews: include executive summary, scope, key points
     - Aim for 4-8 sections with meaningful content (not thin placeholders)
+    - linked_entities: Reference existing catalog items that this document discusses or relates to.
+      Use EXACT IDs from the catalog context above. Set label to "Pattern" for AB/ABB/SBB items,
+      "Technology" for technology items, or "PBC" for business capabilities. Include 2-8 entities.
+    - suggested_patterns: If the document topic reveals patterns that SHOULD exist in the catalog
+      but DON'T, suggest them here. Use type "ABB" for vendor-neutral capabilities or "SBB" for
+      vendor-specific implementations. Only suggest genuinely missing patterns — do NOT repeat
+      existing catalog items. Can be empty if no gaps are identified.
 
     Return ONLY the JSON object, no additional text or explanations.
 
@@ -1327,16 +1341,19 @@ document_drafter:
       "doc_type": "...",
       "summary": "...",
       "tags": [...],
-      "sections": [{{"title": "...", "content": "..."}}]
+      "sections": [{{"title": "...", "content": "..."}}],
+      "linked_entities": [{{"id": "...", "name": "...", "label": "Pattern|Technology|PBC"}}],
+      "suggested_patterns": [{{"name": "...", "type": "ABB|SBB", "description": "..."}}]
     }}
 
     Requirements:
     - Fix ONLY the areas identified in the critiques
     - Preserve all sections and content that were not criticized
     - If completeness is lacking, add new sections or expand thin ones
-    - If catalog_usage is low, reference more existing catalog items by ID
+    - If catalog_usage is low, reference more existing catalog items by ID and add to linked_entities
     - If structure is poor, reorganize sections and improve headings
     - If quality is low, improve writing, formatting, and Mermaid diagrams
+    - Preserve linked_entities and suggested_patterns, updating them if relevant to critiques
     - Return the COMPLETE document, not just changed parts
 
     Return ONLY the JSON object.
@@ -1370,9 +1387,15 @@ document_drafter:
     1. Write your conversational response in markdown
     2. If you modified the document, append exactly this separator on its own line:
        ---DRAFT_UPDATE---
-    3. Then append the COMPLETE updated document JSON (same schema as the draft)
+    3. Then append the COMPLETE updated document JSON with this structure:
+       {{
+         "title": "...", "doc_type": "...", "summary": "...", "tags": [...],
+         "sections": [{{"title": "...", "content": "..."}}],
+         "linked_entities": [{{"id": "...", "name": "...", "label": "Pattern|Technology|PBC"}}],
+         "suggested_patterns": [{{"name": "...", "type": "ABB|SBB", "description": "..."}}]
+       }}
 
     If no document changes are needed, just respond with the conversational text — no separator or JSON.
 
-    IMPORTANT: When including the JSON update, include the ENTIRE document (all sections), not just
-    the changed parts. The JSON must be valid and complete.
+    IMPORTANT: When including the JSON update, include the ENTIRE document (all sections, linked_entities,
+    suggested_patterns), not just the changed parts. The JSON must be valid and complete.

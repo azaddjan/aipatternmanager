@@ -61,36 +61,37 @@ def _build_catalog_context(db) -> str:
     except Exception:
         pass
 
-    # Patterns
+    # Patterns — list ALL by type so AI can reference exact IDs
     try:
-        patterns, total = db.list_patterns(limit=200)
+        patterns, total = db.list_patterns(limit=500)
         if patterns:
-            type_counts = {}
-            for p in patterns:
-                t = p.get("type", "?")
-                type_counts[t] = type_counts.get(t, 0) + 1
             lines.append(f"## Existing Patterns ({total} total)")
-            for t, c in sorted(type_counts.items()):
-                lines.append(f"- {t}: {c} patterns")
-            lines.append("")
-            for ptype in ["AB", "ABB", "SBB"]:
-                typed = [p for p in patterns if p.get("type") == ptype][:5]
+            for ptype in ["AB", "ABB", "SBB", "PBC"]:
+                typed = [p for p in patterns if p.get("type") == ptype][:100]
                 if typed:
-                    names = ", ".join(f"{p['id']} ({p['name']})" for p in typed)
-                    lines.append(f"Sample {ptype}s: {names}")
-            lines.append("")
+                    lines.append(f"### {ptype} ({len(typed)})")
+                    for p in typed:
+                        lines.append(f"- {p['id']}: {p['name']}")
+                    lines.append("")
+            # Other types
+            other = [p for p in patterns if p.get("type") not in ("AB", "ABB", "SBB", "PBC")][:20]
+            if other:
+                lines.append(f"### Other ({len(other)})")
+                for p in other:
+                    lines.append(f"- {p['id']}: {p['name']} [{p.get('type', '?')}]")
+                lines.append("")
     except Exception:
         pass
 
-    # Technologies
+    # Technologies — list ALL so AI can reference exact IDs
     try:
-        techs, total = db.list_technologies(limit=200)
+        techs, total = db.list_technologies(limit=500)
         if techs:
             lines.append(f"## Existing Technologies ({total} total)")
-            for t in techs[:20]:
+            for t in techs[:100]:
                 lines.append(f"- {t['id']}: {t['name']} ({t.get('vendor', '')}) [{t.get('category', '')}]")
-            if total > 20:
-                lines.append(f"... and {total - 20} more")
+            if total > 100:
+                lines.append(f"... and {total - 100} more")
             lines.append("")
     except Exception:
         pass
@@ -100,7 +101,7 @@ def _build_catalog_context(db) -> str:
         pbcs = db.list_pbcs()
         if pbcs:
             lines.append(f"## Existing Business Capabilities ({len(pbcs)} total)")
-            for p in pbcs[:10]:
+            for p in pbcs[:50]:
                 lines.append(f"- {p['id']}: {p['name']}")
             lines.append("")
     except Exception:

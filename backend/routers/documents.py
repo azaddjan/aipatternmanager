@@ -80,6 +80,8 @@ def update_document(
     if not db.document_exists(doc_id):
         raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
     data = body.model_dump(exclude_none=True)
+    if _user:
+        data["updated_by"] = _user.get("email", "")
     doc = db.update_document(doc_id, data)
     return doc
 
