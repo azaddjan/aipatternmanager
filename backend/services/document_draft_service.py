@@ -241,6 +241,11 @@ async def _quality_gate(
             corrected = _parse_json_response(critic_result["content"], default=current_draft)
             # Validate basic structure
             if corrected.get("title") and corrected.get("sections"):
+                # Preserve linked_entities and suggested_patterns if critic dropped them
+                if "linked_entities" not in corrected and "linked_entities" in current_draft:
+                    corrected["linked_entities"] = current_draft["linked_entities"]
+                if "suggested_patterns" not in corrected and "suggested_patterns" in current_draft:
+                    corrected["suggested_patterns"] = current_draft["suggested_patterns"]
                 current_draft = corrected
             else:
                 logger.warning("Critic returned invalid structure — keeping previous draft")
@@ -313,6 +318,8 @@ async def draft_document(
         "summary": "",
         "tags": [],
         "sections": [{"title": "Introduction", "content": "Content generation failed."}],
+        "linked_entities": [],
+        "suggested_patterns": [],
     })
 
     # Ensure doc_type is set
