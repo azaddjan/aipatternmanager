@@ -304,6 +304,108 @@ export function aiPBCAssist(data) {
   return request('/ai/pbc-assist', { method: 'POST', body: JSON.stringify(data) })
 }
 
+export function aiDocumentSectionAssist(data) {
+  return request('/documents/section-assist', { method: 'POST', body: JSON.stringify(data) })
+}
+
+export async function draftDocumentStream(data, onProgress) {
+  const url = `${BASE_URL}/documents/draft-stream`
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-cache',
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(error.detail || `Draft failed: ${res.status}`)
+  }
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let finalResult = null
+  let buffer = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop()
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue
+      try {
+        const event = JSON.parse(line.slice(6))
+        if (event.type === 'progress' && onProgress) {
+          onProgress(event)
+        } else if (event.type === 'complete') {
+          finalResult = event.result
+        } else if (event.type === 'error') {
+          throw new Error(event.message)
+        }
+      } catch (e) {
+        if (e.message && !e.message.includes('JSON')) throw e
+      }
+    }
+  }
+  return finalResult
+}
+
+export function draftDiscussStream(data, onToken) {
+  const abortController = new AbortController()
+
+  const promise = (async () => {
+    const res = await fetch(`${BASE_URL}/documents/draft-discuss-stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeaders(),
+      },
+      body: JSON.stringify(data),
+      signal: abortController.signal,
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }))
+      throw new Error(err.detail || `Discuss failed: ${res.status}`)
+    }
+
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let updatedDraft = null
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop()
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        try {
+          const event = JSON.parse(line.slice(6))
+          if (event.type === 'token') {
+            onToken(event.content)
+          } else if (event.type === 'done') {
+            updatedDraft = event.updated_draft || null
+          } else if (event.type === 'error') {
+            throw new Error(event.message)
+          }
+        } catch (e) {
+          if (e.message && !e.message.includes('JSON')) throw e
+        }
+      }
+    }
+    return updatedDraft
+  })()
+
+  promise.abort = () => abortController.abort()
+  return promise
+}
+
 // --- Admin ---
 
 export function fetchAdminSettings() {

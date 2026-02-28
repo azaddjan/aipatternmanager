@@ -5,9 +5,11 @@ import {
   addDocumentSection, updateDocumentSection, deleteDocumentSection,
   reorderDocumentSections, linkDocumentEntity, unlinkDocumentEntity,
   fetchTeams, fetchPatterns, fetchTechnologies, fetchPBCs,
+  aiDocumentSectionAssist,
 } from '../api/client'
 import { useToast } from '../components/Toast'
 import MarkdownContent from '../components/MarkdownContent'
+import AIDocumentDrafter from '../components/AIDocumentDrafter'
 
 const DOC_TYPES = ['guide', 'reference', 'adr', 'overview', 'other']
 const STATUSES = ['draft', 'published', 'archived']
@@ -150,6 +152,14 @@ export default function DocumentDetail() {
   }, [id, isNew])
 
   // Save document (create or update)
+  const handleApplyDraft = (draft) => {
+    setTitle(draft.title || 'Untitled Document')
+    if (draft.doc_type) setDocType(draft.doc_type)
+    if (draft.summary !== undefined) setSummary(draft.summary)
+    if (draft.tags !== undefined) setTagsInput(typeof draft.tags === 'string' ? draft.tags : '')
+    if (draft.sections) setSections(draft.sections)
+  }
+
   const handleSave = async () => {
     setSaving(true)
     const tags = tagsInput.split(',').map(t => t.trim()).filter(Boolean)
@@ -376,6 +386,19 @@ export default function DocumentDetail() {
         </div>
       </div>
 
+      {/* AI Document Assistant */}
+      {editMode && (
+        <AIDocumentDrafter
+          isNew={isNew}
+          title={title}
+          docType={docType}
+          summary={summary}
+          tags={tagsInput}
+          sections={sections}
+          onApplyDraft={handleApplyDraft}
+        />
+      )}
+
       {/* Metadata */}
       {editMode ? (
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
@@ -475,6 +498,7 @@ export default function DocumentDetail() {
               onMove={(dir) => handleMoveSection(idx, dir)}
               docId={id}
               isNewDoc={isNew}
+              docContext={{ title, docType, summary, sections }}
             />
           ))}
 
@@ -559,10 +583,15 @@ export default function DocumentDetail() {
 
 // ── Section Card Component ──
 
-function SectionCard({ section, index, total, isEditing, onEdit, onSave, onCancel, onDelete, onMove, docId, isNewDoc }) {
+function SectionCard({ section, index, total, isEditing, onEdit, onSave, onCancel, onDelete, onMove, docId, isNewDoc, docContext }) {
   const [editTitle, setEditTitle] = useState(section.title || '')
   const [editContent, setEditContent] = useState(section.content || '')
   const [showDiagramMenu, setShowDiagramMenu] = useState(false)
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiBadge, setAiBadge] = useState(null)
+  const [showCustomPrompt, setShowCustomPrompt] = useState(false)
+  const [customPrompt, setCustomPrompt] = useState('')
+  const [previousContent, setPreviousContent] = useState(null)
   const textareaRef = useRef(null)
 
   useEffect(() => {
@@ -584,6 +613,38 @@ function SectionCard({ section, index, total, isEditing, onEdit, onSave, onCance
       setEditContent(prev => prev + (prev ? '\n\n' : '') + template + '\n')
     }
     setShowDiagramMenu(false)
+  }
+
+  const callAiAssist = async (action, customText) => {
+    setAiLoading(true)
+    setAiBadge(null)
+    try {
+      const otherSections = (docContext?.sections || [])
+        .filter(s => s.id !== section.id)
+        .map(s => ({ title: s.title, content_preview: (s.content || '').slice(0, 200) }))
+
+      const res = await aiDocumentSectionAssist({
+        action,
+        section_title: editTitle || 'Untitled',
+        current_value: editContent || '',
+        custom_prompt: customText || null,
+        doc_title: docContext?.title || '',
+        doc_type: docContext?.docType || 'guide',
+        doc_summary: docContext?.summary || '',
+        other_sections: otherSections,
+      })
+      setPreviousContent(editContent)
+      setEditContent(res.content)
+      setAiBadge('applied')
+      setTimeout(() => setAiBadge(null), 3000)
+    } catch (err) {
+      console.error('AI Section Assist error:', err)
+      setAiBadge('error')
+      setTimeout(() => setAiBadge(null), 3000)
+    }
+    setAiLoading(false)
+    setShowCustomPrompt(false)
+    setCustomPrompt('')
   }
 
   if (isEditing) {
@@ -652,7 +713,83 @@ function SectionCard({ section, index, total, isEditing, onEdit, onSave, onCance
               </div>
             )}
           </div>
+
+          <div className="w-px h-4 bg-gray-700 mx-1" />
+
+          {/* AI Assist buttons */}
+          <button
+            onClick={() => callAiAssist('suggest')}
+            disabled={aiLoading}
+            className="text-[11px] px-2 py-1 rounded text-purple-400 hover:text-purple-300 hover:bg-purple-500/10 transition-colors flex items-center gap-1 disabled:opacity-50"
+            title="AI: Generate content for this section"
+          >
+            <span className="text-sm">&#10024;</span> Suggest
+          </button>
+          <button
+            onClick={() => callAiAssist('improve')}
+            disabled={aiLoading || !editContent?.trim()}
+            className="text-[11px] px-2 py-1 rounded text-purple-400 hover:text-purple-300 hover:bg-purple-500/10 transition-colors flex items-center gap-1 disabled:opacity-50"
+            title="AI: Improve existing content"
+          >
+            <span className="text-sm">&#9998;</span> Improve
+          </button>
+          <button
+            onClick={() => setShowCustomPrompt(v => !v)}
+            disabled={aiLoading}
+            className={`text-[11px] px-2 py-1 rounded text-purple-400 hover:text-purple-300 hover:bg-purple-500/10 transition-colors flex items-center gap-1 disabled:opacity-50 ${showCustomPrompt ? 'bg-purple-500/10' : ''}`}
+            title="AI: Custom instruction"
+          >
+            <span className="text-sm">&#128172;</span> Custom
+          </button>
+          {previousContent !== null && (
+            <button
+              onClick={() => { setEditContent(previousContent); setPreviousContent(null) }}
+              disabled={aiLoading}
+              className="text-[11px] px-2 py-1 rounded text-gray-400 hover:text-white hover:bg-gray-800 transition-colors disabled:opacity-50"
+              title="Undo AI change"
+            >
+              &#8617; Undo
+            </button>
+          )}
+
+          {/* AI status */}
+          {aiLoading && (
+            <span className="text-[11px] text-purple-400 flex items-center gap-1 ml-1">
+              <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+              Generating...
+            </span>
+          )}
+          {aiBadge === 'applied' && <span className="text-[11px] text-green-400 ml-1">&#10003; Applied</span>}
+          {aiBadge === 'error' && <span className="text-[11px] text-red-400 ml-1">&#10007; Failed</span>}
         </div>
+
+        {/* Custom prompt input */}
+        {showCustomPrompt && (
+          <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-800 bg-gray-950/30">
+            <input
+              type="text"
+              value={customPrompt}
+              onChange={e => setCustomPrompt(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && customPrompt.trim() && callAiAssist('custom', customPrompt.trim())}
+              placeholder="e.g. add a mermaid diagram, make more concise, add security considerations..."
+              className="input flex-1 text-xs"
+              autoFocus
+            />
+            <button
+              onClick={() => customPrompt.trim() && callAiAssist('custom', customPrompt.trim())}
+              disabled={aiLoading || !customPrompt.trim()}
+              className="text-xs px-2.5 py-1 rounded bg-purple-600 text-white hover:bg-purple-500 transition-colors disabled:opacity-50"
+            >
+              Apply
+            </button>
+            <button
+              onClick={() => { setShowCustomPrompt(false); setCustomPrompt('') }}
+              className="text-xs px-2 py-1 rounded bg-gray-800 text-gray-400 hover:text-white transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
 
         {/* Split pane: Editor + Preview */}
         <div className="grid grid-cols-2 divide-x divide-gray-800 min-h-[300px]">

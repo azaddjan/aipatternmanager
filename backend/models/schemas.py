@@ -421,3 +421,31 @@ class DocumentSectionReorder(BaseModel):
 class DocumentLinkCreate(BaseModel):
     entity_id: str
     entity_label: str = "Pattern"  # Pattern | Technology | PBC
+
+class DocumentSectionAssistRequest(BaseModel):
+    """AI assist for document sections: suggest, improve, or custom."""
+    action: AIFieldAssistAction  # suggest | improve | custom
+    section_title: str = ""
+    current_value: str = ""
+    custom_prompt: Optional[str] = None
+    doc_title: str = ""
+    doc_type: str = "guide"
+    doc_summary: str = ""
+    other_sections: list[dict] = []  # [{title, content_preview}]
+    provider: Optional[LLMProvider] = None
+    model: Optional[str] = None
+
+class DocumentDraftRequest(BaseModel):
+    """Request to auto-draft a complete document from a user prompt."""
+    prompt: str = Field(..., min_length=10, max_length=5000)
+    doc_type: str = "guide"
+    provider: Optional[LLMProvider] = None
+    model: Optional[str] = None
+
+class DocumentDraftDiscussRequest(BaseModel):
+    """Conversational follow-up to refine an in-progress draft."""
+    message: str = Field(..., min_length=3, max_length=3000)
+    current_draft: dict  # {title, doc_type, summary, tags, sections}
+    conversation_history: list[dict] = []
+    provider: Optional[LLMProvider] = None
+    model: Optional[str] = None
