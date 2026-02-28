@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import re
 from typing import AsyncIterator, Callable, Optional
 
 logger = logging.getLogger(__name__)
@@ -24,18 +25,34 @@ def _parse_json_response(text: str, default: dict) -> dict:
         text = text[:-3]
     text = text.strip()
 
+    # Attempt 1: Direct parse
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
 
+    # Attempt 2: Find outermost { ... } with string-aware brace matching
     start = text.find("{")
     if start >= 0:
         depth = 0
+        in_string = False
+        escape = False
         for i in range(start, len(text)):
-            if text[i] == "{":
+            c = text[i]
+            if escape:
+                escape = False
+                continue
+            if c == '\\' and in_string:
+                escape = True
+                continue
+            if c == '"' and not escape:
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if c == '{':
                 depth += 1
-            elif text[i] == "}":
+            elif c == '}':
                 depth -= 1
                 if depth == 0:
                     try:
@@ -43,7 +60,17 @@ def _parse_json_response(text: str, default: dict) -> dict:
                     except json.JSONDecodeError:
                         break
 
+    # Attempt 3: Find last } and try from first { to last }
+    if start >= 0:
+        last_brace = text.rfind("}")
+        if last_brace > start:
+            try:
+                return json.loads(text[start : last_brace + 1])
+            except json.JSONDecodeError:
+                pass
+
     logger.warning("Failed to parse JSON from LLM response, using default")
+    logger.warning(f"Response length: {len(text)}, first 200: {text[:200]}, last 200: {text[-200:]}")
     return default
 
 
@@ -123,6 +150,117 @@ def _build_existing_docs_context(db) -> str:
         return "\n".join(lines)
     except Exception:
         return "(unable to load existing documents)"
+
+
+def _extract_entity_ids(draft: dict, outline: dict = None) -> list[str]:
+    """Extract all entity IDs referenced in draft and/or outline."""
+    ids = set()
+    # From draft linked_entities
+    for e in draft.get("linked_entities", []):
+        if e.get("id"):
+            ids.add(e["id"])
+    # From outline target_entities and per-section catalog_refs
+    if outline:
+        for eid in outline.get("target_entities", []):
+            ids.add(eid)
+        for sec in outline.get("sections", []):
+            for ref in sec.get("catalog_refs", []):
+                ids.add(ref)
+    return list(ids)
+
+
+def _build_filtered_catalog_context(db, ref_ids: list[str]) -> str:
+    """Build catalog context containing only specified entity IDs.
+
+    Falls back to full catalog if ref_ids is empty or filtering fails.
+    """
+    if not ref_ids:
+        return _build_catalog_context(db)
+
+    ref_set = {r.lower() for r in ref_ids}
+    parts = [f"## Relevant Catalog Items ({len(ref_ids)} referenced)"]
+
+    try:
+        # Matching patterns
+        patterns, _ = db.list_patterns(limit=500)
+        matched_patterns = [p for p in patterns if p["id"].lower() in ref_set]
+        if matched_patterns:
+            for ptype in ["AB", "ABB", "SBB"]:
+                typed = [p for p in matched_patterns if p.get("type") == ptype]
+                if typed:
+                    parts.append(f"\n### {ptype}s ({len(typed)})")
+                    for p in typed:
+                        desc_preview = (p.get("description", "") or "")[:150]
+                        parts.append(f"- {p['id']}: {p.get('name', '')} — {desc_preview}")
+
+        # Matching technologies
+        techs, _ = db.list_technologies(limit=500)
+        matched_techs = [t for t in techs if t["id"].lower() in ref_set]
+        if matched_techs:
+            parts.append(f"\n### Technologies ({len(matched_techs)})")
+            for t in matched_techs:
+                parts.append(f"- {t['id']}: {t.get('name', '')} ({t.get('vendor', '')}) [{t.get('category', '')}]")
+
+        # Matching PBCs
+        pbcs = db.list_pbcs()
+        matched_pbcs = [p for p in pbcs if p["id"].lower() in ref_set]
+        if matched_pbcs:
+            parts.append(f"\n### Business Capabilities ({len(matched_pbcs)})")
+            for p in matched_pbcs:
+                parts.append(f"- {p['id']}: {p.get('name', '')}")
+
+        # Always include categories (small, needed for context)
+        cats = db.list_categories()
+        if cats:
+            parts.append("\n### Categories")
+            for c in cats:
+                parts.append(f"- {c['code']}: {c.get('label', c['code'])}")
+    except Exception as e:
+        logger.warning(f"Catalog filtering failed, falling back to full context: {e}")
+        return _build_catalog_context(db)
+
+    filtered = "\n".join(parts)
+    logger.info(f"Filtered catalog: {len(ref_ids)} refs → {len(filtered)} chars "
+                f"(matched: {len(matched_patterns)} patterns, {len(matched_techs)} techs, {len(matched_pbcs)} PBCs)")
+    return filtered
+
+
+def _should_enrich_section(section: dict) -> tuple[bool, str]:
+    """Fast, LLM-free heuristic check if a section needs enrichment.
+
+    Returns:
+        (should_enrich, reason)
+    """
+    content = section.get("content", "")
+    word_count = len(content.split())
+
+    # Too short
+    if word_count < 250:
+        return True, f"short ({word_count} words)"
+
+    # No catalog references (pattern/tech IDs like ABB-CORE-001, SBB-INTG-002, etc.)
+    id_pattern = r'\b(?:AB|ABB|SBB|PBC|TECH)[-_][A-Z]+-?\d*'
+    catalog_refs = re.findall(id_pattern, content)
+    if not catalog_refs:
+        return True, "no catalog references"
+
+    # Too much vague language
+    vague_words = len(re.findall(
+        r'\b(?:consider|could|might|may|possibly|perhaps|potentially)\b',
+        content, re.IGNORECASE
+    ))
+    if word_count > 0 and vague_words / word_count > 0.02:
+        return True, f"vague language ({vague_words} instances in {word_count} words)"
+
+    # No diagrams, tables, or callouts
+    has_diagram = "```mermaid" in content
+    has_table = "|" in content and "---" in content
+    has_callout = "> **" in content
+    if not has_diagram and not has_table and not has_callout:
+        return True, "no diagrams, tables, or callouts"
+
+    # Section looks complete
+    return False, "passes heuristic checks"
 
 
 # ---------------------------------------------------------------------------
@@ -238,11 +376,16 @@ async def _enrich_sections_parallel(
     system_prompt: str,
     enrich_template: str,
     model: str,
+    sections_to_enrich: set[str] | None = None,
 ) -> dict:
-    """Enrich all sections in parallel using asyncio.gather.
+    """Enrich sections in parallel using asyncio.gather.
+
+    Args:
+        sections_to_enrich: If provided, only enrich sections whose titles are in this set.
+            If None, enrich all sections (backward compatible).
 
     Returns:
-        Updated draft with enriched sections.
+        Updated draft with enriched sections (preserving original order).
     """
     sections = draft.get("sections", [])
     if not sections:
@@ -257,12 +400,15 @@ async def _enrich_sections_parallel(
     for os_item in outline_sections:
         outline_lookup[os_item.get("title", "").lower().strip()] = os_item
 
-    # Create enrichment tasks for all sections
+    # Create enrichment tasks only for filtered sections
     tasks = []
-    for section in sections:
-        section_title_lower = section.get("title", "").lower().strip()
+    task_indices = []  # track which indices need enrichment
+    for idx, section in enumerate(sections):
+        title = section.get("title", "")
+        if sections_to_enrich is not None and title not in sections_to_enrich:
+            continue  # skip — section passes heuristics
+        section_title_lower = title.lower().strip()
         outline_section = outline_lookup.get(section_title_lower)
-
         tasks.append(
             _enrich_single_section(
                 section=section,
@@ -278,11 +424,20 @@ async def _enrich_sections_parallel(
                 model=model,
             )
         )
+        task_indices.append(idx)
 
-    # Run all enrichments in parallel
-    enriched_sections = await asyncio.gather(*tasks)
+    if not tasks:
+        return draft
 
-    return {**draft, "sections": list(enriched_sections)}
+    # Run enrichments in parallel
+    enriched_results = await asyncio.gather(*tasks)
+
+    # Merge enriched sections back into original order
+    final_sections = list(sections)
+    for i, enriched in zip(task_indices, enriched_results):
+        final_sections[i] = enriched
+
+    return {**draft, "sections": final_sections}
 
 
 # ---------------------------------------------------------------------------
@@ -504,20 +659,29 @@ async def draft_document(
         _progress("planning", 2, TOTAL_STEPS, "Planning step skipped")
         logger.warning("No plan prompt configured — skipping planning phase")
 
-    # Step 3: Generate initial draft using outline
+    # Step 3: Generate initial draft using FILTERED catalog (plan identified relevant items)
     _progress("drafting", 3, TOTAL_STEPS, "AI is drafting your document...")
     outline_text = json.dumps(outline, indent=2) if outline else "(no outline available)"
+
+    # Filter catalog to items the plan identified as relevant
+    target_ids = _extract_entity_ids({}, outline)
+    draft_catalog = _build_filtered_catalog_context(db, target_ids) if target_ids else catalog_context
+    logger.info(f"Draft using {'filtered' if target_ids else 'full'} catalog "
+                f"({len(target_ids)} target entities, {len(draft_catalog)} chars)")
+
     draft_prompt = (
         draft_template
         .replace("{prompt}", prompt)
         .replace("{doc_type}", doc_type)
         .replace("{target_audience}", target_audience)
         .replace("{outline}", outline_text)
-        .replace("{catalog_context}", catalog_context)
+        .replace("{catalog_context}", draft_catalog)
         .replace("{existing_docs}", existing_docs)
     )
 
     result = await provider.generate(system_prompt, draft_prompt, used_model)
+    logger.info(f"Draft raw response (first 1000 chars): {result['content'][:1000]}")
+    logger.info(f"Draft raw response (last 500 chars): {result['content'][-500:]}")
     draft = _parse_json_response(result["content"], default={
         "title": "Untitled Document",
         "doc_type": doc_type,
@@ -539,39 +703,64 @@ async def draft_document(
     _progress("drafting", 3, TOTAL_STEPS,
               f"Generated {len(draft_sections)} sections · ~{total_words:,} words · {entity_count} entities linked")
 
-    # Step 4: Parallel section enrichment
+    # Step 4: Conditional section enrichment (only enrich sections that need it)
     enrich_template = dd_prompts.get("enrich_section", "")
     if enrich_template and draft_sections:
-        section_count = len(draft_sections)
-        _progress("enriching", 4, TOTAL_STEPS, f"Enriching {section_count} sections in parallel...")
-        draft = await _enrich_sections_parallel(
-            draft=draft,
-            outline=outline,
-            doc_type=doc_type,
-            target_audience=target_audience,
-            catalog_context=catalog_context,
-            provider=provider,
-            system_prompt=system_prompt,
-            enrich_template=enrich_template,
-            model=used_model,
-        )
-        # Rich progress: show enrichment stats
-        enriched_sections = draft.get("sections", [])
-        enriched_words = sum(len(s.get("content", "").split()) for s in enriched_sections)
-        word_increase = enriched_words - total_words
-        _progress("enriching", 4, TOTAL_STEPS,
-                  f"Enriched {len(enriched_sections)} sections · ~{enriched_words:,} words (+{word_increase:,})")
+        # Run heuristic checks to decide which sections actually need enrichment
+        sections_to_enrich = set()
+        for section in draft_sections:
+            should_enrich, reason = _should_enrich_section(section)
+            title = section.get("title", "Untitled")
+            if should_enrich:
+                sections_to_enrich.add(title)
+                logger.info(f"Section '{title}' flagged for enrichment: {reason}")
+            else:
+                logger.info(f"Section '{title}' skipped enrichment: {reason}")
+
+        if sections_to_enrich:
+            _progress("enriching", 4, TOTAL_STEPS,
+                      f"Enriching {len(sections_to_enrich)} of {len(draft_sections)} sections...")
+
+            # Build filtered catalog for enrichment using draft + outline entity IDs
+            enrich_ids = _extract_entity_ids(draft, outline)
+            enrich_catalog = _build_filtered_catalog_context(db, enrich_ids) if enrich_ids else catalog_context
+
+            draft = await _enrich_sections_parallel(
+                draft=draft,
+                outline=outline,
+                doc_type=doc_type,
+                target_audience=target_audience,
+                catalog_context=enrich_catalog,
+                provider=provider,
+                system_prompt=system_prompt,
+                enrich_template=enrich_template,
+                model=used_model,
+                sections_to_enrich=sections_to_enrich,
+            )
+            # Rich progress: show enrichment stats
+            enriched_sections = draft.get("sections", [])
+            enriched_words = sum(len(s.get("content", "").split()) for s in enriched_sections)
+            word_increase = enriched_words - total_words
+            _progress("enriching", 4, TOTAL_STEPS,
+                      f"Enriched {len(sections_to_enrich)}/{len(enriched_sections)} sections · "
+                      f"~{enriched_words:,} words (+{word_increase:,})")
+        else:
+            _progress("enriching", 4, TOTAL_STEPS,
+                      "All sections comprehensive — skipping enrichment")
+            logger.info("No sections need enrichment — all passed heuristic checks")
     else:
         _progress("enriching", 4, TOTAL_STEPS, "Enrichment step skipped")
         if not enrich_template:
             logger.warning("No enrich_section prompt configured — skipping enrichment phase")
 
-    # Step 5: Quality gate
+    # Step 5: Quality gate (using filtered catalog)
     _progress("quality_gate", 5, TOTAL_STEPS, "Running quality review...")
+    qg_ids = _extract_entity_ids(draft, outline)
+    qg_catalog = _build_filtered_catalog_context(db, qg_ids) if qg_ids else catalog_context
     refined_draft, quality_scores = await _quality_gate(
         draft=draft,
         prompt=prompt,
-        catalog_context=catalog_context,
+        catalog_context=qg_catalog,
         provider=provider,
         system_prompt=system_prompt,
         dd_prompts=dd_prompts,

@@ -829,6 +829,19 @@ export function testPrompt(systemPrompt, userPrompt, provider = null, model = nu
   })
 }
 
+export function fetchPromptHistory(section, subPrompt, limit = 50) {
+  return request(
+    `/admin/prompts/${encodeURIComponent(section)}/${encodeURIComponent(subPrompt)}/history?limit=${limit}`
+  )
+}
+
+export function restorePromptVersion(section, subPrompt, version) {
+  return request(
+    `/admin/prompts/${encodeURIComponent(section)}/${encodeURIComponent(subPrompt)}/restore`,
+    { method: 'POST', body: JSON.stringify({ version }) }
+  )
+}
+
 // --- Audit Log ---
 
 export function fetchAuditLogs(params = {}) {
@@ -961,6 +974,10 @@ export function updateDocument(id, data) {
 
 export function deleteDocument(id) {
   return request(`/documents/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export function exportDocumentDocx(docId) {
+  return authenticatedDownload(`${API}/api/documents/${encodeURIComponent(docId)}/export/docx`)
 }
 
 export function addDocumentSection(docId, data) {

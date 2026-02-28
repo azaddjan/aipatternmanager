@@ -92,6 +92,20 @@ DEFAULT_SETTINGS = {
             ],
             "region": "us-east-1",
             "key_set": False,
+            "guardrail_id": "",
+            "guardrail_version": "",
+        },
+        "litellm": {
+            "enabled": True,
+            "model": "bedrock/anthropic.claude-3-sonnet-20240229-v1:0",
+            "models": [
+                "bedrock/anthropic.claude-3-sonnet-20240229-v1:0",
+                "bedrock/anthropic.claude-3-haiku-20240307-v1:0",
+                "openai/gpt-4o",
+                "openai/gpt-4o-mini",
+            ],
+            "gateway_url": "",
+            "key_set": False,
         },
     },
 }
@@ -136,7 +150,16 @@ def _load_from_db() -> dict:
 
     # Merge with defaults so new keys are added on upgrade
     merged = {**DEFAULT_SETTINGS, **settings}
-    merged["providers"] = {**DEFAULT_SETTINGS["providers"], **settings.get("providers", {})}
+    # Deep-merge providers: add new providers and merge new keys into existing ones
+    merged_providers = {}
+    for pname, pdefaults in DEFAULT_SETTINGS["providers"].items():
+        db_prov = settings.get("providers", {}).get(pname, {})
+        merged_providers[pname] = {**pdefaults, **db_prov}
+    # Also keep any providers in DB that aren't in defaults (future-proof)
+    for pname, pconfig in settings.get("providers", {}).items():
+        if pname not in merged_providers:
+            merged_providers[pname] = pconfig
+    merged["providers"] = merged_providers
     merged["embedding"] = {**DEFAULT_SETTINGS["embedding"], **settings.get("embedding", {})}
     merged["report_retention"] = {**DEFAULT_SETTINGS["report_retention"], **settings.get("report_retention", {})}
     merged["auth"] = {**DEFAULT_SETTINGS["auth"], **settings.get("auth", {})}
@@ -192,6 +215,12 @@ def get_settings() -> dict:
         (os.getenv("AWS_ACCESS_KEY_ID", "") and os.getenv("AWS_SECRET_ACCESS_KEY", ""))
         or os.getenv("AWS_PROFILE", "")
     )
+    settings["providers"]["litellm"]["key_set"] = bool(os.getenv("LITELLM_API_KEY", ""))
+    # LiteLLM gateway_url may be stored in settings or env var
+    if not settings["providers"]["litellm"].get("gateway_url"):
+        env_url = os.getenv("LITELLM_GATEWAY_URL", "")
+        if env_url:
+            settings["providers"]["litellm"]["gateway_url"] = env_url
 
     return settings
 
@@ -258,6 +287,16 @@ def set_api_key(provider: str, key: str, secret: str = None) -> dict:
         if secret:
             os.environ["AWS_SECRET_ACCESS_KEY"] = secret
         _reinit_provider("bedrock")
+
+    elif provider == "litellm":
+        if key:
+            os.environ["LITELLM_API_KEY"] = key
+        if secret:
+            # secret field is used for gateway URL
+            os.environ["LITELLM_GATEWAY_URL"] = secret
+            # Also persist gateway_url in settings
+            update_settings({"providers": {"litellm": {"gateway_url": secret}}})
+        _reinit_provider("litellm")
 
     else:
         raise ValueError(f"Unknown provider: {provider}")
@@ -326,6 +365,11 @@ def get_masked_key(provider: str) -> str:
         if not key:
             profile = os.getenv("AWS_PROFILE", "")
             return f"profile:{profile}" if profile else ""
+    elif provider == "litellm":
+        key = os.getenv("LITELLM_API_KEY", "")
+        if not key:
+            url = os.getenv("LITELLM_GATEWAY_URL", "")
+            return f"url:{url[:30]}..." if url else ""
     else:
         return ""
 
@@ -405,6 +449,9 @@ def _reinit_provider(name: str):
         elif name == "bedrock":
             from services.llm.bedrock_provider import BedrockProvider
             _providers["bedrock"] = BedrockProvider()
+        elif name == "litellm":
+            from services.llm.litellm_provider import LiteLLMProvider
+            _providers["litellm"] = LiteLLMProvider()
     except Exception as e:
         logger.warning(f"Failed to reinit provider {name}: {e}")
 

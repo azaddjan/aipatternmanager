@@ -1340,26 +1340,86 @@ document_drafter:
     }
 
     Requirements:
-    - Target audience: software engineers and enterprise architects. Write for technical leaders.
+    - Target audience: {target_audience}. Write for technical leaders who make architecture decisions.
     - Follow the Document Plan/Outline above — each planned section MUST become a real section
       with substantive content addressing all listed key_points.
     - Include all diagrams specified in the outline. Use Mermaid diagrams (flowchart, sequence,
-      class, C4) — minimum 2 diagrams per guide or reference document.
-    - Prefer architecture diagrams, decision matrices, and pattern descriptions
-      over code examples. Include code ONLY when directly relevant to implementation specifics.
+      class, C4). Minimum 2 diagrams per guide or reference document. Place diagrams where they
+      directly support the narrative. Prefer architecture diagrams over code examples.
+    - Include decision matrices and pattern descriptions where appropriate.
+      Include code ONLY when directly relevant to implementation specifics.
     - Use summary callout blocks (> **Key Decision:** ...) at the top of important sections.
     - Use tables only when they genuinely aid comparison or structured data (e.g. tradeoff matrices,
       NFR targets, technology evaluation). Do NOT use tables for content better expressed as prose or lists.
     - Title should be concise and descriptive
     - Summary should capture the document's purpose in 1-2 sentences
     - Tags should include relevant cross-cutting labels (3-6 tags)
-    - Sections should be well-organized with substantive markdown content (200+ words each)
+    - Sections must be 400-500+ words minimum with substantive, definitive content
+    - Each section should include at least one callout block (> **Key Decision:** or > **Best Practice:** or > **Anti-Pattern:**)
+    - 75% of sections must reference at least one catalog item by exact ID
     - Reference existing catalog items by ID where relevant
     - For ADRs: include Status, Context, Decision, Consequences sections
     - For guides: include clear step-by-step instructions with prerequisites
     - For references: include comprehensive specifications, tables, and NFRs
     - For overviews: include executive summary, scope, key takeaways
     - Aim for 4-8 sections with meaningful content (not thin placeholders)
+
+    ## Writing Style — Be Definitive
+
+    Every section must take a clear position. Use this framework:
+
+    RECOMMENDATIONS:
+    - BAD: "Consider using X" or "You might use X"
+    - GOOD: "Use AWS EventBridge (SBB-INTG-002) for asynchronous inter-service communication when latency tolerance is >200ms and message ordering is not critical."
+
+    SPECIFIC NUMBERS — include concrete decision criteria wherever possible:
+    - Latency targets: "Response time must be <100ms at p99"
+    - Throughput: "Use pattern A for >10K req/sec; pattern B for <5K req/sec"
+    - Scaling: "Single instance supports up to 1000 concurrent connections"
+    - Cost: "Estimated monthly cost $500-$1500 for typical enterprise workload"
+    - SLA: "99.99% uptime target with <5 minutes RTO"
+
+    CATALOG ITEMS — always use exact IDs:
+    - BAD: "Use an event bus"
+    - GOOD: "Use AWS EventBridge (SBB-INTG-002)"
+
+    ANTI-PATTERNS — include what NOT to do with failure scenarios:
+    - BAD: "Avoid synchronous communication"
+    - GOOD: "Do NOT use synchronous RPC for inter-service communication when services are not co-located. If Service B is down, the entire request fails with no retry capability. Use ABB-INTG-001 (Async Message Queue) instead."
+
+    TRADEOFFS — name the winner:
+    - BAD: "Both approaches have tradeoffs"
+    - GOOD: "Pattern A is preferred because [reason]. Pattern B is an alternative only when [specific constraint]."
+
+    CALLOUT BLOCKS — include 2-3 per document at decision points:
+    > **Key Decision:** State the architectural decision and rationale
+    > **Best Practice:** Highlight recommended approach with why
+    > **Anti-Pattern:** Show what NOT to do and the concrete failure scenario
+
+    AUDIENCE DEPTH (tailor per target audience):
+    - Enterprise Architects: Strategic decisions, governance, cost-benefit, capability roadmap
+    - Domain Architects: Domain depth, security (ISO 27001, SOC2), compliance, integration complexity
+    - Solution Architects: NFRs with specific targets, scalability limits, implementation tradeoffs
+    - Software Engineers: Practical guidance, prerequisites, gotchas, migration steps, testing strategies
+
+    CLEAR VERDICTS — end decision-heavy sections with:
+    - BAD: "Is this the right approach?"
+    - GOOD: "VERDICT: Use Pattern X for this use case. Pattern Y is not recommended due to [reason]."
+
+    Reference industry standards and compliance where relevant: TOGAF, ISO 27001, SOC2, GDPR
+
+    ## Checklist for 7+ Scores on All Dimensions
+
+    Before returning the document, self-check against these criteria:
+
+    - relevance (7+): Every key point from the outline is substantively addressed. Re-read the user's request — can you find explicit coverage of each element?
+    - completeness (7+): No section is under 400 words. All key points from outline are covered with specific detail, not just mentioned in passing.
+    - catalog_usage (7+): At least 3-5 catalog items referenced with exact IDs (e.g., ABB-CORE-001). 75%+ of sections include at least one catalog reference. Both patterns AND technologies are referenced.
+    - structure (7+): Clear H2 section headings with H3 subsections where needed. At least 2 Mermaid diagrams placed strategically. Logical narrative flow between sections.
+    - quality (7+): Professional writing, active voice. 2-3 callout blocks (> **Key Decision:** or > **Best Practice:** or > **Anti-Pattern:**). No vague "consider"/"might" language — all recommendations are definitive.
+
+    If any dimension risks scoring below 7, strengthen that area before returning.
+
     - linked_entities: Reference existing catalog items that this document discusses or relates to.
       Use EXACT IDs from the catalog context above. Set label to "Pattern" for AB/ABB/SBB items,
       "Technology" for technology items, or "PBC" for business capabilities. Include 2-8 entities.
@@ -1483,23 +1543,31 @@ document_drafter:
     {catalog_context}
 
     ## Instructions
-    Enrich this section to make it more valuable for {target_audience}. Your task:
+    Enrich this section to make it more valuable and definitive for {target_audience}. Your task:
 
-    1. **Deepen technical detail** — add specific architecture patterns, catalog references (by ID),
-       and concrete guidance that the initial draft may have left vague
-    2. **Add diagrams** — if the section's topic benefits from a visual, include a Mermaid diagram
+    1. **Make it definitive** — replace vague language with concrete recommendations:
+       - BAD: "Consider using an event-driven approach"
+       - GOOD: "Use event-driven architecture with AWS EventBridge for inter-service communication
+         when latency tolerance is > 200ms and message ordering is not critical"
+    2. **Add specific numbers** — include concrete targets, thresholds, and limits:
+       - Latency/throughput targets, scaling limits, SLA values, cost estimates
+       - Decision thresholds: "If X > N, then use Pattern A"
+    3. **Name exact catalog items by ID** — reference specific patterns and technologies from the
+       catalog context, not generic descriptions
+    4. **Add diagrams** — if the section's topic benefits from a visual, include a Mermaid diagram
        (flowchart, sequence, C4, class). Prefer diagrams over code blocks.
-    3. **Cover all key points** — ensure every key point from the outline is substantively addressed
-    4. **Add callouts** — use `> **Key Decision:** ...` or `> **Best Practice:** ...` blocks
-       for important insights
-    5. **Cross-reference** — reference other sections of this document or catalog items where relevant
-    6. **Audience targeting**:
-       - Enterprise Architects: emphasize strategic decisions, business alignment, governance
-       - Domain Architects: emphasize domain-specific depth, security implications, integration patterns
-       - Solution Architects: emphasize NFRs, scalability, implementation tradeoffs
-       - Software Engineers: emphasize practical guidance, prerequisites, gotchas, anti-patterns
-    7. **Tables** — use only when genuinely needed for comparison or structured data
-    8. **Minimum 300 words** — ensure substantive depth, not thin placeholders
+    5. **Cover all key points** — ensure every key point from the outline is substantively addressed
+    6. **Add callouts** — use `> **Key Decision:** ...` or `> **Best Practice:** ...` or
+       `> **Anti-Pattern:** ...` blocks for important insights
+    7. **Include anti-patterns** — state what NOT to do and why, with concrete failure scenarios
+    8. **Cross-reference** — reference other sections of this document or catalog items where relevant
+    9. **Audience targeting**:
+       - Enterprise Architects: strategic decisions, governance impact, business alignment, cost-benefit
+       - Domain Architects: domain-specific depth, security implications, compliance (ISO 27001, SOC2), integration
+       - Solution Architects: NFRs with specific targets, scalability limits, implementation tradeoffs
+       - Software Engineers: practical guidance, prerequisites, gotchas, anti-patterns, migration steps
+    10. **Tables** — use only when genuinely needed for comparison or structured data
+    11. **Minimum 400 words** — ensure definitive depth with clear positions, not vague overviews
 
     Return ONLY the enriched markdown content for this section (no JSON wrapper, no title prefix).
     Do NOT include the section title as a heading — just the body content.

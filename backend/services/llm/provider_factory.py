@@ -6,6 +6,7 @@ from services.llm.anthropic_provider import AnthropicProvider
 from services.llm.openai_provider import OpenAIProvider
 from services.llm.ollama_provider import OllamaProvider
 from services.llm.bedrock_provider import BedrockProvider
+from services.llm.litellm_provider import LiteLLMProvider
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,7 @@ def _init_providers():
             "openai": OpenAIProvider(),
             "ollama": OllamaProvider(),
             "bedrock": BedrockProvider(),
+            "litellm": LiteLLMProvider(),
         }
 
 

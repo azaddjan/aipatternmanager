@@ -66,6 +66,7 @@ class LLMProvider(str, Enum):
     OPENAI = "openai"
     OLLAMA = "ollama"
     BEDROCK = "bedrock"
+    LITELLM = "litellm"
 
 
 # --- Pattern ---
@@ -395,6 +396,7 @@ class DocumentCreate(BaseModel):
     summary: str = ""
     target_audience: str = ""
     tags: list[str] = []
+    created_by: str = ""
     team_id: Optional[str] = None
     source_analysis_id: Optional[str] = None
     sections: list[dict] = []  # [{title, content}] for initial creation
@@ -407,6 +409,7 @@ class DocumentUpdate(BaseModel):
     target_audience: Optional[str] = None
     tags: Optional[list[str]] = None
     team_id: Optional[str] = None
+    updated_by: Optional[str] = None
 
 class DocumentSectionCreate(BaseModel):
     title: str = "New Section"

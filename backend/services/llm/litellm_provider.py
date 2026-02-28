@@ -1,3 +1,10 @@
+"""
+LiteLLM Gateway provider — connects to a LiteLLM proxy via its
+OpenAI-compatible /v1/chat/completions endpoint.
+
+Uses the existing `openai` SDK with a custom base_url, so no new
+pip dependency is required.
+"""
 import os
 import logging
 from typing import AsyncIterator
@@ -9,31 +16,45 @@ from services.llm.base_provider import BaseLLMProvider
 logger = logging.getLogger(__name__)
 
 
-class OpenAIProvider(BaseLLMProvider):
-    DEFAULT_MODEL = "gpt-4o"
+class LiteLLMProvider(BaseLLMProvider):
+
+    DEFAULT_MODEL = "bedrock/anthropic.claude-3-sonnet-20240229-v1:0"
 
     def __init__(self):
-        api_key = os.getenv("OPENAI_API_KEY", "")
-        self.client = AsyncOpenAI(api_key=api_key) if api_key else None
+        self._client = None
+        self._gateway_url = os.getenv("LITELLM_GATEWAY_URL", "")
+        self._api_key = os.getenv("LITELLM_API_KEY", "")
+        if self._gateway_url:
+            self._init_client()
+
+    def _init_client(self):
+        url = self._gateway_url.rstrip("/")
+        if not url.endswith("/v1"):
+            url += "/v1"
+        self._client = AsyncOpenAI(
+            base_url=url,
+            api_key=self._api_key or "not-needed",
+        )
 
     @property
     def name(self) -> str:
-        return "openai"
+        return "litellm"
 
     @property
     def default_model(self) -> str:
         return self.DEFAULT_MODEL
 
     def is_available(self) -> bool:
-        api_key = os.getenv("OPENAI_API_KEY", "")
-        return bool(api_key and api_key != "sk-your-key-here")
+        return bool(self._gateway_url)
 
-    async def generate(self, system_prompt: str, user_prompt: str, model: str | None = None) -> dict:
-        if not self.client:
-            raise RuntimeError("OpenAI API key not configured")
+    async def generate(
+        self, system_prompt: str, user_prompt: str, model: str | None = None
+    ) -> dict:
+        if not self._client:
+            raise RuntimeError("LiteLLM Gateway URL not configured")
 
         model = model or self.DEFAULT_MODEL
-        response = await self.client.chat.completions.create(
+        response = await self._client.chat.completions.create(
             model=model,
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -47,11 +68,11 @@ class OpenAIProvider(BaseLLMProvider):
     async def generate_stream(
         self, system_prompt: str, user_prompt: str, model: str | None = None
     ) -> AsyncIterator[str]:
-        if not self.client:
-            raise RuntimeError("OpenAI API key not configured")
+        if not self._client:
+            raise RuntimeError("LiteLLM Gateway URL not configured")
 
         model = model or self.DEFAULT_MODEL
-        stream = await self.client.chat.completions.create(
+        stream = await self._client.chat.completions.create(
             model=model,
             messages=[
                 {"role": "system", "content": system_prompt},

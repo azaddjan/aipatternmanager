@@ -1,8 +1,11 @@
 import asyncio
+import io
 import json
 import logging
 import queue
+import re
 import threading
+from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query, Depends
 from fastapi.responses import StreamingResponse
@@ -93,6 +96,30 @@ def delete_document(doc_id: str, _user=Depends(get_current_user_or_anonymous)):
     if not db.delete_document(doc_id):
         raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
     return {"deleted": True}
+
+
+@router.get("/{doc_id}/export/docx")
+def export_document_docx(doc_id: str, _user=Depends(get_current_user_or_anonymous)):
+    """Export a document as a Word (.docx) file."""
+    db = get_db()
+    doc = db.get_document(doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
+
+    from services.document_docx_export_service import DocumentDocxExportService
+    exporter = DocumentDocxExportService()
+    docx_bytes = exporter.generate_docx(doc)
+
+    # Sanitize title for filename
+    safe_title = re.sub(r'[^\w\s-]', '', doc.get("title", "Document")).strip().replace(' ', '_')[:50]
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+    filename = f"{safe_title}_{timestamp}.docx"
+
+    return StreamingResponse(
+        io.BytesIO(docx_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # --- Sections ---

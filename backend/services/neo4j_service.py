@@ -95,6 +95,8 @@ class Neo4jService:
             "CREATE CONSTRAINT team_name IF NOT EXISTS FOR (t:Team) REQUIRE t.name IS UNIQUE",
             "CREATE CONSTRAINT system_config_key IF NOT EXISTS FOR (c:SystemConfig) REQUIRE c.key IS UNIQUE",
             "CREATE CONSTRAINT audit_log_id IF NOT EXISTS FOR (a:AuditLog) REQUIRE a.id IS UNIQUE",
+            # Prompt history
+            "CREATE CONSTRAINT prompt_history_id IF NOT EXISTS FOR (h:PromptHistory) REQUIRE h.id IS UNIQUE",
             # Documents
             "CREATE CONSTRAINT document_id IF NOT EXISTS FOR (d:Document) REQUIRE d.id IS UNIQUE",
             "CREATE CONSTRAINT document_section_id IF NOT EXISTS FOR (s:DocumentSection) REQUIRE s.id IS UNIQUE",
@@ -119,6 +121,8 @@ class Neo4jService:
             # Document indexes
             "CREATE INDEX document_status IF NOT EXISTS FOR (d:Document) ON (d.status)",
             "CREATE INDEX document_doc_type IF NOT EXISTS FOR (d:Document) ON (d.doc_type)",
+            # Prompt history indexes
+            "CREATE INDEX prompt_history_key IF NOT EXISTS FOR (h:PromptHistory) ON (h.prompt_key)",
         ]
         with self.session() as session:
             for q in queries:

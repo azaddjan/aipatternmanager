@@ -80,19 +80,37 @@ class BedrockProvider(BaseLLMProvider):
         else:
             return await self._generate_converse(client, system_prompt, user_prompt, model)
 
+    def _get_guardrail_config(self) -> dict | None:
+        """Return guardrailConfig dict if configured in settings, else None."""
+        try:
+            from services.settings_service import get_settings
+            settings = get_settings()
+            bedrock_cfg = settings.get("providers", {}).get("bedrock", {})
+            gid = bedrock_cfg.get("guardrail_id", "").strip()
+            gver = bedrock_cfg.get("guardrail_version", "").strip()
+            if gid and gver:
+                return {"guardrailIdentifier": gid, "guardrailVersion": gver}
+        except Exception as e:
+            logger.warning(f"Failed to load guardrail config: {e}")
+        return None
+
     async def _generate_anthropic(self, client, system_prompt: str, user_prompt: str, model: str) -> dict:
         """Use the Bedrock Converse API (works for all models including Anthropic)."""
         import asyncio
+        guardrail_config = self._get_guardrail_config()
 
         def _invoke():
-            response = client.converse(
+            kwargs = dict(
                 modelId=model,
                 system=[{"text": system_prompt}],
                 messages=[
                     {"role": "user", "content": [{"text": user_prompt}]}
                 ],
-                inferenceConfig={"maxTokens": 8192, "temperature": 0.7},
+                inferenceConfig={"maxTokens": 16384, "temperature": 0.7},
             )
+            if guardrail_config:
+                kwargs["guardrailConfig"] = guardrail_config
+            response = client.converse(**kwargs)
             return response["output"]["message"]["content"][0]["text"]
 
         content = await asyncio.get_event_loop().run_in_executor(None, _invoke)
@@ -101,16 +119,20 @@ class BedrockProvider(BaseLLMProvider):
     async def _generate_converse(self, client, system_prompt: str, user_prompt: str, model: str) -> dict:
         """Generic Converse API call for non-Anthropic models on Bedrock."""
         import asyncio
+        guardrail_config = self._get_guardrail_config()
 
         def _invoke():
-            response = client.converse(
+            kwargs = dict(
                 modelId=model,
                 system=[{"text": system_prompt}],
                 messages=[
                     {"role": "user", "content": [{"text": user_prompt}]}
                 ],
-                inferenceConfig={"maxTokens": 8192, "temperature": 0.7},
+                inferenceConfig={"maxTokens": 16384, "temperature": 0.7},
             )
+            if guardrail_config:
+                kwargs["guardrailConfig"] = guardrail_config
+            response = client.converse(**kwargs)
             return response["output"]["message"]["content"][0]["text"]
 
         content = await asyncio.get_event_loop().run_in_executor(None, _invoke)

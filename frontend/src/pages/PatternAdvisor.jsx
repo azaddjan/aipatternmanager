@@ -475,18 +475,15 @@ export default function PatternAdvisor() {
           <div>
             <label className="block text-xs text-gray-500 mb-1">LLM Provider</label>
             <div className="flex gap-2 flex-wrap">
-              {providers.map(p => (
+              {providers.filter(p => p.available).map(p => (
                 <button
                   key={p.name}
                   onClick={() => { setProvider(p.name); setModel(p.default_model) }}
                   className={`px-3 py-1.5 rounded-lg text-xs border transition-colors ${
                     provider === p.name
                       ? 'bg-blue-600/20 border-blue-500/50 text-blue-400'
-                      : p.available
-                        ? 'bg-gray-800 border-gray-700 text-gray-300 hover:border-gray-600'
-                        : 'bg-gray-800/50 border-gray-800 text-gray-600 cursor-not-allowed'
+                      : 'bg-gray-800 border-gray-700 text-gray-300 hover:border-gray-600'
                   }`}
-                  disabled={!p.available}
                 >
                   {p.name}
                   {p.is_default && <span className="text-gray-500 ml-1">(default)</span>}

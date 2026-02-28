@@ -8,6 +8,7 @@ import json
 import logging
 import re
 import time
+import uuid
 import yaml
 from datetime import datetime, timezone
 from pathlib import Path
@@ -131,6 +132,27 @@ def get_all_prompts() -> list[dict]:
     defaults = _load_yaml_defaults()
     overrides = _load_overrides()
 
+    # Batch-fetch latest version info for all prompts
+    version_info = {}
+    try:
+        from main import db_service
+        with db_service.session() as session:
+            result = session.run(
+                "MATCH (h:PromptHistory) "
+                "WITH h.prompt_key AS pk, max(h.version) AS mv "
+                "MATCH (h2:PromptHistory {prompt_key: pk, version: mv}) "
+                "RETURN pk, mv AS version, h2.created_at AS updated_at, "
+                "  h2.user_email AS user_email"
+            )
+            for record in result:
+                version_info[record["pk"]] = {
+                    "version": record["version"],
+                    "updated_at": record["updated_at"],
+                    "last_edited_by": record["user_email"],
+                }
+    except Exception:
+        pass
+
     prompts = []
     for section, sub_prompts in defaults.items():
         if not isinstance(sub_prompts, dict):
@@ -139,6 +161,7 @@ def get_all_prompts() -> list[dict]:
             override_key = f"{section}.{sub_prompt}"
             is_overridden = override_key in overrides
             current_value = overrides[override_key] if is_overridden else default_value
+            vi = version_info.get(override_key, {})
 
             prompts.append({
                 "section": section,
@@ -149,12 +172,16 @@ def get_all_prompts() -> list[dict]:
                 "is_overridden": is_overridden,
                 "variables": extract_variables(current_value),
                 "token_estimate": estimate_tokens(current_value),
+                "version": vi.get("version", 0),
+                "updated_at": vi.get("updated_at"),
+                "last_edited_by": vi.get("last_edited_by"),
             })
 
     return prompts
 
 
-def save_override(section: str, sub_prompt: str, value: str) -> dict:
+def save_override(section: str, sub_prompt: str, value: str,
+                  user_email: str = "", user_name: str = "") -> dict:
     """Save a prompt override to Neo4j SystemConfig."""
     defaults = _load_yaml_defaults()
     if section not in defaults or sub_prompt not in defaults.get(section, {}):
@@ -175,6 +202,9 @@ def save_override(section: str, sub_prompt: str, value: str) -> dict:
 
     invalidate_cache()
 
+    history = _record_history(section, sub_prompt, value, action="save",
+                              user_email=user_email, user_name=user_name)
+
     return {
         "section": section,
         "sub_prompt": sub_prompt,
@@ -182,10 +212,12 @@ def save_override(section: str, sub_prompt: str, value: str) -> dict:
         "is_overridden": True,
         "variables": extract_variables(value),
         "token_estimate": estimate_tokens(value),
+        "version": history["version"],
     }
 
 
-def delete_override(section: str, sub_prompt: str) -> dict:
+def delete_override(section: str, sub_prompt: str,
+                    user_email: str = "", user_name: str = "") -> dict:
     """Delete a prompt override (revert to YAML default)."""
     defaults = _load_yaml_defaults()
     if section not in defaults or sub_prompt not in defaults.get(section, {}):
@@ -200,6 +232,10 @@ def delete_override(section: str, sub_prompt: str) -> dict:
     invalidate_cache()
 
     default_value = defaults[section][sub_prompt]
+
+    history = _record_history(section, sub_prompt, default_value, action="reset",
+                              user_email=user_email, user_name=user_name)
+
     return {
         "section": section,
         "sub_prompt": sub_prompt,
@@ -208,7 +244,100 @@ def delete_override(section: str, sub_prompt: str) -> dict:
         "is_overridden": False,
         "variables": extract_variables(default_value),
         "token_estimate": estimate_tokens(default_value),
+        "version": history["version"],
     }
+
+
+def _record_history(section: str, sub_prompt: str, value: str, action: str,
+                    user_email: str = "", user_name: str = "") -> dict:
+    """Create a PromptHistory entry in Neo4j. Returns {id, version}."""
+    from main import db_service
+
+    prompt_key = f"{section}.{sub_prompt}"
+    history_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+
+    with db_service.session() as session:
+        result = session.run(
+            "MATCH (h:PromptHistory {prompt_key: $prompt_key}) "
+            "RETURN coalesce(max(h.version), 0) AS max_version",
+            prompt_key=prompt_key,
+        )
+        record = result.single()
+        next_version = (record["max_version"] if record else 0) + 1
+
+        session.run(
+            "CREATE (h:PromptHistory {"
+            "  id: $id, prompt_key: $prompt_key, version: $version, "
+            "  value: $value, action: $action, "
+            "  user_email: $user_email, user_name: $user_name, "
+            "  created_at: $created_at"
+            "})",
+            id=history_id, prompt_key=prompt_key, version=next_version,
+            value=value, action=action,
+            user_email=user_email, user_name=user_name,
+            created_at=now,
+        )
+
+    return {"id": history_id, "version": next_version}
+
+
+def get_prompt_history(section: str, sub_prompt: str, limit: int = 50) -> list[dict]:
+    """Fetch version history for a specific prompt, newest first.
+
+    Includes lazy backfill: if an override exists in SystemConfig but
+    no PromptHistory entries exist yet, seed a v1 entry from the current value.
+    """
+    from main import db_service
+
+    prompt_key = f"{section}.{sub_prompt}"
+
+    with db_service.session() as session:
+        result = session.run(
+            "MATCH (h:PromptHistory {prompt_key: $prompt_key}) "
+            "RETURN h.id AS id, h.version AS version, h.value AS value, "
+            "  h.action AS action, h.user_email AS user_email, "
+            "  h.user_name AS user_name, h.created_at AS created_at "
+            "ORDER BY h.version DESC LIMIT $limit",
+            prompt_key=prompt_key, limit=limit,
+        )
+        entries = [dict(record) for record in result]
+
+    # Lazy backfill: if override exists but no history, seed v1
+    if not entries:
+        overrides = _load_overrides()
+        if prompt_key in overrides:
+            try:
+                with db_service.session() as session:
+                    cfg = session.run(
+                        "MATCH (c:SystemConfig {key: $key}) "
+                        "RETURN c.updated_at AS updated_at",
+                        key=f"prompt_override:{prompt_key}",
+                    ).single()
+                    ts = cfg["updated_at"] if cfg else datetime.now(timezone.utc).isoformat()
+
+                history_id = str(uuid.uuid4())
+                with db_service.session() as session:
+                    session.run(
+                        "CREATE (h:PromptHistory {"
+                        "  id: $id, prompt_key: $pk, version: 1, "
+                        "  value: $value, action: 'save', "
+                        "  user_email: 'system', user_name: 'Pre-existing override', "
+                        "  created_at: $ts"
+                        "})",
+                        id=history_id, pk=prompt_key,
+                        value=overrides[prompt_key], ts=ts,
+                    )
+                entries = [{
+                    "id": history_id, "version": 1,
+                    "value": overrides[prompt_key], "action": "save",
+                    "user_email": "system", "user_name": "Pre-existing override",
+                    "created_at": ts,
+                }]
+            except Exception:
+                pass
+
+    return entries
 
 
 def invalidate_cache():

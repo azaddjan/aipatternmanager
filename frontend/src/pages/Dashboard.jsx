@@ -183,8 +183,8 @@ export default function Dashboard() {
           <span className="w-2 h-2 rounded-full bg-current" />
           Neo4j {health?.neo4j || 'unknown'}
         </div>
-        {health?.llm_providers?.map(p => (
-          <div key={p.name} className={`flex items-center gap-1.5 ${p.available ? 'text-green-400' : 'text-gray-600'}`}>
+        {health?.llm_providers?.filter(p => p.available).map(p => (
+          <div key={p.name} className="flex items-center gap-1.5 text-green-400">
             <span className="w-2 h-2 rounded-full bg-current" />
             {p.name}{p.is_default ? ' (default)' : ''}
           </div>

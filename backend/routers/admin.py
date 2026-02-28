@@ -16,7 +16,7 @@ from services.pptx_export_service import PptxExportService
 from services.docx_export_service import DocxExportService
 from services.import_service import ImportService
 from services.backup_service import BackupService
-from middleware.dependencies import require_admin
+from middleware.dependencies import require_admin, get_current_user
 
 router = APIRouter(prefix="/api/admin", tags=["Admin"], dependencies=[Depends(require_admin)])
 
@@ -756,6 +756,10 @@ class PromptTestRequest(BaseModel):
     model: Optional[str] = None
 
 
+class PromptRestoreRequest(BaseModel):
+    version: int
+
+
 @router.get("/prompts")
 def list_prompts():
     """List all AI prompts with defaults, overrides, variables, and token estimates."""
@@ -778,24 +782,34 @@ def list_prompts():
 
 
 @router.put("/prompts/{section}/{sub_prompt}")
-def update_prompt(section: str, sub_prompt: str, body: PromptUpdateRequest):
+def update_prompt(section: str, sub_prompt: str, body: PromptUpdateRequest,
+                  current_user: dict = Depends(get_current_user)):
     """Save a prompt override. Persists to Neo4j SystemConfig."""
     from services.prompt_service import save_override
 
     try:
-        result = save_override(section, sub_prompt, body.value)
+        result = save_override(
+            section, sub_prompt, body.value,
+            user_email=current_user.get("email", ""),
+            user_name=current_user.get("name") or current_user.get("email", ""),
+        )
         return result
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
 
 @router.delete("/prompts/{section}/{sub_prompt}")
-def reset_prompt(section: str, sub_prompt: str):
+def reset_prompt(section: str, sub_prompt: str,
+                 current_user: dict = Depends(get_current_user)):
     """Reset a prompt to its YAML default (delete the override)."""
     from services.prompt_service import delete_override
 
     try:
-        result = delete_override(section, sub_prompt)
+        result = delete_override(
+            section, sub_prompt,
+            user_email=current_user.get("email", ""),
+            user_name=current_user.get("name") or current_user.get("email", ""),
+        )
         return result
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -838,6 +852,43 @@ async def test_prompt(body: PromptTestRequest):
     except Exception as e:
         elapsed = round((time.time() - start) * 1000)
         raise HTTPException(status_code=500, detail=f"LLM test failed ({elapsed}ms): {str(e)}")
+
+
+@router.get("/prompts/{section}/{sub_prompt}/history")
+def get_prompt_history_endpoint(section: str, sub_prompt: str,
+                                limit: int = Query(50, ge=1, le=200)):
+    """Fetch version history for a specific prompt."""
+    from services.prompt_service import get_prompt_history
+
+    history = get_prompt_history(section, sub_prompt, limit=limit)
+    return {"history": history, "total": len(history)}
+
+
+@router.post("/prompts/{section}/{sub_prompt}/restore")
+def restore_prompt_version(section: str, sub_prompt: str,
+                           body: PromptRestoreRequest,
+                           current_user: dict = Depends(get_current_user)):
+    """Restore a previous version of a prompt override."""
+    from services.prompt_service import get_prompt_history, save_override
+
+    history = get_prompt_history(section, sub_prompt, limit=500)
+    target = next((h for h in history if h["version"] == body.version), None)
+    if not target:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Version {body.version} not found for {section}.{sub_prompt}",
+        )
+
+    try:
+        result = save_override(
+            section, sub_prompt, target["value"],
+            user_email=current_user.get("email", ""),
+            user_name=current_user.get("name") or current_user.get("email", ""),
+        )
+        result["restored_from_version"] = body.version
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 # --- Database Reset ---

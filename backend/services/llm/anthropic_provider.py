@@ -36,7 +36,7 @@ class AnthropicProvider(BaseLLMProvider):
         model = model or self.DEFAULT_MODEL
         response = await self.client.messages.create(
             model=model,
-            max_tokens=8192,
+            max_tokens=16384,
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}],
         )
@@ -52,7 +52,7 @@ class AnthropicProvider(BaseLLMProvider):
         model = model or self.DEFAULT_MODEL
         async with self.client.messages.stream(
             model=model,
-            max_tokens=8192,
+            max_tokens=16384,
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}],
         ) as stream:
@@ -87,7 +87,7 @@ class AnthropicProvider(BaseLLMProvider):
 
         response = await self.client.messages.create(
             model=model,
-            max_tokens=8192,
+            max_tokens=16384,
             system=system_prompt,
             messages=[{"role": "user", "content": content}],
         )
