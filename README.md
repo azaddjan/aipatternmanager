@@ -14,6 +14,12 @@ This tool manages a catalogue of AI architecture patterns across multiple abstra
 
 Patterns are organized into categories: Core AI/LLM, Integration, Agents, Knowledge & Retrieval, Cross-Cutting, Platform Integration, and Architecture Topology.
 
+## Screenshots
+
+![Dashboard](images/dashboard.jpeg)
+
+![Graph Explorer](images/graph-explorer.jpeg)
+
 ## Architecture
 
 | Component | Technology | Port |
