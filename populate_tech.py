@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Populate technology descriptions, doc URLs, and websites."""
+import os
 import requests
 
-API = "http://localhost:8000/api"
+API = os.getenv("API_URL", "http://localhost:8000/api")
 
 TECH_DATA = {
     "aws-api-gateway": {

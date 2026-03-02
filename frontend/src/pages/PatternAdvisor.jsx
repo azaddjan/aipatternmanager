@@ -1154,6 +1154,7 @@ function PatternsTab({ analysis }) {
 
 function ComparisonsTab({ analysis }) {
   const comparisons = analysis.sbb_comparisons || []
+  const hasExcluded = comparisons.some(g => (g.sbbs || []).some(s => s.excluded))
 
   if (comparisons.length === 0) {
     return (
@@ -1165,6 +1166,14 @@ function ComparisonsTab({ analysis }) {
 
   return (
     <div className="space-y-6">
+      {/* Legend when excluded patterns exist */}
+      {hasExcluded && (
+        <div className="bg-gray-800/50 border border-gray-700 rounded-lg px-4 py-2.5 text-xs text-gray-400 flex items-center gap-2">
+          <span className="text-gray-500">ℹ️</span>
+          Patterns marked <span className="text-red-400 font-semibold">EXCLUDED</span> were considered but cannot be recommended due to restrictions or governance decisions (ADRs).
+        </div>
+      )}
+
       {comparisons.map((group, gi) => (
         <div key={gi} className="card">
           <h3 className="text-sm font-semibold text-white mb-4">{group.context || `Comparison Group ${gi + 1}`}</h3>
@@ -1182,29 +1191,46 @@ function ComparisonsTab({ analysis }) {
               </thead>
               <tbody className="divide-y divide-gray-800">
                 {(group.sbbs || []).map((sbb, si) => (
-                  <tr key={si} className="hover:bg-gray-800/40 transition-colors">
+                  <tr
+                    key={si}
+                    className={`transition-colors ${
+                      sbb.excluded
+                        ? 'bg-red-500/5 border-l-2 border-l-red-500/40 opacity-70'
+                        : 'hover:bg-gray-800/40'
+                    }`}
+                  >
                     <td className="py-2.5 px-3">
-                      <Link
-                        to={`/patterns/${sbb.id}`}
-                        className="text-green-400 font-mono text-xs hover:underline"
-                      >
-                        {sbb.id}
-                      </Link>
+                      <div className="flex items-center gap-1.5">
+                        <Link
+                          to={`/patterns/${sbb.id}`}
+                          className={`font-mono text-xs hover:underline ${sbb.excluded ? 'text-gray-500' : 'text-green-400'}`}
+                        >
+                          {sbb.id}
+                        </Link>
+                        {sbb.excluded && (
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 border border-red-500/30 uppercase tracking-wider">
+                            Excluded
+                          </span>
+                        )}
+                      </div>
                       {sbb.name && (
-                        <p className="text-gray-400 text-xs mt-0.5">{sbb.name}</p>
+                        <p className={`text-xs mt-0.5 ${sbb.excluded ? 'text-gray-600' : 'text-gray-400'}`}>{sbb.name}</p>
+                      )}
+                      {sbb.exclusion_reason && (
+                        <p className="text-red-400/80 text-[11px] mt-1 leading-tight">{sbb.exclusion_reason}</p>
                       )}
                     </td>
-                    <td className="py-2.5 px-3 text-gray-300 text-xs">
+                    <td className={`py-2.5 px-3 text-xs ${sbb.excluded ? 'text-gray-500' : 'text-gray-300'}`}>
                       {Array.isArray(sbb.strengths)
                         ? <ul className="list-disc list-inside space-y-0.5">{sbb.strengths.map((s, i) => <li key={i}>{s}</li>)}</ul>
                         : sbb.strengths}
                     </td>
-                    <td className="py-2.5 px-3 text-gray-300 text-xs">
+                    <td className={`py-2.5 px-3 text-xs ${sbb.excluded ? 'text-gray-500' : 'text-gray-300'}`}>
                       {Array.isArray(sbb.weaknesses)
                         ? <ul className="list-disc list-inside space-y-0.5">{sbb.weaknesses.map((w, i) => <li key={i}>{w}</li>)}</ul>
                         : sbb.weaknesses}
                     </td>
-                    <td className="py-2.5 px-3 text-gray-300 text-xs">
+                    <td className={`py-2.5 px-3 text-xs ${sbb.excluded ? 'text-gray-500' : 'text-gray-300'}`}>
                       {sbb.best_for}
                       {sbb.restrictions_note && (
                         <p className="text-orange-400 mt-1">⚠️ {sbb.restrictions_note}</p>

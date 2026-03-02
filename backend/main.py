@@ -71,7 +71,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="AI Pattern Manager",
     description="Architecture pattern management with Neo4j and AI authoring",
-    version="1.0.0",
+    version="0.9.0",
     lifespan=lifespan,
 )
 

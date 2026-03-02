@@ -7,9 +7,10 @@ Logic:
 - Move everything else to COMPATIBLE_WITH
 - ABBs don't have tech relationships (they're abstract), so skip them
 """
+import os
 import requests
 
-API = "http://localhost:8000/api"
+API = os.getenv("API_URL", "http://localhost:8000/api")
 
 # Manual mapping: SBB ID -> list of CORE technology IDs (minimum dependencies)
 # Everything else currently in USES becomes COMPATIBLE_WITH

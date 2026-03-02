@@ -5,10 +5,11 @@ Migration script: Regenerate pattern markdown with new section format.
 - Ensures consistent section ordering
 """
 import json
+import os
 import re
 import requests
 
-API = "http://localhost:8000/api"
+API = os.getenv("API_URL", "http://localhost:8000/api")
 
 
 def get_all_patterns():

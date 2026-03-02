@@ -35,6 +35,7 @@ backups/*.json.gz
 
 # Runtime settings (contains masked keys)
 backend/settings.json
+*.migrated
 
 # Docker volumes (local)
 neo4j_data/

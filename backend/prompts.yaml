@@ -290,7 +290,7 @@ advisor:
     Analyze the problem above against the complete pattern catalog. Return a JSON object with this EXACT structure:
 
     {{
-      "summary": "2-3 sentence architecture overview of how to solve this problem using the available patterns",
+      "summary": "2-3 sentence architecture overview of how to solve this problem using the available patterns. If any relevant patterns were excluded due to restrictions or governance decisions (ADRs), briefly mention them.",
 
       "recommended_pbcs": [
         {{
@@ -332,10 +332,12 @@ advisor:
               "strengths": ["strength 1", "strength 2"],
               "weaknesses": ["weakness 1"],
               "restrictions_note": "Any usage restrictions from the catalog, or null",
-              "best_for": "Scenario where this SBB is the best choice"
+              "best_for": "Scenario where this SBB is the best choice",
+              "excluded": false,
+              "exclusion_reason": "null if not excluded, otherwise why this SBB cannot be recommended (restrictions, ADR governance, scope)"
             }}
           ],
-          "recommendation": "Which SBB to prefer and why"
+          "recommendation": "Which SBB to prefer and why (note any excluded SBBs and reference ADR IDs)"
         }}
       ],
 
@@ -367,6 +369,15 @@ advisor:
       1. Copy it into the restrictions_note field of that recommendation
       2. Mention the restriction in architecture_composition if it affects the overall design
       3. Factor restrictions into sbb_comparisons as a weakness when comparing SBBs
+    - EXCLUDED PATTERNS: When a pattern in the catalog is RELEVANT to the user's problem but cannot be recommended due to restrictions, governance decisions (ADRs), or scope limitations:
+      1. Still include it in sbb_comparisons alongside recommended SBBs, with "excluded": true
+      2. Set "exclusion_reason" explaining why (e.g., "Restricted to personal/team productivity per DOC-006")
+      3. Fill strengths/weaknesses/best_for as normal — the user needs to see the full picture of what was considered
+      4. This is critical — users must understand what was evaluated and why it was excluded, not just what was recommended
+    - ADR REFERENCES: When Architecture Decision Records (ADRs) from the catalog are relevant to the recommendation:
+      1. Reference them by ID in the "reasoning" field (e.g., "Per DOC-006, Copilot Studio is restricted to...")
+      2. Mention constraining ADRs in "architecture_composition" when they affect the design
+      3. Cite the ADR ID in "restrictions_note" and "exclusion_reason" when an ADR governs a pattern's usage
     - Return ONLY the JSON object, nothing else
 
 

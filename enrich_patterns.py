@@ -7,10 +7,11 @@ Fixes:
 2. All SBBs — ensure complete USES/COMPATIBLE_WITH technology coverage
 3. Regenerate markdown sections for Depending Technology and Compatible Technologies
 """
+import os
 import re
 import requests
 
-API = "http://localhost:8000/api"
+API = os.getenv("API_URL", "http://localhost:8000/api")
 
 # ---------------------------------------------------------------------------
 # Complete desired state for ALL SBB technology relationships

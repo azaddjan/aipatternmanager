@@ -2,9 +2,10 @@ services:
   neo4j:
     image: neo4j:5-community
     container_name: pattern-neo4j
-    ports:
-      - "7474:7474"
-      - "7687:7687"
+    # ports only exposed internally — not reachable from host
+    expose:
+      - "7474"
+      - "7687"
     environment:
       NEO4J_AUTH: neo4j/patternmanager2026
       NEO4J_PLUGINS: '["apoc"]'
@@ -24,8 +25,9 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: pattern-api
-    ports:
-      - "8000:8000"
+    # port only exposed internally — not reachable from host
+    expose:
+      - "8000"
     environment:
       # --- Database ---
       NEO4J_URI: bolt://neo4j:7687

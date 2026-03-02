@@ -51,8 +51,8 @@ Patterns are organized into categories: Core AI/LLM, Integration, Agents, Knowle
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/azaddjan/patterns.git
-   cd patterns
+   git clone https://github.com/azaddjan/aipatternmanager.git
+   cd aipatternmanager
    ```
 
 2. Create a `.env` file from the example:

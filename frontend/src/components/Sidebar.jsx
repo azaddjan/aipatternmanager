@@ -380,7 +380,7 @@ export default function Sidebar() {
           </div>
         )}
         <div className="text-xs text-gray-600 mt-2">
-          <p>v1.0.0 &middot; Azad Djan</p>
+          <p>v0.9.0 &middot; Azad Djan</p>
         </div>
       </div>
 
