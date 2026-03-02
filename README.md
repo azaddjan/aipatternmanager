@@ -99,6 +99,7 @@ Docker will pull the images automatically from Docker Hub:
    ```bash
    docker compose up -d --build
    ```
+   > The `docker-compose.override.yml` file is automatically loaded, enabling live-reload and source code mounting for development.
 
 4. Open the app at **http://localhost:5173**
 
@@ -248,7 +249,8 @@ Admins can toggle "Allow Anonymous Read Access" in the Admin > Configuration pag
 │   ├── package.json
 │   ├── vite.config.js
 │   └── tailwind.config.js
-├── docker-compose.yml
+├── docker-compose.yml              # Base stack (works standalone with Docker Hub images)
+├── docker-compose.override.yml     # Dev overrides (live-reload, source mounts)
 ├── .env.example
 └── .gitignore
 ```

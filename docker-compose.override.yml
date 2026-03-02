@@ -1,0 +1,22 @@
+# Development overrides — automatically loaded when source code is present.
+# Adds live-reload, source mounts, and build-from-source support.
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    volumes:
+      - ./backend:/app
+      - ./templates:/app/templates
+      - ./backups:/app/backups
+      - ./uploads:/app/uploads
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    command: npm run dev -- --host 0.0.0.0

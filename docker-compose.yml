@@ -2,7 +2,6 @@ services:
   neo4j:
     image: neo4j:5-community
     container_name: pattern-neo4j
-    # ports only exposed internally — not reachable from host
     expose:
       - "7474"
       - "7687"
@@ -22,11 +21,7 @@ services:
 
   backend:
     image: azaddjan/aipatternmanager-backend:0.9.0
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
     container_name: pattern-api
-    # port only exposed internally — not reachable from host
     expose:
       - "8000"
     environment:
@@ -55,30 +50,24 @@ services:
       # --- Defaults ---
       DEFAULT_LLM_PROVIDER: ${DEFAULT_LLM_PROVIDER:-anthropic}
     volumes:
-      - ./backend:/app
-      - ./templates:/app/templates
-      - ./backups:/app/backups
-      - ./uploads:/app/uploads
+      - templates:/app/templates
+      - backups:/app/backups
+      - uploads:/app/uploads
     depends_on:
       neo4j:
         condition: service_healthy
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
   frontend:
     image: azaddjan/aipatternmanager-frontend:0.9.0
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
     container_name: pattern-ui
     ports:
       - "5173:5173"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
     depends_on:
       - backend
-    command: npm run dev -- --host 0.0.0.0
 
 volumes:
   neo4j_data:
   neo4j_logs:
+  templates:
+  backups:
+  uploads:
