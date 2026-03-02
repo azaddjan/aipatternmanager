@@ -2134,7 +2134,7 @@ function MermaidPreview({ content }) {
   return (
     <div>
       <div ref={containerRef} className="bg-gray-900 rounded p-2 overflow-auto min-h-[40px]" />
-      {error && <p className="text-red-400 text-xs mt-1">{error}</p>}
+      {error && <p className="text-yellow-500/60 text-[10px] mt-1 italic">Diagram preview unavailable</p>}
     </div>
   )
 }

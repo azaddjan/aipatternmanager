@@ -51,15 +51,11 @@ function MermaidBlock({ code }) {
     return () => { cancelled = true }
   }, [code, uniqueId])
 
+  if (error) return null
+
   return (
     <div className="mb-3 rounded-lg border border-gray-700 overflow-hidden">
       <div ref={containerRef} className="p-3 flex justify-center bg-gray-900/50 [&_svg]:max-w-full" />
-      {error && (
-        <div className="border-t border-gray-700">
-          <div className="px-3 py-1 text-[10px] text-red-400 bg-red-500/10">{error}</div>
-          <pre className="bg-gray-900 p-3 overflow-x-auto text-xs text-gray-400 font-mono">{code}</pre>
-        </div>
-      )}
     </div>
   )
 }

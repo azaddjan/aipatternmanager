@@ -674,10 +674,11 @@ function MermaidRenderer({ content }) {
     return () => { cancelled = true }
   }, [content])
 
+  if (error) return null
+
   return (
     <div>
       <div ref={containerRef} className="bg-gray-900 rounded p-3 overflow-auto" />
-      {error && <p className="text-red-400 text-xs mt-1">{error}</p>}
     </div>
   )
 }

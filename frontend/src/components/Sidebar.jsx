@@ -12,6 +12,7 @@ const NAV_ITEMS = [
   { to: '/documents',    icon: '📄', label: 'Documents' },
   { to: '/advisor',      icon: '🧠', label: 'Pattern Advisor' },
   { to: '/impact',       icon: '💥', label: 'Impact Analysis' },
+  { to: '/graph',        icon: '🔗', label: 'Graph Explorer' },
 ]
 
 const ADMIN_ITEMS = [

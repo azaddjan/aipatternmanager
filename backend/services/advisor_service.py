@@ -46,6 +46,8 @@ def _fetch_full_catalog(db: Neo4jService) -> dict:
                    abb.outbound_interfaces as outbound_interfaces,
                    abb.tags as tags,
                    abb.deprecation_note as deprecation_note,
+                   abb.consumed_by_ids as consumed_by_ids,
+                   abb.works_with_ids as works_with_ids,
                    collect(DISTINCT {id: sbb.id, name: sbb.name, status: sbb.status}) as sbbs,
                    collect(DISTINCT dep.id) as depends_on
             ORDER BY abb.category, abb.id
@@ -65,6 +67,8 @@ def _fetch_full_catalog(db: Neo4jService) -> dict:
                 "outbound_interfaces": r["outbound_interfaces"],
                 "tags": r["tags"] or [],
                 "deprecation_note": r["deprecation_note"],
+                "consumed_by_ids": r["consumed_by_ids"] or [],
+                "works_with_ids": r["works_with_ids"] or [],
                 "sbbs": [s for s in r["sbbs"] if s.get("id")],
                 "depends_on": [d for d in r["depends_on"] if d],
             })
@@ -93,6 +97,8 @@ def _fetch_full_catalog(db: Neo4jService) -> dict:
                    sbb.business_capabilities as business_capabilities,
                    sbb.tags as tags,
                    sbb.deprecation_note as deprecation_note,
+                   sbb.consumed_by_ids as consumed_by_ids,
+                   sbb.works_with_ids as works_with_ids,
                    collect(DISTINCT abb.id) as implements_abbs,
                    collect(DISTINCT {id: tech.id, name: tech.name, vendor: tech.vendor}) as uses_technologies,
                    collect(DISTINCT {id: compat.id, name: compat.name}) as compatible_technologies,
@@ -118,6 +124,8 @@ def _fetch_full_catalog(db: Neo4jService) -> dict:
                 "business_capabilities": r["business_capabilities"] or [],
                 "tags": r["tags"] or [],
                 "deprecation_note": r["deprecation_note"],
+                "consumed_by_ids": r["consumed_by_ids"] or [],
+                "works_with_ids": r["works_with_ids"] or [],
                 "implements_abbs": [a for a in r["implements_abbs"] if a],
                 "uses_technologies": [t for t in r["uses_technologies"] if t.get("id")],
                 "compatible_technologies": [t for t in r["compatible_technologies"] if t.get("id")],
@@ -137,7 +145,24 @@ def _fetch_full_catalog(db: Neo4jService) -> dict:
         """)
         technologies = [dict(r) for r in techs_raw]
 
-    return {"pbcs": pbcs, "abbs": abbs, "sbbs": sbbs, "technologies": technologies}
+    # 5. Published/draft ADR documents (for cross-referencing decisions)
+    with db.session() as session:
+        adrs_raw = session.run("""
+            MATCH (d:Document)
+            WHERE d.doc_type = 'adr' AND d.status IN ['published', 'draft']
+            RETURN d.id as id, d.title as title, d.summary as summary, d.tags as tags
+            ORDER BY d.id
+        """)
+        adrs = []
+        for r in adrs_raw:
+            adrs.append({
+                "id": r["id"],
+                "title": r["title"],
+                "summary": r["summary"] or "",
+                "tags": r["tags"] or [],
+            })
+
+    return {"pbcs": pbcs, "abbs": abbs, "sbbs": sbbs, "technologies": technologies, "adrs": adrs}
 
 
 def _build_graph_context(catalog: dict) -> str:
@@ -172,6 +197,10 @@ def _build_graph_context(catalog: dict) -> str:
             sections.append(f"  Outbound Interfaces: {abb['outbound_interfaces'][:200]}")
         if abb.get("restrictions"):
             sections.append(f"  RESTRICTIONS: {abb['restrictions']}")
+        if abb.get("consumed_by_ids"):
+            sections.append(f"  Consumed By: {', '.join(abb['consumed_by_ids'])}")
+        if abb.get("works_with_ids"):
+            sections.append(f"  Works With: {', '.join(abb['works_with_ids'])}")
         if abb.get("tags"):
             sections.append(f"  Tags: {', '.join(abb['tags'])}")
         if abb.get("deprecation_note"):
@@ -193,7 +222,7 @@ def _build_graph_context(catalog: dict) -> str:
         if sbb["implements_abbs"]:
             sections.append(f"  Implements: {', '.join(sbb['implements_abbs'])}")
         if sbb.get("specific_functionality"):
-            sections.append(f"  Implementation: {sbb['specific_functionality'][:300]}")
+            sections.append(f"  Implementation: {sbb['specific_functionality'][:500]}")
         if sbb.get("vendor"):
             sections.append(f"  Vendor: {sbb['vendor']}")
         if sbb.get("deployment_model"):
@@ -225,6 +254,10 @@ def _build_graph_context(catalog: dict) -> str:
             sections.append(f"  Business Capabilities: {', '.join(sbb['business_capabilities'])}")
         if sbb.get("restrictions"):
             sections.append(f"  RESTRICTIONS: {sbb['restrictions']}")
+        if sbb.get("consumed_by_ids"):
+            sections.append(f"  Consumed By: {', '.join(sbb['consumed_by_ids'])}")
+        if sbb.get("works_with_ids"):
+            sections.append(f"  Works With: {', '.join(sbb['works_with_ids'])}")
         if sbb.get("tags"):
             sections.append(f"  Tags: {', '.join(sbb['tags'])}")
         if sbb.get("deprecation_note"):
@@ -245,8 +278,17 @@ def _build_graph_context(catalog: dict) -> str:
         sections.append(f"- {tech['id']}: {tech['name']} ({tech['vendor']}, {tech['category']}, {tech['status']}){desc}")
         sections.append(f"  Used by SBBs: {used_by}")
 
+    # ADRs
+    adrs = catalog.get("adrs", [])
+    if adrs:
+        sections.append("\n## Architecture Decision Records (ADRs)")
+        for adr in adrs:
+            summary = f" — {adr['summary']}" if adr.get("summary") else ""
+            tags = f" [{', '.join(adr['tags'])}]" if adr.get("tags") else ""
+            sections.append(f"- {adr['id']}: {adr['title']}{summary}{tags}")
+
     # Summary
-    sections.append(f"\n## Summary: {len(catalog['pbcs'])} PBCs, {len(catalog['abbs'])} ABBs, {len(catalog['sbbs'])} SBBs, {len(catalog['technologies'])} Technologies")
+    sections.append(f"\n## Summary: {len(catalog['pbcs'])} PBCs, {len(catalog['abbs'])} ABBs, {len(catalog['sbbs'])} SBBs, {len(catalog['technologies'])} Technologies, {len(adrs)} ADRs")
 
     return "\n".join(sections)
 
@@ -470,6 +512,7 @@ async def analyze_problem(
             "abbs": len(catalog["abbs"]),
             "sbbs": len(catalog["sbbs"]),
             "technologies": len(catalog["technologies"]),
+            "adrs": len(catalog.get("adrs", [])),
         },
     }
 
