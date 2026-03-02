@@ -47,7 +47,36 @@ Patterns are organized into categories: Core AI/LLM, Integration, Agents, Knowle
 
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose
 
-### Setup
+### Option 1: Using Pre-built Images (Recommended)
+
+No need to clone the repo — just create two files and run:
+
+1. Download `docker-compose.yml` and `.env.example` from the repository, or create a `docker-compose.yml`:
+   ```bash
+   curl -O https://raw.githubusercontent.com/azaddjan/aipatternmanager/main/docker-compose.yml
+   curl -O https://raw.githubusercontent.com/azaddjan/aipatternmanager/main/.env.example
+   cp .env.example .env
+   ```
+
+2. Edit `.env` and add your API keys:
+   ```env
+   ANTHROPIC_API_KEY=sk-ant-your-key-here
+   OPENAI_API_KEY=sk-your-key-here
+   DEFAULT_LLM_PROVIDER=anthropic
+   ```
+
+3. Start the stack:
+   ```bash
+   docker compose up -d
+   ```
+
+4. Open the app at **http://localhost:5173**
+
+Docker will pull the images automatically from Docker Hub:
+- `azaddjan/aipatternmanager-backend:0.9.0`
+- `azaddjan/aipatternmanager-frontend:0.9.0`
+
+### Option 2: Build from Source
 
 1. Clone the repository:
    ```bash
@@ -63,19 +92,15 @@ Patterns are organized into categories: Core AI/LLM, Integration, Agents, Knowle
    ```env
    ANTHROPIC_API_KEY=sk-ant-your-key-here
    OPENAI_API_KEY=sk-your-key-here
-   OLLAMA_BASE_URL=http://localhost:11434
    DEFAULT_LLM_PROVIDER=anthropic
    ```
 
-3. Start the stack:
+3. Build and start:
    ```bash
-   docker compose up -d
+   docker compose up -d --build
    ```
 
-4. Open the app:
-   - **Frontend**: http://localhost:5173
-   - **API docs**: http://localhost:8000/docs
-   - **Neo4j Browser**: http://localhost:7474 (credentials: `neo4j` / `patternmanager2026`)
+4. Open the app at **http://localhost:5173**
 
 The database creates constraints, indexes, and built-in categories on first startup.
 
