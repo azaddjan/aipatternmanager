@@ -57,3 +57,14 @@ class OllamaProvider(BaseLLMProvider):
             content = chunk.get("message", {}).get("content", "")
             if content:
                 yield content
+
+    FALLBACK_MODELS = ["llama3.1", "llama3.2", "mistral", "codellama", "mixtral"]
+
+    async def list_models(self) -> list[str]:
+        try:
+            response = await self.client.list()
+            models = [m.get("name", "") for m in response.get("models", []) if m.get("name")]
+            return sorted(models) if models else self.FALLBACK_MODELS
+        except Exception as e:
+            logger.warning(f"Failed to fetch Ollama models: {e}")
+            return self.FALLBACK_MODELS

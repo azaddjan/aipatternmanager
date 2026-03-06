@@ -85,3 +85,21 @@ class LiteLLMProvider(BaseLLMProvider):
             delta = chunk.choices[0].delta
             if delta.content:
                 yield delta.content
+
+    FALLBACK_MODELS = [
+        "bedrock/anthropic.claude-3-sonnet-20240229-v1:0",
+        "bedrock/anthropic.claude-3-haiku-20240307-v1:0",
+        "openai/gpt-4o",
+        "openai/gpt-4o-mini",
+    ]
+
+    async def list_models(self) -> list[str]:
+        if not self._client:
+            return self.FALLBACK_MODELS
+        try:
+            response = await self._client.models.list()
+            models = [m.id for m in response.data]
+            return sorted(models) if models else self.FALLBACK_MODELS
+        except Exception as e:
+            logger.warning(f"Failed to fetch LiteLLM models: {e}")
+            return self.FALLBACK_MODELS

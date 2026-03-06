@@ -606,6 +606,123 @@ class EmbeddingService:
 
         return stats
 
+    # --- Known dimensions for embedding models ---
+
+    KNOWN_DIMENSIONS = {
+        # OpenAI
+        "text-embedding-3-small": 1536,
+        "text-embedding-3-large": 3072,
+        "text-embedding-ada-002": 1536,
+        # Ollama
+        "nomic-embed-text": 768,
+        "mxbai-embed-large": 1024,
+        "all-minilm": 384,
+        "snowflake-arctic-embed": 1024,
+        # Bedrock
+        "amazon.titan-embed-text-v2:0": 1024,
+        "amazon.titan-embed-text-v1": 1536,
+        "cohere.embed-english-v3": 1024,
+        "cohere.embed-multilingual-v3": 1024,
+    }
+
+    @staticmethod
+    async def list_embedding_models(provider_name: str) -> list[dict]:
+        """Fetch available embedding models from a provider API.
+
+        Returns list of {"id": ..., "dimensions": ...} dicts.
+        """
+        if provider_name == "openai":
+            return await EmbeddingService._list_openai_embedding_models()
+        elif provider_name == "ollama":
+            return await EmbeddingService._list_ollama_embedding_models()
+        elif provider_name == "bedrock":
+            return await EmbeddingService._list_bedrock_embedding_models()
+        return []
+
+    @staticmethod
+    async def _list_openai_embedding_models() -> list[dict]:
+        api_key = os.getenv("OPENAI_API_KEY", "")
+        if not api_key:
+            return []
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=api_key)
+            response = client.models.list()
+            models = []
+            for m in response.data:
+                if "embedding" in m.id:
+                    dims = EmbeddingService.KNOWN_DIMENSIONS.get(m.id, 1536)
+                    models.append({"id": m.id, "dimensions": dims})
+            return sorted(models, key=lambda x: x["id"]) if models else []
+        except Exception as e:
+            logger.warning(f"Failed to fetch OpenAI embedding models: {e}")
+            return []
+
+    @staticmethod
+    async def _list_ollama_embedding_models() -> list[dict]:
+        try:
+            import ollama as ollama_lib
+            base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+            client = ollama_lib.Client(host=base_url)
+            response = client.list()
+            raw_models = response.get("models", [])
+            if not raw_models and hasattr(response, "models"):
+                raw_models = response.models or []
+            models = []
+            for m in raw_models:
+                name = m.get("name", "") if isinstance(m, dict) else getattr(m, "name", str(m))
+                base_name = name.split(":")[0]
+                if "embed" in base_name.lower():
+                    dims = EmbeddingService.KNOWN_DIMENSIONS.get(base_name, 768)
+                    models.append({"id": name, "dimensions": dims})
+            return sorted(models, key=lambda x: x["id"]) if models else []
+        except Exception as e:
+            logger.warning(f"Failed to fetch Ollama embedding models: {e}")
+            return []
+
+    @staticmethod
+    async def _list_bedrock_embedding_models() -> list[dict]:
+        import asyncio
+
+        ak = os.getenv("AWS_ACCESS_KEY_ID", "")
+        sk = os.getenv("AWS_SECRET_ACCESS_KEY", "")
+        profile = os.getenv("AWS_PROFILE", "")
+        if not ((ak and sk) or profile):
+            return []
+        try:
+            import boto3
+            region = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
+            session_kwargs = {}
+            if profile:
+                session_kwargs["profile_name"] = profile
+            elif "AWS_PROFILE" in os.environ and not os.environ["AWS_PROFILE"]:
+                del os.environ["AWS_PROFILE"]
+            session = boto3.Session(**session_kwargs)
+            client_kwargs = {"region_name": region}
+            if ak and sk:
+                client_kwargs["aws_access_key_id"] = ak
+                client_kwargs["aws_secret_access_key"] = sk
+                st = os.getenv("AWS_SESSION_TOKEN", "")
+                if st:
+                    client_kwargs["aws_session_token"] = st
+            mgmt_client = session.client("bedrock", **client_kwargs)
+
+            def _fetch():
+                resp = mgmt_client.list_foundation_models(byOutputModality="EMBEDDING")
+                results = []
+                for s in resp.get("modelSummaries", []):
+                    model_id = s.get("modelId", "")
+                    if model_id:
+                        dims = EmbeddingService.KNOWN_DIMENSIONS.get(model_id, 1024)
+                        results.append({"id": model_id, "dimensions": dims})
+                return results
+
+            models = await asyncio.get_event_loop().run_in_executor(None, _fetch)
+            return sorted(models, key=lambda x: x["id"]) if models else []
+        except Exception as e:
+            logger.warning(f"Failed to fetch Bedrock embedding models: {e}")
+            return []
+
     def get_embedding_status(self, db: Neo4jService) -> dict:
         """Check how many nodes have embeddings vs total."""
         with db.session() as session:

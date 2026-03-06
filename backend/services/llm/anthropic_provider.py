@@ -93,3 +93,20 @@ class AnthropicProvider(BaseLLMProvider):
         )
         text = response.content[0].text
         return {"content": text, "provider": self.name, "model": model}
+
+    FALLBACK_MODELS = [
+        "claude-opus-4-20250514",
+        "claude-sonnet-4-20250514",
+        "claude-3-5-sonnet-20241022",
+    ]
+
+    async def list_models(self) -> list[str]:
+        if not self.client:
+            return self.FALLBACK_MODELS
+        try:
+            page = await self.client.models.list(limit=100)
+            models = [m.id for m in page.data]
+            return sorted(models) if models else self.FALLBACK_MODELS
+        except Exception as e:
+            logger.warning(f"Failed to fetch Anthropic models: {e}")
+            return self.FALLBACK_MODELS

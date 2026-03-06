@@ -420,15 +420,23 @@ export function updateAdminSettings(data) {
   return request('/admin/settings', { method: 'PUT', body: JSON.stringify(data) })
 }
 
-export function setApiKey(provider, key, secret = null) {
+export function setApiKey(provider, key, secret = null, region = null) {
   return request('/admin/api-key', {
     method: 'POST',
-    body: JSON.stringify({ provider, key, secret }),
+    body: JSON.stringify({ provider, key, secret, region }),
   })
 }
 
 export function testProvider(providerName) {
   return request(`/admin/test-provider/${providerName}`, { method: 'POST' })
+}
+
+export function fetchProviderModels(providerName) {
+  return request(`/admin/fetch-models/${encodeURIComponent(providerName)}`, { method: 'POST' })
+}
+
+export function fetchEmbeddingModels(providerName) {
+  return request(`/admin/fetch-embedding-models/${encodeURIComponent(providerName)}`, { method: 'POST' })
 }
 
 // --- Export ---

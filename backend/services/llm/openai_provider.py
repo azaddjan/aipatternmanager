@@ -64,3 +64,20 @@ class OpenAIProvider(BaseLLMProvider):
             delta = chunk.choices[0].delta
             if delta.content:
                 yield delta.content
+
+    FALLBACK_MODELS = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o1-preview"]
+
+    async def list_models(self) -> list[str]:
+        if not self.client:
+            return self.FALLBACK_MODELS
+        try:
+            response = await self.client.models.list()
+            chat_prefixes = ("gpt-", "o1-", "o3-", "chatgpt-")
+            models = [
+                m.id for m in response.data
+                if any(m.id.startswith(p) for p in chat_prefixes)
+            ]
+            return sorted(models) if models else self.FALLBACK_MODELS
+        except Exception as e:
+            logger.warning(f"Failed to fetch OpenAI models: {e}")
+            return self.FALLBACK_MODELS

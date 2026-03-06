@@ -82,11 +82,11 @@ DEFAULT_SETTINGS = {
         },
         "bedrock": {
             "enabled": True,
-            "model": "anthropic.claude-sonnet-4-20250514-v1:0",
+            "model": "us.anthropic.claude-sonnet-4-20250514-v1:0",
             "models": [
-                "anthropic.claude-opus-4-20250514-v1:0",
-                "anthropic.claude-sonnet-4-20250514-v1:0",
-                "anthropic.claude-3-5-sonnet-20241022-v2:0",
+                "us.anthropic.claude-opus-4-20250514-v1:0",
+                "us.anthropic.claude-sonnet-4-20250514-v1:0",
+                "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
                 "amazon.titan-text-premier-v1:0",
                 "meta.llama3-1-70b-instruct-v1:0",
             ],
@@ -241,6 +241,12 @@ def update_settings(updates: dict) -> dict:
                     if k not in ("key_set",):  # don't overwrite computed fields
                         settings["providers"][prov_name][k] = v
         _save_to_db("providers", settings["providers"])
+        # Sync bedrock region to env var and reinit if changed
+        if "bedrock" in updates["providers"] and "region" in updates["providers"]["bedrock"]:
+            region = updates["providers"]["bedrock"]["region"]
+            if region:
+                os.environ["AWS_DEFAULT_REGION"] = region
+            _reinit_provider("bedrock")
 
     if "embedding" in updates:
         for k, v in updates["embedding"].items():
@@ -272,7 +278,7 @@ def update_settings(updates: dict) -> dict:
     return get_settings()
 
 
-def set_api_key(provider: str, key: str, secret: str = None) -> dict:
+def set_api_key(provider: str, key: str, secret: str = None, region: str = None) -> dict:
     """Set an API key at runtime. Updates the env var so providers pick it up."""
     if provider == "anthropic":
         os.environ["ANTHROPIC_API_KEY"] = key
@@ -286,6 +292,9 @@ def set_api_key(provider: str, key: str, secret: str = None) -> dict:
         os.environ["AWS_ACCESS_KEY_ID"] = key
         if secret:
             os.environ["AWS_SECRET_ACCESS_KEY"] = secret
+        if region:
+            os.environ["AWS_DEFAULT_REGION"] = region
+            update_settings({"providers": {"bedrock": {"region": region}}})
         _reinit_provider("bedrock")
 
     elif provider == "litellm":
@@ -346,6 +355,30 @@ def get_embedding_settings() -> dict:
         "key_set": key_set,
         "embedding_providers": emb_providers,
     }
+
+
+def update_embedding_models(provider_name: str, models: list[dict]):
+    """Update the model list for an embedding provider (bypasses the embedding_providers guard)."""
+    settings = _load_from_db()
+    emb = settings.get("embedding", DEFAULT_SETTINGS["embedding"].copy())
+    emb_providers = emb.get("embedding_providers", DEFAULT_SETTINGS["embedding"]["embedding_providers"].copy())
+
+    if provider_name not in emb_providers:
+        emb_providers[provider_name] = {}
+
+    emb_providers[provider_name]["models"] = models
+    emb["embedding_providers"] = emb_providers
+
+    # If the current model for the active provider is no longer in the new list, reset
+    current_provider = emb.get("provider", "openai")
+    current_model = emb.get("model", "")
+    if current_provider == provider_name:
+        model_ids = [m["id"] for m in models]
+        if current_model not in model_ids and models:
+            emb["model"] = models[0]["id"]
+
+    _save_to_db("embedding", emb)
+    invalidate_cache()
 
 
 def get_auth_settings() -> dict:

@@ -139,7 +139,7 @@ def update_settings(updates: dict):
 def set_api_key(data: APIKeyUpdate):
     """Set an API key for a provider. Key is stored in env at runtime."""
     try:
-        return settings_service.set_api_key(data.provider, data.key, data.secret)
+        return settings_service.set_api_key(data.provider, data.key, data.secret, data.region)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -197,6 +197,84 @@ async def test_provider(provider_name: str):
             "message": error_msg,
             "raw_error": str(e)[:200],
         }
+
+
+@router.post("/fetch-models/{provider_name}")
+async def fetch_models(provider_name: str):
+    """Fetch available models from a provider API and update settings."""
+    try:
+        provider = get_provider(provider_name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if not provider.is_available():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Provider '{provider_name}' is not available — credentials not configured",
+        )
+
+    try:
+        models = await provider.list_models()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch models: {e}")
+
+    if not models:
+        return {
+            "status": "fallback",
+            "provider": provider_name,
+            "models": [],
+            "message": "No models returned; keeping existing list",
+        }
+
+    # Preserve currently selected model if not in the new list
+    current_settings = settings_service.get_settings()
+    current_model = current_settings.get("providers", {}).get(provider_name, {}).get("model", "")
+    if current_model and current_model not in models:
+        models.insert(0, current_model)
+
+    settings_service.update_settings({
+        "providers": {provider_name: {"models": models}}
+    })
+
+    return {
+        "status": "ok",
+        "provider": provider_name,
+        "models": models,
+        "count": len(models),
+        "message": f"Found {len(models)} models",
+    }
+
+
+@router.post("/fetch-embedding-models/{provider_name}")
+async def fetch_embedding_models(provider_name: str):
+    """Fetch available embedding models from a provider API and update settings."""
+    if provider_name not in ("openai", "ollama", "bedrock"):
+        raise HTTPException(status_code=400, detail=f"Unknown embedding provider: {provider_name}")
+
+    from services.embedding_service import EmbeddingService
+
+    try:
+        models = await EmbeddingService.list_embedding_models(provider_name)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch embedding models: {e}")
+
+    if not models:
+        return {
+            "status": "fallback",
+            "provider": provider_name,
+            "models": [],
+            "message": "No embedding models returned; keeping existing list",
+        }
+
+    settings_service.update_embedding_models(provider_name, models)
+
+    return {
+        "status": "ok",
+        "provider": provider_name,
+        "models": models,
+        "count": len(models),
+        "message": f"Found {len(models)} embedding models",
+    }
 
 
 # --- Export ---

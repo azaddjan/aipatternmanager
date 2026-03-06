@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  fetchAdminSettings, updateAdminSettings, setApiKey, testProvider,
+  fetchAdminSettings, updateAdminSettings, setApiKey, testProvider, fetchProviderModels, fetchEmbeddingModels,
   exportHtmlUrl, exportPptxUrl, exportDocxUrl,
   importPreview, importBackup,
   createBackup, fetchBackups, downloadBackupUrl, deleteBackup, restoreBackup,
@@ -57,12 +57,14 @@ export default function Admin() {
   const [msg, setMsg] = useState('')
 
   // API key form
-  const [keyForm, setKeyForm] = useState({ provider: '', key: '', secret: '' })
+  const [keyForm, setKeyForm] = useState({ provider: '', key: '', secret: '', region: '' })
   const [showKeyForm, setShowKeyForm] = useState(false)
 
   // Provider test
   const [testing, setTesting] = useState('')  // provider name being tested
   const [testResult, setTestResult] = useState(null)  // { provider, status, message, ... }
+  const [fetchingModels, setFetchingModels] = useState('')  // provider name being fetched
+  const [fetchingEmbModels, setFetchingEmbModels] = useState('')  // embedding provider being fetched
 
   // Import — multi-step state
   const [importStep, setImportStep] = useState('upload') // upload | preview | importing | results
@@ -213,9 +215,9 @@ export default function Admin() {
     setSaving(true)
     setMsg('')
     try {
-      const updated = await setApiKey(keyForm.provider, keyForm.key, keyForm.secret || null)
+      const updated = await setApiKey(keyForm.provider, keyForm.key, keyForm.secret || null, keyForm.region || null)
       setSettings(updated)
-      setKeyForm({ provider: '', key: '', secret: '' })
+      setKeyForm({ provider: '', key: '', secret: '', region: '' })
       setShowKeyForm(false)
       toast.success('API key saved')
     } catch (err) {
@@ -268,6 +270,40 @@ export default function Admin() {
       toast.error('Provider test failed')
     }
     setTesting('')
+  }
+
+  const handleFetchModels = async (provName) => {
+    setFetchingModels(provName)
+    try {
+      const result = await fetchProviderModels(provName)
+      if (result.status === 'ok') {
+        const updated = await fetchAdminSettings()
+        setSettings(updated)
+        toast.success(`Found ${result.count} models`)
+      } else {
+        toast.info(result.message || 'No models found')
+      }
+    } catch (err) {
+      toast.error(`Failed to fetch models: ${err.message}`)
+    }
+    setFetchingModels('')
+  }
+
+  const handleFetchEmbeddingModels = async (provName) => {
+    setFetchingEmbModels(provName)
+    try {
+      const result = await fetchEmbeddingModels(provName)
+      if (result.status === 'ok') {
+        const updated = await fetchAdminSettings()
+        setSettings(updated)
+        toast.success(`Found ${result.count} embedding models`)
+      } else {
+        toast.info(result.message || 'No embedding models found')
+      }
+    } catch (err) {
+      toast.error(`Failed to fetch embedding models: ${err.message}`)
+    }
+    setFetchingEmbModels('')
   }
 
   /* ---------- Import handlers (multi-step) ---------- */
@@ -743,6 +779,16 @@ export default function Admin() {
                           <option key={m} value={m}>{m}</option>
                         ))}
                       </select>
+                      {(config.key_set || name === 'ollama' || (name === 'litellm' && config.gateway_url)) && (
+                        <button
+                          onClick={() => handleFetchModels(name)}
+                          disabled={fetchingModels === name}
+                          className="text-sm text-blue-400 hover:text-blue-300 disabled:text-gray-600"
+                          title="Refresh models from provider"
+                        >
+                          {fetchingModels === name ? '...' : '\u21bb'}
+                        </button>
+                      )}
                     </div>
 
                     {/* API Key Status */}
@@ -758,7 +804,7 @@ export default function Admin() {
                         )}
                         <button
                           onClick={() => {
-                            setKeyForm({ provider: name, key: '', secret: '' })
+                            setKeyForm({ provider: name, key: '', secret: '', region: name === 'bedrock' ? (config.region || 'us-east-1') : '' })
                             setShowKeyForm(true)
                           }}
                           className="text-xs text-blue-400 hover:underline"
@@ -781,10 +827,18 @@ export default function Admin() {
                     {/* Bedrock region */}
                     {name === 'bedrock' && (
                       <div className="flex items-center gap-3 mt-2">
-                        <span className="text-xs text-gray-500">Region:</span>
-                        <span className="text-xs font-mono text-gray-400">
-                          {config.region || 'us-east-1'}
-                        </span>
+                        <label className="text-xs text-gray-500">Region:</label>
+                        <input
+                          type="text"
+                          defaultValue={config.region || 'us-east-1'}
+                          onBlur={e => {
+                            const val = e.target.value.trim()
+                            if (val && val !== (config.region || 'us-east-1'))
+                              updateAdminSettings({ providers: { bedrock: { region: val } } }).then(setSettings)
+                          }}
+                          placeholder="us-east-1"
+                          className="input text-xs flex-1 font-mono"
+                        />
                       </div>
                     )}
 
@@ -926,17 +980,29 @@ export default function Admin() {
                   />
                 </div>
                 {keyForm.provider === 'bedrock' && (
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-1">AWS Secret Access Key</label>
-                    <input
-                      type="password"
-                      value={keyForm.secret}
-                      onChange={e => setKeyForm(f => ({ ...f, secret: e.target.value }))}
-                      placeholder="Enter secret key..."
-                      className="input w-full"
-                      autoComplete="off"
-                    />
-                  </div>
+                  <>
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">AWS Secret Access Key</label>
+                      <input
+                        type="password"
+                        value={keyForm.secret}
+                        onChange={e => setKeyForm(f => ({ ...f, secret: e.target.value }))}
+                        placeholder="Enter secret key..."
+                        className="input w-full"
+                        autoComplete="off"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">AWS Region</label>
+                      <input
+                        type="text"
+                        value={keyForm.region}
+                        onChange={e => setKeyForm(f => ({ ...f, region: e.target.value }))}
+                        placeholder="us-east-1"
+                        className="input w-full font-mono"
+                      />
+                    </div>
+                  </>
                 )}
                 {keyForm.provider === 'litellm' && (
                   <div>
@@ -1048,6 +1114,16 @@ export default function Admin() {
                           <option key={m.id} value={m.id}>{m.id}</option>
                         ))}
                       </select>
+                      {keySet && (
+                        <button
+                          onClick={() => handleFetchEmbeddingModels(embProvider)}
+                          disabled={fetchingEmbModels === embProvider}
+                          className="text-sm text-purple-400 hover:text-purple-300 disabled:text-gray-600"
+                          title="Refresh embedding models from provider"
+                        >
+                          {fetchingEmbModels === embProvider ? '...' : '\u21bb'}
+                        </button>
+                      )}
                     </div>
 
                     {/* Dimensions info */}

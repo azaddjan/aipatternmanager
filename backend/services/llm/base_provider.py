@@ -62,3 +62,11 @@ class BaseLLMProvider(ABC):
             {"content": str, "provider": str, "model": str}
         """
         return await self.generate(system_prompt, user_prompt, model)
+
+    async def list_models(self) -> list[str]:
+        """Fetch available model IDs from the provider API.
+
+        Returns a list of model ID strings. Default returns empty list;
+        providers with dynamic model listing should override.
+        """
+        return []

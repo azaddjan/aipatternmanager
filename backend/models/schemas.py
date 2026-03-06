@@ -295,6 +295,7 @@ class APIKeyUpdate(BaseModel):
     provider: str  # "anthropic", "openai", "bedrock"
     key: str  # actual API key
     secret: Optional[str] = None  # for AWS secret key
+    region: Optional[str] = None  # for AWS region
 
 
 # --- Pattern ID Generation ---
