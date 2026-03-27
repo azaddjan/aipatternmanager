@@ -13,7 +13,7 @@ VALID_TOP_LEVEL_KEYS = {
     "meta", "export_date", "version",
     "patterns", "technologies", "pbcs", "categories",
     "teams", "users", "settings",
-    "advisor_reports", "health_analyses",
+    "advisor_reports", "health_analyses", "discovery_analyses",
 }
 
 REQUIRED_PATTERN_FIELDS = {"id"}
