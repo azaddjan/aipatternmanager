@@ -1,6 +1,6 @@
 """
 Import Service.
-Restores patterns, technologies, PBCs, categories, and relationships from a JSON backup.
+Restores patterns, technologies, PBCs, categories, documents, and relationships from a JSON backup.
 Supports preview mode (dry run), selective import, and auto-backup before import.
 """
 import json
@@ -14,6 +14,7 @@ VALID_TOP_LEVEL_KEYS = {
     "patterns", "technologies", "pbcs", "categories",
     "teams", "users", "settings",
     "advisor_reports", "health_analyses", "discovery_analyses",
+    "documents",
 }
 
 REQUIRED_PATTERN_FIELDS = {"id"}
@@ -162,6 +163,7 @@ class ImportService:
             "categories": {"new": [], "updated": [], "unchanged": []},
             "advisor_reports": {"new": [], "updated": [], "unchanged": []},
             "health_analyses": {"new": [], "updated": [], "unchanged": []},
+            "documents": {"new": [], "updated": [], "unchanged": []},
             "stats": {
                 "total_new": 0,
                 "total_updated": 0,
@@ -171,7 +173,7 @@ class ImportService:
 
         if isinstance(data, list):
             patterns, technologies, pbcs, categories = data, [], [], []
-            advisor_reports, health_analyses = [], []
+            advisor_reports, health_analyses, documents = [], [], []
             teams, users, settings = [], [], []
         elif isinstance(data, dict):
             patterns = data.get("patterns", [])
@@ -180,6 +182,7 @@ class ImportService:
             categories = data.get("categories", [])
             advisor_reports = data.get("advisor_reports", [])
             health_analyses = data.get("health_analyses", [])
+            documents = data.get("documents", [])
             teams = data.get("teams", [])
             users = data.get("users", [])
             settings = data.get("settings", [])
@@ -357,6 +360,20 @@ class ImportService:
                 result["pbcs"]["new"].append(entry)
                 result["stats"]["total_new"] += 1
 
+        # Preview documents
+        for doc in documents:
+            did = doc.get("id", "")
+            if not did:
+                continue
+            entry = {"id": did, "name": doc.get("title", "")}
+            existing = self.db.get_document(did)
+            if existing:
+                result["documents"]["unchanged"].append(entry)
+                result["stats"]["total_unchanged"] += 1
+            else:
+                result["documents"]["new"].append(entry)
+                result["stats"]["total_new"] += 1
+
         return result
 
     def import_from_json(self, json_data: str, include: list = None) -> dict:
@@ -367,7 +384,7 @@ class ImportService:
             json_data: The JSON string to import.
             include: Optional list of types to import, e.g.
                      ["patterns", "technologies", "pbcs", "categories",
-                      "teams", "users", "settings"].
+                      "teams", "users", "settings", "documents"].
                      If None, imports everything.
 
         Supports two formats:
@@ -385,6 +402,8 @@ class ImportService:
         8. PBCs (existing)
         9. Advisor Reports (existing)
         10. Health Analyses (existing)
+        11. Discovery Analyses (existing)
+        12. Documents (depends on Patterns/Technologies for REFERENCES)
 
         Returns a summary of what was imported.
         """
@@ -415,6 +434,7 @@ class ImportService:
             "advisor_reports_imported": 0,
             "health_analyses_imported": 0,
             "discovery_analyses_imported": 0,
+            "documents_imported": 0,
             "errors": [],
         }
 
@@ -422,7 +442,8 @@ class ImportService:
         if include is None:
             include = ["teams", "users", "settings",
                        "patterns", "technologies", "pbcs", "categories",
-                       "advisor_reports", "health_analyses", "discovery_analyses"]
+                       "advisor_reports", "health_analyses", "discovery_analyses",
+                       "documents"]
 
         # Determine format
         if isinstance(data, list):
@@ -462,6 +483,9 @@ class ImportService:
             # 11. Discovery Analyses
             if "discovery_analyses" in include and "discovery_analyses" in data:
                 self._import_discovery_analyses(data["discovery_analyses"], stats)
+            # 12. Documents (after patterns/technologies so REFERENCES can resolve)
+            if "documents" in include and "documents" in data:
+                self._import_documents(data["documents"], stats)
         else:
             raise ValueError("Unrecognized data format. Expected a JSON object or array.")
 
@@ -482,7 +506,7 @@ class ImportService:
         """
         Export all data as a JSON-serializable dict for backup.
         Includes patterns, technologies, PBCs, categories, advisor reports,
-        health analyses, discovery analyses, teams, users, and settings.
+        health analyses, discovery analyses, documents, teams, users, and settings.
 
         Note: Vector embeddings are excluded — they must be regenerated
         after restore via the Admin > Embed Missing/All endpoints.
@@ -586,9 +610,20 @@ class ImportService:
         except Exception:
             pass
 
+        # Export documents (with sections and linked entity references)
+        documents = []
+        try:
+            doc_list, _ = self.db.list_documents(limit=10000)
+            for d in doc_list:
+                full_doc = self.db.get_document(d["id"])
+                if full_doc:
+                    documents.append(full_doc)
+        except Exception:
+            pass
+
         return {
             "export_date": datetime.now(timezone.utc).isoformat(),
-            "version": "1.3",
+            "version": "1.4",
             "teams": teams,
             "users": users,
             "settings": settings,
@@ -599,6 +634,7 @@ class ImportService:
             "advisor_reports": advisor_reports,
             "health_analyses": health_analyses,
             "discovery_analyses": discovery_analyses,
+            "documents": documents,
         }
 
     # ------------------------------------------------------------------
@@ -985,6 +1021,125 @@ class ImportService:
                 stats["discovery_analyses_imported"] += 1
             except Exception as e:
                 stats["errors"].append(f"DiscoveryAnalysis '{da.get('id', '?')}': {e}")
+
+    def _import_documents(self, documents: list, stats: dict):
+        """Import documents with sections and entity links, preserving original IDs."""
+        for doc in documents:
+            try:
+                doc_id = doc.get("id", "")
+                if not doc_id:
+                    continue
+
+                # Check if already exists
+                existing = self.db.get_document(doc_id)
+                if existing:
+                    continue
+
+                now = datetime.now(timezone.utc).isoformat()
+                tags = doc.get("tags", [])
+                if isinstance(tags, str):
+                    try:
+                        tags = json.loads(tags)
+                    except (json.JSONDecodeError, TypeError):
+                        tags = []
+                if not isinstance(tags, list):
+                    tags = []
+
+                # Create the Document node directly (bypassing _next_document_id)
+                query = """
+                CREATE (d:Document {
+                    id: $id,
+                    title: $title,
+                    doc_type: $doc_type,
+                    status: $status,
+                    summary: $summary,
+                    target_audience: $target_audience,
+                    tags: $tags,
+                    created_by: $created_by,
+                    updated_by: $updated_by,
+                    edit_history: $edit_history,
+                    source_analysis_id: $source_analysis_id,
+                    created_date: $created_date,
+                    updated_date: $updated_date
+                })
+                RETURN d
+                """
+                with self.db.session() as session:
+                    session.run(query, {
+                        "id": doc_id,
+                        "title": doc.get("title", "Untitled Document"),
+                        "doc_type": doc.get("doc_type", "guide"),
+                        "status": doc.get("status", "draft"),
+                        "summary": doc.get("summary", ""),
+                        "target_audience": doc.get("target_audience", ""),
+                        "tags": tags,
+                        "created_by": doc.get("created_by", ""),
+                        "updated_by": doc.get("updated_by", ""),
+                        "edit_history": doc.get("edit_history", "[]"),
+                        "source_analysis_id": doc.get("source_analysis_id", ""),
+                        "created_date": doc.get("created_date", now),
+                        "updated_date": doc.get("updated_date", now),
+                    })
+
+                # Import sections
+                for sec in doc.get("sections", []):
+                    sec_id = sec.get("id", "")
+                    if not sec_id:
+                        continue
+                    sec_query = """
+                    MATCH (d:Document {id: $doc_id})
+                    CREATE (s:DocumentSection {
+                        id: $id,
+                        title: $title,
+                        content: $content,
+                        section_type: $section_type,
+                        order_index: $order_index,
+                        created_date: $created_date,
+                        updated_date: $updated_date
+                    })
+                    CREATE (d)-[:HAS_SECTION]->(s)
+                    RETURN s
+                    """
+                    with self.db.session() as session:
+                        session.run(sec_query, {
+                            "doc_id": doc_id,
+                            "id": sec_id,
+                            "title": sec.get("title", ""),
+                            "content": sec.get("content", ""),
+                            "section_type": sec.get("section_type", "text"),
+                            "order_index": sec.get("order_index", 0),
+                            "created_date": sec.get("created_date", now),
+                            "updated_date": sec.get("updated_date", now),
+                        })
+
+                # Restore REFERENCES links to entities
+                for link in doc.get("linked_entities", []):
+                    entity_id = link.get("id", "")
+                    if entity_id:
+                        try:
+                            self.db.add_relationship(doc_id, entity_id, "REFERENCES")
+                        except Exception:
+                            pass
+
+                # Restore OWNED_BY team relationship
+                team_id = doc.get("team_id")
+                if team_id:
+                    try:
+                        self.db.add_relationship(doc_id, team_id, "OWNED_BY")
+                    except Exception:
+                        pass
+
+                # Restore SOURCED_FROM analysis link
+                source_id = doc.get("source_analysis_id")
+                if source_id:
+                    try:
+                        self.db.add_relationship(doc_id, source_id, "SOURCED_FROM")
+                    except Exception:
+                        pass
+
+                stats["documents_imported"] += 1
+            except Exception as e:
+                stats["errors"].append(f"Document '{doc.get('id', '?')}': {e}")
 
     def _prepare_pattern_data(self, p: dict) -> dict:
         """Prepare pattern data dict, handling both old and new format fields."""

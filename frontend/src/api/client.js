@@ -531,6 +531,10 @@ export function resetEmpty() {
   return request('/admin/reset-empty?confirm=true', { method: 'POST' })
 }
 
+export function resetWithBackup() {
+  return request('/admin/reset?confirm=true', { method: 'POST' })
+}
+
 // --- System Status ---
 
 export function fetchSystemStatus() {

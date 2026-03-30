@@ -1057,3 +1057,51 @@ def reset_to_empty(confirm: bool = Query(False)):
         return {"message": "Reset to empty complete", **tokens}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Reset failed: {str(e)}")
+
+
+@router.post("/reset")
+def reset_with_backup(confirm: bool = Query(False)):
+    """Create a safety backup then wipe all data, leaving only admin user and system config."""
+    if not confirm:
+        raise HTTPException(status_code=400, detail="Pass ?confirm=true to confirm reset")
+
+    from main import db_service
+    if not db_service or not db_service.verify_connectivity():
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    try:
+        # 1. Create safety backup before wiping
+        backup_svc = BackupService(db_service)
+        backup_meta = backup_svc.create_auto_backup(reason="pre_reset")
+
+        # 2. Wipe everything
+        db_service.clear_all()
+
+        # 3. Recreate schema
+        db_service.create_constraints()
+        db_service.create_indexes()
+
+        # 4. Re-seed admin user + system config
+        from services.auth_service import seed_admin_user, get_user_by_email, create_access_token, create_refresh_token, ADMIN_EMAIL
+        from services.settings_service import seed_defaults
+        seed_admin_user()
+        seed_defaults()
+
+        # 5. Mark as initialized so hot-reload won't re-seed sample data
+        from seed_sample_data import mark_db_initialized
+        mark_db_initialized(db_service)
+
+        # 6. Issue new tokens for the recreated admin (old JWT has stale user ID)
+        admin = get_user_by_email(ADMIN_EMAIL) if ADMIN_EMAIL else None
+        tokens = {}
+        if admin:
+            tokens["access_token"] = create_access_token(admin["id"], admin["email"], admin["role"])
+            tokens["refresh_token"] = create_refresh_token(admin["id"])
+
+        return {
+            "message": "Reset complete — safety backup created",
+            "backup": backup_meta,
+            **tokens,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Reset failed: {str(e)}")

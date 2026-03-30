@@ -5,7 +5,7 @@ import {
   exportHtmlUrl, exportPptxUrl, exportDocxUrl,
   importPreview, importBackup,
   createBackup, fetchBackups, downloadBackupUrl, deleteBackup, restoreBackup,
-  resetSampleData, resetEmpty,
+  resetSampleData, resetEmpty, resetWithBackup,
   fetchSystemStatus, embedMissingNodes, embedAllNodes,
   fetchAdvisorReports, updateAdvisorReport,
   deleteAdvisorReport, deleteAllAdvisorReports, cleanupAdvisorReports,
@@ -71,7 +71,7 @@ export default function Admin() {
   const [importFile, setImportFile] = useState(null)
   const [previewing, setPreviewing] = useState(false)
   const [previewData, setPreviewData] = useState(null)
-  const [importIncludes, setImportIncludes] = useState({ teams: true, users: true, settings: true, patterns: true, technologies: true, pbcs: true, categories: true, advisor_reports: true, health_analyses: true })
+  const [importIncludes, setImportIncludes] = useState({ teams: true, users: true, settings: true, patterns: true, technologies: true, pbcs: true, categories: true, advisor_reports: true, health_analyses: true, documents: true })
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState(null)
   const fileInputRef = useRef(null)
@@ -334,7 +334,7 @@ export default function Admin() {
     try {
       const data = await importPreview(importFile)
       setPreviewData(data)
-      setImportIncludes({ teams: true, users: true, settings: true, patterns: true, technologies: true, pbcs: true, categories: true, advisor_reports: true, health_analyses: true })
+      setImportIncludes({ teams: true, users: true, settings: true, patterns: true, technologies: true, pbcs: true, categories: true, advisor_reports: true, health_analyses: true, documents: true })
       setImportStep('preview')
     } catch (err) {
       setMsg(`Preview failed: ${err.message}`)
@@ -469,29 +469,40 @@ export default function Admin() {
   }
 
   const handleDeleteAll = () => {
+    // Step 1: Initial warning
     setConfirmAction({
-      title: 'Delete All Data',
-      message: 'This will permanently DELETE ALL data — patterns, technologies, PBCs, reports, teams, and users. Only the admin user and system config will remain. The database will be completely empty. This CANNOT be undone.',
-      confirmLabel: 'Delete Everything',
+      title: '⚠️ Factory Reset',
+      message: 'This will create a safety backup, then permanently DELETE ALL data — patterns, technologies, PBCs, documents, reports, teams, and users. Only the admin user and system config will remain.',
+      confirmLabel: 'I understand, continue',
       variant: 'danger',
-      onConfirm: async () => {
-        setConfirmAction(null)
-        setResetting('empty')
-        setMsg('')
-        try {
-          const result = await resetEmpty()
-          // Save new tokens (old user ID was wiped during reset)
-          if (result.access_token) {
-            localStorage.setItem('pm_access_token', result.access_token)
-            localStorage.setItem('pm_refresh_token', result.refresh_token)
-          }
-          toast.success('Database reset complete')
-          setMsg('All data deleted — only admin user and system config remain')
-          loadBackups()
-        } catch (err) {
-          setMsg(`Delete failed: ${err.message}`)
-        }
-        setResetting(null)
+      onConfirm: () => {
+        // Step 2: Final confirmation
+        setConfirmAction({
+          title: 'Final Confirmation',
+          message: 'Are you absolutely sure? ALL your data will be permanently removed. A backup will be saved automatically, but this action cannot be undone.',
+          confirmLabel: 'Reset Everything',
+          variant: 'danger',
+          onConfirm: async () => {
+            setConfirmAction(null)
+            setResetting('empty')
+            setMsg('')
+            try {
+              const result = await resetWithBackup()
+              // Save new tokens (old user ID was wiped during reset)
+              if (result.access_token) {
+                localStorage.setItem('pm_access_token', result.access_token)
+                localStorage.setItem('pm_refresh_token', result.refresh_token)
+              }
+              const backupName = result.backup?.filename || 'unknown'
+              toast.success(`Reset complete — backup saved as ${backupName}`)
+              setMsg(`All data deleted — safety backup saved as "${backupName}". Only admin user and system config remain.`)
+              loadBackups()
+            } catch (err) {
+              setMsg(`Reset failed: ${err.message}`)
+            }
+            setResetting(null)
+          },
+        })
       },
     })
   }
@@ -1697,10 +1708,10 @@ export default function Admin() {
                 {/* Per-type selectors */}
                 <div className="space-y-2">
                   <p className="text-sm text-gray-400 font-medium">Select what to import:</p>
-                  {['teams', 'users', 'settings', 'categories', 'patterns', 'technologies', 'pbcs', 'advisor_reports', 'health_analyses'].map(type => {
+                  {['teams', 'users', 'settings', 'categories', 'patterns', 'technologies', 'pbcs', 'advisor_reports', 'health_analyses', 'documents'].map(type => {
                     const counts = countPreviewType(type)
                     const total = counts.new + counts.updated + counts.unchanged
-                    const TYPE_LABELS = { pbcs: 'PBCs', advisor_reports: 'Advisor Reports', health_analyses: 'Health Analyses', teams: 'Teams', users: 'Users', settings: 'Settings' }
+                    const TYPE_LABELS = { pbcs: 'PBCs', advisor_reports: 'Advisor Reports', health_analyses: 'Health Analyses', documents: 'Documents', teams: 'Teams', users: 'Users', settings: 'Settings' }
                     const typeLabel = TYPE_LABELS[type] || type.charAt(0).toUpperCase() + type.slice(1)
                     if (total === 0) return null
                     return (
@@ -1738,7 +1749,7 @@ export default function Admin() {
                   const hasNew = data.new?.length > 0
                   const hasUpdated = data.updated?.length > 0
                   if (!hasNew && !hasUpdated) return null
-                  const DETAIL_LABELS = { pbcs: 'PBCs', advisor_reports: 'Advisor Reports', health_analyses: 'Health Analyses', teams: 'Teams', users: 'Users', settings: 'Settings' }
+                  const DETAIL_LABELS = { pbcs: 'PBCs', advisor_reports: 'Advisor Reports', health_analyses: 'Health Analyses', documents: 'Documents', teams: 'Teams', users: 'Users', settings: 'Settings' }
                   const typeLabel = DETAIL_LABELS[type] || type.charAt(0).toUpperCase() + type.slice(1)
                   return (
                     <details key={type} className="card border-gray-800">
@@ -1891,6 +1902,12 @@ export default function Admin() {
                           <div className="text-xs text-gray-400">Health Analyses</div>
                         </div>
                       )}
+                      {importResult.documents_imported > 0 && (
+                        <div className="text-center">
+                          <div className="text-xl font-bold text-white">{importResult.documents_imported}</div>
+                          <div className="text-xs text-gray-400">Documents</div>
+                        </div>
+                      )}
                     </div>
                     {importResult.errors && importResult.errors.length > 0 && (
                       <div className="mt-3 border-t border-red-500/20 pt-3">
@@ -1974,6 +1991,7 @@ export default function Admin() {
                             <span>•</span>
                             <span>
                               {b.stats.patterns || 0}P / {b.stats.technologies || 0}T / {b.stats.pbcs || 0}PBC
+                              {b.stats.documents > 0 && ` / ${b.stats.documents}Docs`}
                               {(b.stats.teams > 0 || b.stats.users > 0) && ` / ${b.stats.teams || 0}Teams / ${b.stats.users || 0}Users`}
                             </span>
                           </>
@@ -2039,7 +2057,7 @@ export default function Admin() {
                     <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z" /></svg>
                     Deleting...
                   </span>
-                ) : '🗑 Delete All'}
+                ) : '🗑 Factory Reset'}
               </button>
             </div>
           </div>
